@@ -8,7 +8,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -44,7 +44,7 @@ const cid = (await call('POST', '/api/companies', { name: 'Files Co' }, admin)).
 const now = new Date().toISOString();
 const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
 await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
-await insert('issuances', { id: 'iss_7', companyId: cid, certificateNo: 'CS-7', stakeholderId: 'stk_priya', shareClassId: common, quantity: 25_000, pricePerShare: 10_000, issueDate: '2024-01-15', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+await insertSecurity('issuances', { id: 'iss_7', companyId: cid, certificateNo: 'CS-7', stakeholderId: 'stk_priya', shareClassId: common, quantity: 25_000, pricePerShare: 10_000, issueDate: '2024-01-15', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 
 test('a PDF is stored byte for byte and linked to a stakeholder and their certificate', async () => {
   const r = await upload({ name: 'signed-cs-7.pdf', title: 'Signed certificate CS-7', category: 'AGREEMENT', folder: 'Certificates', stakeholderId: 'stk_priya', securityId: 'iss_7', visibility: 'HOLDER' }, admin);

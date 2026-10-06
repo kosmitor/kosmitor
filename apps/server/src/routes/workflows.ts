@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { route, newId, nowISO, audit, badRequest, notFound, forbidden, str, num, date, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
 import { getCompanyData, invalidate } from '../store.ts';
@@ -9,7 +9,7 @@ import { stockFace, awardFace, faceText, stockLegends, isNonUsHolder, type Certi
 import { config, mailSignature } from '../config.ts';
 import { listTemplates, templateFor, templateById, renderTemplate, TEMPLATE_KINDS, MERGE_FIELDS, SAMPLE_CONTEXT, AWARD_TYPE_NAMES, ENTITY_WORDS as ENTITY_NAMES, usd as fmtUsd, perShare as fmtPerShare, integer as fmtInt, type TemplateKind, type MergeContext } from '../templates.ts';
 import { removeStoredFile, securityKind, isSubjectKind, isDocumentCategory } from './files.ts';
-import { changedSinceSigned } from './certificates.ts';
+import { changedSinceSigned, signedHash } from './certificates.ts';
 import { documentFolder } from '../folders.ts';
 import { startConvertibleSigning, activateConvertible, detachFromPendingConsents } from './fundraising.ts';
 import { updatesFor, markUpdateRead } from './communications.ts';
@@ -66,6 +66,20 @@ async function grantContext(companyId: string, awardId: string, signing: Signing
     plan: { name: plan?.name ?? '', shareClass: shareClass?.name ?? '' }, shareClass: { name: shareClass?.name ?? '', parValue: shareClass ? fmtPerShare(shareClass.parValue) : '' },
     signer: { name: signing.signerName, title: signing.signerTitle }, message: signing.message ?? '', today: today(),
   };
+}
+
+/**
+ * The ISSUANCE entry of a certificate an event creates (an exercise, a transfer, a
+ * conversion), dated the event, in that day's shares. The database refuses the
+ * certificate without it (db.ts, ledger_entry_required).
+ */
+export async function recordIssuance(ctx: Ctx, issuanceId: string, v: Record<string, unknown>, memo: string): Promise<void> {
+  const quantity = Number(v.quantity), price = Number(v.pricePerShare ?? 0);
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: 'ISSUANCE', date: v.issueDate, stakeholderId: v.stakeholderId, securityId: issuanceId,
+    shareClassId: v.shareClassId ?? null, quantity, pricePerShare: price, amount: Math.round((quantity * price) / 10_000),
+    memo, createdAt: nowISO(), createdBy: ctx.user?.name ?? null,
+  });
 }
 
 /** An approved grant with no agreement to sign becomes outstanding and enters the ledger. */
@@ -212,7 +226,7 @@ route.post('/api/c/:cid/awards/:id/cancel-signing', 'write', async (ctx) => {
   const award = await one<{ id: string; status: string; label: string | null }>('SELECT * FROM awards WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   if (!award) throw notFound('Grant not found.');
   if (!['DRAFT', 'PENDING_APPROVAL', 'PENDING_SIGNATURE'].includes(award.status)) throw badRequest('Only a grant that is not yet outstanding can be withdrawn.');
-  await run('DELETE FROM documents WHERE security_id = ? AND company_id = ?', award.id, ctx.companyId);
+  await withdrawDocuments(ctx, award.id, `grant ${award.label ?? award.id} withdrawn before every party signed`);
   await detachFromPendingConsents(ctx.companyId!, 'awards', award.id);
   await run('DELETE FROM awards WHERE id = ? AND company_id = ?', award.id, ctx.companyId);
   invalidate(ctx.companyId!);
@@ -362,6 +376,8 @@ async function performExercise(ctx: Ctx, awardId: string, body: { quantity: unkn
     election83bFiledOn: null, sourceAwardId: award.id, boardApprovalDate: null,
     notes: `Issued on exercise of ${award.label ?? award.id}`, createdAt: nowISO(),
   });
+  await recordIssuance(ctx, issuanceId, { stakeholderId: award.stakeholderId, shareClassId: pool?.shareClassId ?? data.shareClasses.find((c) => c.kind === 'COMMON')?.id,
+    quantity: sharesIssued, pricePerShare: strike, issueDate: exerciseDate }, `Certificate ${certNo} issued on exercise of ${award.label ?? 'a grant'}`);
 
   await insert('exercises', {
     id: exerciseId, companyId: ctx.companyId, awardId: award.id, stakeholderId: award.stakeholderId,
@@ -437,6 +453,8 @@ route.post('/api/c/:cid/warrants/:id/exercise', 'write', async (ctx) => {
     election83bFiledOn: null, sourceAwardId: null, boardApprovalDate: null,
     notes: `Issued on exercise of warrant ${warrant.id}`, createdAt: nowISO(),
   });
+  await recordIssuance(ctx, issuanceId, { stakeholderId: warrant.stakeholderId, shareClassId: warrant.shareClassId, quantity: sharesIssued, pricePerShare: strike, issueDate: exerciseDate },
+    `Certificate ${certNo} issued on exercise of a warrant`);
   const exercised = roundShares(warrant.exercisedQuantity + quantity);
   await update('warrants', warrant.id, { exercisedQuantity: exercised, status: exercised >= warrant.quantity ? 'EXERCISED' : 'OUTSTANDING' });
   await insert('transactions', {
@@ -622,6 +640,8 @@ route.post('/api/c/:cid/issuances/:id/transfer', 'write', async (ctx) => {
     boardApprovalDate: ctx.body.boardApprovalDate ?? null,
     notes: `Transferred from certificate ${source.certificateNo ?? source.id}`, createdAt: nowISO(),
   });
+  await recordIssuance(ctx, newId1, { stakeholderId: toStakeholderId, shareClassId: source.shareClassId, quantity: moved, pricePerShare: movedPrice, issueDate: transferDate },
+    `Certificate issued on transfer from ${source.certificateNo ?? source.id}`);
 
   if (quantity >= available) {
     await update('issuances', ctx.params.id, { status: 'TRANSFERRED' });
@@ -692,6 +712,8 @@ route.post('/api/c/:cid/convertibles/:id/convert', 'write', async (ctx) => {
     election83bFiledOn: null, sourceAwardId: null, boardApprovalDate: null,
     notes: `Issued on conversion of ${convertible.instrument}`, createdAt: nowISO(),
   });
+  await recordIssuance(ctx, issuanceId, { stakeholderId: convertible.stakeholderId, shareClassId, quantity: shares, pricePerShare, issueDate: conversionDate },
+    `Certificate issued on conversion of ${convertible.label ?? convertible.instrument}`);
   await update('convertibles', convertible.id, {
     status: 'CONVERTED', convertedIntoShareClassId: shareClassId, convertedOn: conversionDate,
   });
@@ -848,10 +870,16 @@ route.get('/api/c/:cid/documents', 'read', async (ctx) => {
   const docs = toCamelAll<Record<string, unknown>>(rows);
   const sigs = toCamelAll<Record<string, unknown>>(
     await all('SELECT * FROM signatures WHERE company_id = ?', ctx.companyId));
+  // A certificate corrected after it was signed: its signed copy is void and the record
+  // matches only the replacement, which is flagged (resign) until every party signs it.
+  const voided = new Set(docs.filter((d) => d.category === 'CERTIFICATE' && d.status === 'VOID').map((d) => d.securityId));
   // The stored front page is only drawn by the PDF route; the list says whether there is one.
   return docs.map(({ face, ...d }) => {
     const own = sigs.filter((s) => s.documentId === d.id);
-    return { ...d, hasFace: !!face, signatures: own, tampered: changedSinceSigned(d.body as string | null, own) };
+    return {
+      ...d, hasFace: !!face, signatures: own, tampered: changedSinceSigned(d.body as string | null, (face as string | null) ?? null, own),
+      resign: d.category === 'CERTIFICATE' && d.status === 'AWAITING_SIGNATURE' && voided.has(d.securityId),
+    };
   });
 });
 
@@ -866,7 +894,7 @@ function documentCategory(value: unknown): string {
 // Other parts of the app compare these with exact words (the portal looks for
 // ALL, the certificate email for EXECUTED), so any other value would leave a
 // document in a state nothing recognises.
-const DOCUMENT_STATUSES = ['DRAFT', 'AWAITING_SIGNATURE', 'FINAL', 'EXECUTED'];
+const DOCUMENT_STATUSES = ['DRAFT', 'AWAITING_SIGNATURE', 'FINAL', 'EXECUTED', 'VOID'];
 const DOCUMENT_VISIBILITIES = ['ADMIN', 'HOLDER', 'ALL'];
 
 function documentStatus(value: unknown): string {
@@ -950,6 +978,12 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
       "SELECT id FROM signatures WHERE document_id = ? AND company_id = ? AND status = 'PENDING' LIMIT 1",
       existing.id, ctx.companyId);
     if (pending) throw badRequest('This document is out for signature. It can be moved or reclassified once every party has signed.');
+  }
+  // What someone signed is evidence of the holding it names: it cannot be refiled against another.
+  if (moves) {
+    const signed = await one<{ signer_name: string }>(
+      "SELECT signer_name FROM signatures WHERE document_id = ? AND company_id = ? AND status = 'SIGNED' LIMIT 1", existing.id, ctx.companyId);
+    if (signed) throw badRequest(`${signed.signer_name.split(' — ')[0]} has signed this document, so it cannot be linked to another holding.`);
   }
 
   // What a signer signed cannot change under their signature. Withdraw the document and
@@ -1094,6 +1128,7 @@ route.post('/api/c/:cid/signatures/:id/sign', 'read', async (ctx) => {
     await one('SELECT * FROM signatures WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId));
   if (!sig) throw notFound('Signature block not found.');
   if (sig.status === 'SIGNED') throw badRequest('This has already been signed.');
+  if (sig.status === 'VOID') throw badRequest('This document was voided and can no longer be signed.');
 
   const role = ctx.membership!.role;
   const mine = ctx.membership!.stakeholderId;
@@ -1108,11 +1143,10 @@ route.post('/api/c/:cid/signatures/:id/sign', 'read', async (ctx) => {
   const typed = str(ctx.body.typedSignature, 'Signature');
   if (typed.trim().length < 2) throw badRequest('Type your full name to sign.');
 
-  // The hash of the text signed, so a later change to the document shows against it.
-  const doc = await one<{ body: string | null }>('SELECT body FROM documents WHERE id = ?', sig.documentId);
+  // The hash of what was signed, the text and the certificate face, so a later change to either shows against it.
+  const doc = await one<{ body: string | null; face: string | null }>('SELECT body, face FROM documents WHERE id = ?', sig.documentId);
   await update('signatures', ctx.params.id, {
-    status: 'SIGNED', typedSignature: typed, signedAt: nowISO(), ipAddress: ctx.ip,
-    bodySha256: createHash('sha256').update(doc?.body ?? '').digest('hex'),
+    status: 'SIGNED', typedSignature: typed, signedAt: nowISO(), ipAddress: ctx.ip, bodySha256: signedHash(doc?.body ?? null, doc?.face ?? null),
   });
 
   const remaining = await one<{ n: number }>(
@@ -1468,29 +1502,9 @@ route.patch('/api/c/:cid/issuances/:id/draft', 'write', async (ctx) => {
   await validateEntity('issuances', { ...values, status: 'PENDING_SIGNATURE' }, ctx.companyId!);
   await update('issuances', String(row.id), values);
 
-  // The signature blocks name the company's signatory, so the rewritten document
-  // keeps the same names rather than inventing new ones from whoever is editing.
-  const companyBlock = blocks.find((x) => x.stakeholderId == null);
-  // The block was written as "Name, Title — for the Company". A name can hold a
-  // comma of its own, so the title is what follows the LAST comma, not the first.
-  const defaultTitle = config().equity.signerTitle;
-  const block = String(companyBlock?.signerName ?? `${ctx.user!.name}, ${defaultTitle}`).replace(/ — for the Company$/, '');
-  const cut = block.lastIndexOf(', ');
-  const [signerName, signerTitle] = cut < 0 ? [block, defaultTitle] : [block.slice(0, cut), block.slice(cut + 2)];
-
   if (doc) {
-    const company = (await one<CertificateFacts['company'] & { certificate_terms?: string | null }>('SELECT * FROM companies WHERE id = ?', ctx.companyId))!;
-    const { body, face } = stockCertificate({
-      company, holder: { name: holder.name, legal_name: holder.legalName, tax_form: holder.taxForm, tax_country: holder.taxCountry },
-      shareClass, certificateNo, quantity, pricePerShare, issueDate, federalExemption: (row.federalExemption as string | null) ?? null,
-      schedule, vestingStartDate: (values.vestingStartDate as string | null), earlyExercised: !!values.earlyExercised,
-      boardApprovalDate: (values.boardApprovalDate as string | null),
-      signerName: signerName ?? ctx.user!.name, signerTitle: signerTitle ?? defaultTitle, message: null,
-      legend: shareClass.legend ?? null, terms: company.certificate_terms ?? null,
-    });
-    await update('documents', String(doc.id), {
-      name: `Stock certificate ${certificateNo} — ${holder.name}`, body, face: JSON.stringify(face), updatedAt: nowISO(),
-    });
+    const cert = await certificateFromRecord(ctx, String(row.id), blocks.find((x) => x.stakeholderId == null)?.signerName ?? null);
+    await update('documents', String(doc.id), { name: cert.name, body: cert.body, face: cert.face, updatedAt: nowISO() });
   }
 
   invalidate(ctx.companyId!);
@@ -1501,6 +1515,93 @@ route.patch('/api/c/:cid/issuances/:id/draft', 'write', async (ctx) => {
     document: doc ? toCamel(await one('SELECT * FROM documents WHERE id = ?', doc.id)) : null,
   };
 });
+
+/**
+ * Voids a document: it stays, with every signature on it, marked VOID, and blocks not
+ * yet signed can no longer be. What someone signed is a record and is never deleted.
+ */
+export async function voidDocument(ctx: Ctx, documentId: string, why: string): Promise<void> {
+  await run("UPDATE documents SET status = 'VOID', updated_at = ? WHERE id = ? AND company_id = ?", nowISO(), documentId, ctx.companyId);
+  await run("UPDATE signatures SET status = 'VOID' WHERE document_id = ? AND company_id = ? AND status = 'PENDING'", documentId, ctx.companyId);
+  await audit(ctx, 'VOID', 'documents', documentId, `Document voided: ${why}`);
+}
+
+/**
+ * The documents of a security that is withdrawn before issue: one nobody has signed is
+ * deleted with its blocks, one someone has signed is voided and kept.
+ */
+export async function withdrawDocuments(ctx: Ctx, securityId: string, why: string): Promise<void> {
+  const docs = await all<{ id: string; signed: number }>(
+    "SELECT d.id, (SELECT COUNT(*) FROM signatures s WHERE s.document_id = d.id AND s.status = 'SIGNED') AS signed FROM documents d WHERE d.security_id = ? AND d.company_id = ?",
+    securityId, ctx.companyId);
+  for (const d of docs) {
+    if (Number(d.signed) > 0) await voidDocument(ctx, d.id, why);
+    else await run('DELETE FROM documents WHERE id = ? AND company_id = ?', d.id, ctx.companyId);   // signatures cascade
+  }
+}
+
+/**
+ * A certificate's document as its record reads now. The signature blocks name the
+ * company's signatory, so a rewritten document keeps that name rather than inventing
+ * one from whoever is editing.
+ */
+async function certificateFromRecord(ctx: Ctx, issuanceId: string, companyBlockName: string | null) {
+  const row = toCamel<Record<string, any>>(await one('SELECT * FROM issuances WHERE id = ?', issuanceId))!;
+  const shareClass = (await one<{ id: string; name: string; kind: string; par_value: number; legend: string | null }>('SELECT * FROM share_classes WHERE id = ?', row.shareClassId))!;
+  const holder = toCamel<{ id: string; name: string; email: string | null; legalName: string | null; taxForm: string | null; taxCountry: string | null }>(
+    await one('SELECT * FROM stakeholders WHERE id = ?', row.stakeholderId))!;
+  const schedule = row.vestingScheduleId ? (await one<{ id: string; name: string }>('SELECT id, name FROM vesting_schedules WHERE id = ?', row.vestingScheduleId)) ?? null : null;
+  // The block was written as "Name, Title — for the Company". A name can hold a
+  // comma of its own, so the title is what follows the LAST comma, not the first.
+  const defaultTitle = config().equity.signerTitle;
+  const block = String(companyBlockName ?? `${ctx.user!.name}, ${defaultTitle}`).replace(/ — for the Company$/, '');
+  const cut = block.lastIndexOf(', ');
+  const [signerName, signerTitle] = cut < 0 ? [block, defaultTitle] : [block.slice(0, cut), block.slice(cut + 2)];
+  const company = (await one<CertificateFacts['company'] & { certificate_terms?: string | null }>('SELECT * FROM companies WHERE id = ?', ctx.companyId))!;
+  const { body, face } = stockCertificate({
+    company, holder: { name: holder.name, legal_name: holder.legalName, tax_form: holder.taxForm, tax_country: holder.taxCountry },
+    shareClass, certificateNo: String(row.certificateNo ?? ''), quantity: Number(row.quantity), pricePerShare: Number(row.pricePerShare), issueDate: String(row.issueDate),
+    federalExemption: (row.federalExemption as string | null) ?? null, schedule, vestingStartDate: (row.vestingStartDate as string | null) ?? null,
+    earlyExercised: !!row.earlyExercised, boardApprovalDate: (row.boardApprovalDate as string | null) ?? null,
+    signerName, signerTitle, message: null, legend: shareClass.legend ?? null, terms: company.certificate_terms ?? null,
+  });
+  return { name: `Stock certificate ${row.certificateNo ?? ''} — ${holder.name}`, body, face: JSON.stringify(face), signerName, signerTitle, holder, certificateNo: row.certificateNo as string | null };
+}
+
+/**
+ * A certificate corrected after it was signed: the signed document no longer says what
+ * the record does. It is voided and kept with its signatures, and a replacement goes out
+ * for both parties to sign. Until they have, the documents list shows the certificate
+ * awaiting signatures beside the void one (`resign` on the certificate). One nobody has
+ * signed yet is rewritten in place.
+ */
+export async function reissueCertificate(ctx: Ctx, issuanceId: string): Promise<void> {
+  const doc = await one<{ id: string; visibility: string; folder: string | null }>(
+    "SELECT id, visibility, folder FROM documents WHERE company_id = ? AND security_id = ? AND category = 'CERTIFICATE' AND status <> 'VOID' ORDER BY created_at DESC LIMIT 1",
+    ctx.companyId, issuanceId);
+  if (!doc) return;
+  const blocks = toCamelAll<Record<string, any>>(await all('SELECT * FROM signatures WHERE document_id = ? ORDER BY created_at', doc.id));
+  const companyBlock = blocks.find((b) => b.stakeholderId == null);
+  const cert = await certificateFromRecord(ctx, issuanceId, companyBlock?.signerName ?? null);
+  if (!blocks.some((b) => b.status === 'SIGNED')) {
+    await update('documents', doc.id, { name: cert.name, body: cert.body, face: cert.face, updatedAt: nowISO() });
+    return;
+  }
+  await voidDocument(ctx, doc.id, `certificate ${cert.certificateNo ?? issuanceId} corrected after it was signed`);
+  const documentId = newId('doc');
+  await insert('documents', {
+    id: documentId, companyId: ctx.companyId, name: cert.name, category: 'CERTIFICATE', folder: doc.folder ?? 'Certificates', body: cert.body, face: cert.face,
+    stakeholderId: cert.holder.id, securityId: issuanceId, requiresSignature: 1, status: 'AWAITING_SIGNATURE', visibility: doc.visibility,
+    createdBy: ctx.user!.name, createdAt: nowISO(),
+  });
+  for (const sig of [
+    { stakeholderId: null, signerName: `${cert.signerName}, ${cert.signerTitle} — for the Company`, signerEmail: companyBlock?.signerEmail ?? ctx.user!.email },
+    { stakeholderId: cert.holder.id, signerName: cert.holder.name, signerEmail: cert.holder.email },
+  ]) {
+    await insert('signatures', { id: newId('sig'), companyId: ctx.companyId, documentId, ...sig, status: 'PENDING', token: randomBytes(24).toString('base64url'), sentAt: nowISO(), createdAt: nowISO() });
+  }
+  await audit(ctx, 'REISSUE', 'issuances', issuanceId, `Certificate ${cert.certificateNo ?? issuanceId} corrected after signing: the signed certificate is void and a corrected one awaits signatures`);
+}
 
 /** Once every block on a certificate is signed, the shares become outstanding and enter the ledger. */
 async function activateSignedIssuance(ctx: Ctx, documentId: string): Promise<void> {
@@ -1521,6 +1622,10 @@ async function activateSignedIssuance(ctx: Ctx, documentId: string): Promise<voi
   const cnv = toCamel<Record<string, unknown>>(await one("SELECT * FROM convertibles WHERE id = ? AND status = 'PENDING_SIGNATURE'", doc.security_id));
   if (cnv) {
     await update('convertibles', String(cnv.id), { status: 'OUTSTANDING' });
+    await insert('transactions', {
+      id: newId('tx'), companyId: doc.company_id, type: 'ISSUANCE', date: cnv.issueDate, stakeholderId: cnv.stakeholderId, securityId: cnv.id,
+      amount: Number(cnv.principal), memo: `${cnv.label ?? INSTRUMENT_NAMES[String(cnv.instrument)] ?? 'Instrument'} executed electronically`, createdAt: nowISO(), createdBy: ctx.user?.name ?? null,
+    });
     invalidate(doc.company_id);
     await audit(ctx, 'CONVERTIBLE_EXECUTED', 'convertibles', String(cnv.id), `${INSTRUMENT_NAMES[String(cnv.instrument)] ?? cnv.instrument} ${cnv.label ?? cnv.id} fully signed — now outstanding`);
     return;
@@ -1564,7 +1669,7 @@ route.post('/api/c/:cid/issuances/:id/cancel-signing', 'write', async (ctx) => {
   const iss = await one<{ id: string; status: string; certificate_no: string | null }>('SELECT * FROM issuances WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   if (!iss) throw notFound('Certificate not found.');
   if (iss.status !== 'PENDING_SIGNATURE') throw badRequest('Only a certificate still awaiting signatures can be withdrawn.');
-  await run('DELETE FROM documents WHERE security_id = ? AND company_id = ?', iss.id, ctx.companyId);   // signatures cascade
+  await withdrawDocuments(ctx, iss.id, `certificate ${iss.certificate_no ?? iss.id} withdrawn before every party signed`);
   await run('DELETE FROM issuances WHERE id = ? AND company_id = ?', iss.id, ctx.companyId);
   invalidate(ctx.companyId!);
   await audit(ctx, 'WITHDRAW', 'issuances', iss.id, `Certificate ${iss.certificate_no ?? iss.id} withdrawn before signature`);

@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -46,11 +46,11 @@ await insert('pools', { id: 'pool_1', companyId: cid, name: '2026 Plan', shareCl
 await insert('stakeholders', { id: 'stk_avery', companyId: cid, name: 'Avery Stone', email: 'avery@example.com', type: 'INDIVIDUAL', relation: 'FOUNDER', department: 'Leadership', createdAt: now });
 await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', department: 'Engineering', createdAt: now });
 await insert('stakeholders', { id: 'stk_halcyon', companyId: cid, name: 'Halcyon Ventures', email: null, type: 'FUND', relation: 'INVESTOR', createdAt: now });
-await insert('issuances', { id: 'iss_1', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_avery', shareClassId: common, quantity: 6_000_000, pricePerShare: 100, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
-await insert('issuances', { id: 'iss_2', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_halcyon', shareClassId: common, quantity: 2_000_000, pricePerShare: 1_000_000, issueDate: '2025-06-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
-await insert('awards', { id: 'awa_1', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_priya', poolId: 'pool_1', type: 'ISO', quantity: 48_000, strikePrice: 500_000, grantDate: '2025-01-01', vestingStartDate: '2025-01-01', vestingScheduleId: schedule.id,
+await insertSecurity('issuances', { id: 'iss_1', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_avery', shareClassId: common, quantity: 6_000_000, pricePerShare: 100, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+await insertSecurity('issuances', { id: 'iss_2', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_halcyon', shareClassId: common, quantity: 2_000_000, pricePerShare: 1_000_000, issueDate: '2025-06-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+await insertSecurity('awards', { id: 'awa_1', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_priya', poolId: 'pool_1', type: 'ISO', quantity: 48_000, strikePrice: 500_000, grantDate: '2025-01-01', vestingStartDate: '2025-01-01', vestingScheduleId: schedule.id,
   status: 'OUTSTANDING', expirationDate: '2035-01-01', ptepMonths: 3, earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 500_000, rsuLiquidityCondition: 0, createdAt: now });
-await insert('awards', { id: 'awa_2', companyId: cid, label: 'OPT-2', stakeholderId: 'stk_avery', poolId: 'pool_1', type: 'NSO', quantity: 10_000, strikePrice: 500_000, grantDate: '2025-01-01', vestingStartDate: '2025-01-01', vestingScheduleId: schedule.id,
+await insertSecurity('awards', { id: 'awa_2', companyId: cid, label: 'OPT-2', stakeholderId: 'stk_avery', poolId: 'pool_1', type: 'NSO', quantity: 10_000, strikePrice: 500_000, grantDate: '2025-01-01', vestingStartDate: '2025-01-01', vestingScheduleId: schedule.id,
   status: 'CANCELLED', expirationDate: '2035-01-01', ptepMonths: 3, earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 10_000, fmvAtGrant: 500_000, rsuLiquidityCondition: 0, createdAt: now });
 
 test('the xlsx writer produces workbooks the import parser reads back', () => {

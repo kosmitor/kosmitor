@@ -3,7 +3,9 @@
  * Random sequences of issues, grants, SAFEs, warrants, stock splits, transfers,
  * repurchases, certificate cancellations, exercises of grants and warrants, grant
  * cancellations, warrant expiries, conversions, repayments and cancellations of
- * SAFEs, and corrected counts (PATCH with an effective date) go through the real routes. After every
+ * SAFEs, corrected counts and SAFE principals (PATCH with an effective date), typo corrections of a
+ * certificate's holder, class or date (PATCH with a reason), and splits dated behind the ledger
+ * (refused) go through the real routes. After every
  * step the cap table route, as of each date so far, must equal a plain replay of the
  * events dated on or before it. The replay knows nothing of the engine or the ledger:
  * it keeps share counts in the shares of the day, multiplies them by a split's ratio
@@ -71,7 +73,13 @@ type Fact =
   | { kind: 'wend'; date: string; warrant: string }
   | { kind: 'settle'; date: string; safe: string }
   // An edit of a count from `date` on: a certificate's shares or a grant's size, by `shares` of the day.
-  | { kind: 'correct'; date: string; target: 'cert' | 'grant'; id: string; shares: number };
+  | { kind: 'correct'; date: string; target: 'cert' | 'grant'; id: string; shares: number }
+  // A SAFE's principal amended from `date` on.
+  | { kind: 'reterm'; date: string; safe: string; principal: number }
+  // A typo in a certificate's holder or own date: the record always should have said so, on every date.
+  | { kind: 'retype'; date: string; id: string; holder?: string; issued?: string }
+  // Something the routes refused (a split dated behind the ledger): nothing changed.
+  | { kind: 'none'; date: string };
 
 /** The plan every history starts with, approved on 2020-01-01. */
 const PLAN = 3_000_000;
@@ -85,10 +93,15 @@ function replay(facts: Fact[], asOf: string) {
   const safes = new Map<string, { holder: string; principal: number; live: boolean }>();
   const warrants = new Map<string, { holder: string; size: number; exercised: number; live: boolean }>();
   let plan = asOf >= PLAN_APPROVED ? PLAN : 0;
+  // A typo fix holds on every date: the certificate always had that holder and date.
+  const holderOf = new Map<string, string>(), issuedOn = new Map<string, string>();
+  for (const f of facts) if (f.kind === 'retype') { if (f.holder) holderOf.set(f.id, f.holder); if (f.issued) issuedOn.set(f.id, f.issued); }
   for (const f of facts) {
-    if (f.date > asOf) continue;
+    if ((f.kind === 'issue' ? issuedOn.get(f.id) ?? f.date : f.date) > asOf) continue;
     switch (f.kind) {
-      case 'issue': certs.set(f.id, { holder: f.holder, shares: f.shares, paid: f.price }); break;
+      case 'issue': certs.set(f.id, { holder: holderOf.get(f.id) ?? f.holder, shares: f.shares, paid: f.price }); break;
+      case 'reterm': safes.get(f.safe)!.principal = f.principal; break;
+      case 'retype': case 'none': break;
       case 'grant': grants.set(f.id, { holder: f.holder, granted: f.shares, exercised: 0, cancelled: 0 }); break;
       case 'safe': safes.set(f.id, { holder: f.holder, principal: f.principal, live: true }); break;
       case 'split':
@@ -101,7 +114,7 @@ function replay(facts: Fact[], asOf: string) {
         const src = certs.get(f.source)!;
         src.shares -= f.shares;
         // The company was paid for the shares once, whoever holds them now (OCF StockTransfer).
-        certs.set(f.id, { holder: f.to, shares: f.shares, paid: src.paid });
+        certs.set(f.id, { holder: holderOf.get(f.id) ?? f.to, shares: f.shares, paid: src.paid });
         break;
       }
       case 'repurchase': case 'certcancel': certs.get(f.source)!.shares -= f.shares; break;
@@ -109,7 +122,7 @@ function replay(facts: Fact[], asOf: string) {
       case 'wexercise': {
         const w = warrants.get(f.warrant)!;
         w.exercised += f.shares;
-        certs.set(f.id, { holder: w.holder, shares: f.shares, paid: f.price });
+        certs.set(f.id, { holder: holderOf.get(f.id) ?? w.holder, shares: f.shares, paid: f.price });
         break;
       }
       case 'wend': warrants.get(f.warrant)!.live = false; break;
@@ -117,7 +130,7 @@ function replay(facts: Fact[], asOf: string) {
       case 'exercise': {
         const g = grants.get(f.grant)!;
         g.exercised += f.shares;
-        certs.set(f.id, { holder: g.holder, shares: f.shares, paid: f.price });
+        certs.set(f.id, { holder: holderOf.get(f.id) ?? g.holder, shares: f.shares, paid: f.price });
         break;
       }
       case 'cancel': grants.get(f.grant)!.cancelled += f.shares; break;
@@ -128,7 +141,7 @@ function replay(facts: Fact[], asOf: string) {
       case 'convert': {
         const s = safes.get(f.safe)!;
         s.live = false;
-        certs.set(f.id, { holder: s.holder, shares: f.shares, paid: f.price });
+        certs.set(f.id, { holder: holderOf.get(f.id) ?? s.holder, shares: f.shares, paid: f.price });
         break;
       }
     }
@@ -168,6 +181,9 @@ const splitsBetween = (facts: Fact[], on: string, to: string): number =>
 // One random history through the routes
 // ---------------------------------------------------------------------------
 
+/** The kinds of step the histories took, so a change that stops one from happening shows. */
+const exercised = new Set<string>();
+
 async function runHistory(seed: number, steps: number): Promise<void> {
   const rnd = random(seed);
   const pick = <T>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)];
@@ -179,6 +195,12 @@ async function runHistory(seed: number, steps: number): Promise<void> {
     const r = await call(method, `/api/c/${cid}${path}`, body, admin);
     assert.equal(r.status, 200, `seed ${seed}: ${method} ${path} ${JSON.stringify(body)} → ${JSON.stringify(r.json)}`);
     return r.json;
+  };
+  /** A request the routes may refuse for a reason the model does not track (a split or an event in the way): 200 or 400. */
+  const attempt = async (method: string, path: string, body?: unknown): Promise<boolean> => {
+    const r = await call(method, `/api/c/${cid}${path}`, body, admin);
+    assert.ok(r.status === 200 || r.status === 400, `seed ${seed}: ${method} ${path} ${JSON.stringify(body)} → ${r.status} ${JSON.stringify(r.json)}`);
+    return r.status === 200;
   };
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
   const vested = (await one<{ id: string }>("SELECT id FROM vesting_schedules WHERE company_id = ? AND kind = 'FULLY_VESTED'", cid))!.id;
@@ -202,8 +224,10 @@ async function runHistory(seed: number, steps: number): Promise<void> {
     const live = ((await send('GET', '/warrants')) as any[]).filter((w) => w.status === 'OUTSTANDING' && roundShares(w.quantity - w.exercisedQuantity) >= 1);
     let fact: Fact;
     let what = pick(['issue', 'grant', 'safe', 'split', 'transfer', 'transfer', 'repurchase', 'certcancel', 'exercise', 'cancel', 'convert', 'settle', 'correct',
-      'warrant', 'wexercise', 'wend']);
+      'warrant', 'wexercise', 'wend', 'reterm', 'retype', 'backsplit']);
     if (what === 'correct' && !certs.length && !grants.length) what = 'issue';
+    if (what === 'retype' && !certs.length) what = 'issue';
+    if (what === 'reterm' && !safes.length) what = 'safe';
     if ((what === 'transfer' || what === 'repurchase' || what === 'certcancel') && !certs.length) what = 'issue';
     if ((what === 'wexercise' || what === 'wend') && !live.length) what = 'warrant';
     if (what === 'settle' && !safes.length) what = 'safe';
@@ -239,6 +263,49 @@ async function runHistory(seed: number, steps: number): Promise<void> {
         const ratio = pick([2, 3]);
         await send('POST', '/stock-splits', { date, ratio });
         fact = { kind: 'split', date, ratio };
+        break;
+      }
+      case 'backsplit': {
+        // A split dated before what the ledger already holds would restate it: refused. One the
+        // ledger does not reach yet is recorded; it is taken back at once, as the model has no place for it.
+        const on = facts.length ? pick(facts).date : addDays(date, -1);
+        const r = await call('POST', `/api/c/${cid}/stock-splits`, { date: on, ratio: 2 }, admin);
+        if (r.status === 200) await send('DELETE', `/stock-splits/${r.json.id}`);
+        else assert.match(r.json.error, /would restate ledger entries/, `seed ${seed}: backsplit on ${on}`);
+        exercised.add(r.status === 200 ? 'split behind nothing' : 'split behind the ledger refused');
+        fact = { kind: 'none', date };
+        break;
+      }
+      case 'reterm': {
+        const c = pick(safes);
+        const principal = 1_000 * (1 + Math.floor(rnd() * 500)) * 100;
+        await send('PATCH', `/convertibles/${c.id}`, { principal, effectiveDate: date, reason: 'Amended purchase amount' });
+        fact = { kind: 'reterm', date, safe: c.id, principal };
+        exercised.add('principal corrected');
+        break;
+      }
+      case 'retype': {
+        const row = pick(certs);
+        const choice = rnd();
+        if (choice < 0.4) {
+          const to = pick(holders.filter((h) => h !== row.stakeholderId));
+          await send('PATCH', `/issuances/${row.id}`, { stakeholderId: to, reason: 'Entered against the wrong holder' });
+          fact = { kind: 'retype', date, id: row.id, holder: to };
+          exercised.add('holder corrected');
+        } else if (choice < 0.7) {
+          // The class is not in the model's totals; the views must not move.
+          await send('PATCH', `/issuances/${row.id}`, { shareClassId: row.shareClassId === common ? seedClass : common, reason: 'Wrong class' });
+          fact = { kind: 'none', date };
+          exercised.add('class corrected');
+        } else {
+          let issued = addDays(row.issueDate, Math.floor(rnd() * 61) - 30);
+          if (issued < '2020-01-02') issued = '2020-01-02';
+          if (issued > date) issued = date;
+          const done = issued !== row.issueDate && await attempt('PATCH', `/issuances/${row.id}`, { issueDate: issued, reason: 'Board minutes give another date' });
+          fact = done ? { kind: 'retype', date, id: row.id, issued } : { kind: 'none', date };
+          if (done) exercised.add('date corrected');
+          if (done && issued < row.issueDate) for (const d of [addDays(issued, -1), issued]) if (!checked.includes(d)) checked.push(d);
+        }
         break;
       }
       case 'warrant': {
@@ -327,6 +394,7 @@ async function runHistory(seed: number, steps: number): Promise<void> {
       }
     }
     facts.push(fact);
+    if (fact.kind === 'split') exercised.add('split');
     for (const d of [addDays(date, -1), date]) if (!checked.includes(d)) checked.push(d);
 
     // Every date so far, as the cap table route shows it and as the replay has it.
@@ -365,3 +433,7 @@ for (const seed of [11, 23, 37, 41, 53, 67]) {
     await runHistory(seed, 22);
   });
 }
+
+test('the histories took every kind of step the model knows', () => {
+  assert.deepEqual([...exercised].sort(), ['class corrected', 'date corrected', 'holder corrected', 'principal corrected', 'split', 'split behind the ledger refused', 'split behind nothing'].sort());
+});

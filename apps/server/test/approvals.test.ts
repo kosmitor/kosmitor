@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -46,7 +46,7 @@ for (const [id, name, email, relation, qty] of [
   ['stk_noor', 'Noor Haddad', 'noor@example.com', 'INVESTOR', 1_000_000], ['stk_priya', 'Priya Raman', 'priya@example.com', 'EMPLOYEE', 0],
 ] as [string, string, string, string, number][]) {
   await insert('stakeholders', { id, companyId: cid, name, email, type: 'INDIVIDUAL', relation, createdAt: now });
-  if (qty) await insert('issuances', { id: `iss_${id}`, companyId: cid, certificateNo: `CS-${id}`, stakeholderId: id, shareClassId: common, quantity: qty, pricePerShare: 100, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+  if (qty) await insertSecurity('issuances', { id: `iss_${id}`, companyId: cid, certificateNo: `CS-${id}`, stakeholderId: id, shareClassId: common, quantity: qty, pricePerShare: 100, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 }
 
 test('a stockholder approval is weighted by voting shares and passes at the threshold of all voting shares', async () => {

@@ -707,6 +707,19 @@ export async function prepareImport(companyId: string, req: ImportRequest, known
           securityId: awardId, shareClassId: null, quantity, pricePerShare: strike ?? 0, amount: null, memo,
           createdAt: now(), createdBy: null,
         });
+        // Past cap tables show the options outstanding until they were exercised. With no date
+        // the exercise is dated the grant, which reads every past cap table as today's.
+        if (exercised > 0) {
+          const exercisedOn = ctx.date('exerciseDate');
+          const on = exercisedOn && exercisedOn >= grantDate ? exercisedOn : grantDate;
+          if (exercisedOn && exercisedOn < grantDate) ctx.warn('Exercise date is before the grant date — dated to the grant instead');
+          else if (!exercisedOn) ctx.info(`No exercise date — the ${count(exercised)} exercised options count as exercised from the grant date`);
+          plan.transactions.push({
+            id: id('tx'), companyId, type: 'EXERCISE', date: on, stakeholderId: holder.id, counterpartyId: null,
+            securityId: awardId, shareClassId: null, quantity: roundShares(exercised * company.splitFactor(grantDate, on)), pricePerShare: strike ?? 0, amount: null,
+            memo: exercisedOn ? memo : `${memo} (no exercise date; dated to the grant)`, createdAt: now(), createdBy: null,
+          });
+        }
         // The ISO $100K test and the stock comp report place cancelled shares in their year by the
         // ledger's date. A leaver's grant that names none lost its shares when the holder left.
         if (cancelled > 0) {
@@ -758,6 +771,11 @@ export async function prepareImport(companyId: string, req: ImportRequest, known
       }
       summary = { stakeholder: holder?.name ?? ctx.text('stakeholderName'), instrument, label,
         principal: principal != null ? principal / 100 : null, issueDate, cap: cap != null ? cap / 100 : null, discount, status };
+      // A settled instrument leaves the cap table the day it settled; with no date given, on its issue date.
+      const settledGiven = status !== 'OUTSTANDING' ? ctx.date('settledDate') : null;
+      const settledOn = settledGiven && issueDate && settledGiven >= issueDate ? settledGiven : issueDate;
+      if (settledGiven && issueDate && settledGiven < issueDate) ctx.warn('Settled before it was issued — dated to the issue date instead');
+      else if (status !== 'OUTSTANDING' && !settledGiven) ctx.info(`No date it was ${status.toLowerCase()} — left out of every past cap table too`);
       if (!ctx.hasErrors && holder && instrument && principal != null && issueDate) {
         const convertibleId = id('cnv');
         plan.convertibles.push({
@@ -766,13 +784,20 @@ export async function prepareImport(companyId: string, req: ImportRequest, known
           compounding: ctx.value('compounding', coerceCompounding) ?? 'SIMPLE',
           maturityDate: isSafe ? null : ctx.date('maturityDate'), mfn: ctx.bool('mfn') ? 1 : 0,
           proRataRight: ctx.bool('proRata') ? 1 : 0, status, convertedIntoShareClassId: null,
-          convertedOn: null, qualifiedFinancingMinimum: null, notes: ctx.text('notes'), createdAt: now(),
+          convertedOn: status === 'CONVERTED' ? settledOn : null, qualifiedFinancingMinimum: null, notes: ctx.text('notes'), createdAt: now(),
         });
         plan.transactions.push({
           id: id('tx'), companyId, type: 'ISSUANCE', date: issueDate, stakeholderId: holder.id, counterpartyId: null,
           securityId: convertibleId, shareClassId: null, quantity: null, pricePerShare: null, amount: principal,
           memo: `${memo} (${instrument})`, createdAt: now(), createdBy: null,
         });
+        if (status !== 'OUTSTANDING') {
+          plan.transactions.push({
+            id: id('tx'), companyId, type: status === 'CONVERTED' ? 'CONVERSION' : status === 'REPAID' ? 'REPAYMENT' : 'CANCELLATION', date: settledOn,
+            stakeholderId: holder.id, counterpartyId: null, securityId: convertibleId, shareClassId: null, quantity: null, pricePerShare: null,
+            amount: status === 'CANCELLED' ? null : principal, memo: settledGiven ? memo : `${memo} (no settlement date; dated to the issue)`, createdAt: now(), createdBy: null,
+          });
+        }
       }
     }
 

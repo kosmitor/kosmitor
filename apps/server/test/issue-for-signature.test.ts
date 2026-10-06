@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -39,7 +39,7 @@ test('shares issued for signature stay pending until both parties sign, then bec
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
   const schedule = (await one<{ id: string; name: string }>("SELECT id, name FROM vesting_schedules WHERE company_id = ? AND kind = 'TIME' ORDER BY duration_months DESC LIMIT 1", cid))!;
   await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
-  await insert('issuances', { id: 'iss_existing', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_priya', shareClassId: common, quantity: 1_000,
+  await insertSecurity('issuances', { id: 'iss_existing', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_priya', shareClassId: common, quantity: 1_000,
     pricePerShare: 100, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 
   // Issue for signature: certificate number assigned, document and two blocks created, nothing outstanding yet.

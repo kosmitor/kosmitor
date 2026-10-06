@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -38,7 +38,7 @@ test('an option holder requests an exercise; the company approves, takes payment
   await insert('pools', { id: 'pool_x', companyId: cid, name: 'Plan', shareClassId: common, authorized: 1_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', createdAt: now });
   await insert('valuations', { id: 'val_1', companyId: cid, type: '409A', fairMarketValue: 2_000_000, effectiveDate: '2025-01-01', expirationDate: '2026-12-31', status: 'ACTIVE', createdAt: now });
   // Granted four years ago: fully vested by now.
-  await insert('awards', { id: 'awa_p', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_p', poolId: 'pool_x', type: 'ISO', quantity: 48_000, strikePrice: 500_000,
+  await insertSecurity('awards', { id: 'awa_p', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_p', poolId: 'pool_x', type: 'ISO', quantity: 48_000, strikePrice: 500_000,
     grantDate: '2021-01-01', vestingStartDate: '2021-01-01', vestingScheduleId: schedule, status: 'OUTSTANDING', expirationDate: '2031-01-01', ptepMonths: 3,
     earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 500_000, rsuLiquidityCondition: 0, createdAt: now });
 

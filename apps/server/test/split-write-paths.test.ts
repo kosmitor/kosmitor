@@ -14,7 +14,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -53,7 +53,7 @@ const certA = await certificate(founderA, 4_500_000);
 const certB = await certificate(founderB, 3_500_000);
 const now = new Date().toISOString();
 await insert('pools', { id: 'pool_s', companyId: cid, name: 'Plan', shareClassId: common, authorized: 2_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', boardApprovalDate: '2020-01-15', createdAt: now });
-await insert('awards', { id: 'awd_s', companyId: cid, label: 'OPT-7', stakeholderId: optionee, poolId: 'pool_s', type: 'NSO', quantity: 200_000, strikePrice: 100_000,
+await insertSecurity('awards', { id: 'awd_s', companyId: cid, label: 'OPT-7', stakeholderId: optionee, poolId: 'pool_s', type: 'NSO', quantity: 200_000, strikePrice: 100_000,
   grantDate: '2021-03-01', vestingStartDate: '2021-03-01', vestingScheduleId: vestedAtGrant, status: 'OUTSTANDING', expirationDate: '2031-03-01', ptepMonths: 3,
   earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 100_000, rsuLiquidityCondition: 0, createdAt: now });
 assert.equal((await call('POST', `/api/c/${cid}/stock-splits`, { date: '2023-01-01', ratio: 2 }, admin)).status, 200);

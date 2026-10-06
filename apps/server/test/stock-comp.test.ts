@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -38,7 +38,7 @@ test('the stock-compensation report values grants, follows the company assumptio
   await insert('stakeholders', { id: 'stk_e', companyId: cid, name: 'Priya Raman', type: 'INDIVIDUAL', relation: 'EMPLOYEE', department: 'Engineering', createdAt: now });
   await insert('stakeholders', { id: 'stk_s', companyId: cid, name: 'Marcus Webb', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
   await insert('pools', { id: 'pool_c', companyId: cid, name: 'Plan', shareClassId: common, authorized: 1_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', createdAt: now });
-  const grant = (id: string, stakeholderId: string, extra: Record<string, unknown>) => insert('awards', {
+  const grant = (id: string, stakeholderId: string, extra: Record<string, unknown>) => insertSecurity('awards', {
     id, companyId: cid, label: id.toUpperCase(), stakeholderId, poolId: 'pool_c', type: 'ISO', quantity: 48_000, strikePrice: 1_000_000,
     grantDate: '2025-01-01', vestingStartDate: '2025-01-01', vestingScheduleId: schedule, status: 'OUTSTANDING', expirationDate: '2035-01-01',
     ptepMonths: 3, earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 1_000_000, rsuLiquidityCondition: 0, createdAt: now, ...extra,

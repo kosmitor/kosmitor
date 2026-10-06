@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { deflateRawSync } from 'node:zlib';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, insertSecurity } from './helpers.ts';
 import { parseCsv, toCsv } from '../src/import/csv.ts';
 import { parseXlsx, readZip, columnIndex, excelSerialToISO } from '../src/import/xlsx.ts';
 import {
@@ -295,7 +295,7 @@ test('a cap table spreadsheet becomes stakeholders, share classes and certificat
     relation: 'FOUNDER', createdAt: new Date().toISOString() });
   await insert('vesting_schedules', { id: 'vs_std', companyId, name: '4 years, 1 year cliff, monthly', kind: 'TIME', durationMonths: 48,
     cliffMonths: 12, frequency: 'MONTHLY', immediatePortion: 0, accelerationSingle: 0, accelerationDouble: 0, createdAt: new Date().toISOString() });
-  await insert('issuances', { id: 'iss_existing', companyId, certificateNo: 'CS-1', stakeholderId: 'stk_avery', shareClassId: 'sc_common',
+  await insertSecurity('issuances', { id: 'iss_existing', companyId, certificateNo: 'CS-1', stakeholderId: 'stk_avery', shareClassId: 'sc_common',
     quantity: 1_000_000, pricePerShare: 100, issueDate: '2021-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: new Date().toISOString() });
 
   const headers = ['Stakeholder', 'Email', 'Share class', 'Shares', 'Price per share', 'Issue date', 'Certificate', 'Vesting schedule'];

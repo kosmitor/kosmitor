@@ -35,7 +35,7 @@ export async function loadCompanyData(companyId: string): Promise<CompanyData> {
     () => q('SELECT * FROM compliance_filings WHERE company_id = ? ORDER BY filed_on, created_at'),
     // What happened to each security since it was issued, which the engine undoes
     // for a view of an earlier date (rewindToDate in @kosmitor/core).
-    () => q('SELECT id, type, date, security_id, quantity, field, adopted_security_id FROM transactions WHERE company_id = ? AND security_id IS NOT NULL ORDER BY date, created_at'),
+    () => q('SELECT id, type, date, security_id, quantity, field, before_value, after_value, adopted_security_id FROM transactions WHERE company_id = ? AND security_id IS NOT NULL ORDER BY date, created_at'),
   ]);
 
   return companyDataFromRows({
@@ -182,6 +182,8 @@ export function companyDataFromRows(rows: CompanyRows): CompanyData {
         id: r.id as string, type: r.type as never, date: r.date as string, securityId: r.securityId as string,
         quantity: r.quantity == null ? null : Number(r.quantity), field: (r.field as never) ?? null,
         ...(r.adoptedSecurityId ? { adoptedId: r.adoptedSecurityId as string } : {}),
+        ...(r.beforeValue != null || r.afterValue != null
+          ? { before: JSON.parse(String(r.beforeValue ?? 'null')), after: JSON.parse(String(r.afterValue ?? 'null')) } : {}),
       })),
     } : {}),
   };

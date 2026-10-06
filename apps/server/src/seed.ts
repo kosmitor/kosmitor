@@ -126,6 +126,14 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
     });
   }
 
+  // Every security enters the ledger with a dated entry (the trigger in db.ts refuses it otherwise).
+  const tx = (type: string, date: string, memo: string, o: Record<string, unknown> = {}) =>
+    insert('transactions', {
+      id: id('tx'), companyId, type, date, stakeholderId: null, counterpartyId: null,
+      securityId: null, shareClassId: null, quantity: null, pricePerShare: null, amount: null,
+      memo, createdAt: now(), createdBy: 'Avery Stone', ...o,
+    });
+
   // --- Founder stock ------------------------------------------------------
   const issue = async (o: Record<string, unknown>) => {
     const iid = id('iss');
@@ -133,6 +141,10 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
       id: iid, companyId, status: 'OUTSTANDING', earlyExercised: 0, election83bFiledOn: null,
       sourceAwardId: null, boardApprovalDate: null, notes: null, vestingScheduleId: null,
       vestingStartDate: null, createdAt: now(), ...o,
+    });
+    await tx('ISSUANCE', String(o.issueDate), `Certificate ${o.certificateNo} issued`, {
+      securityId: iid, stakeholderId: o.stakeholderId, shareClassId: o.shareClassId, quantity: o.quantity, pricePerShare: o.pricePerShare,
+      amount: Math.round((Number(o.quantity) * Number(o.pricePerShare)) / 10_000),
     });
     return iid;
   };
@@ -181,12 +193,17 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
   }
 
   // --- Convertibles (pre-seed SAFEs, one converted, plus a live note) -----
-  const conv = (o: Record<string, unknown>) => insert('convertibles', {
-    id: id('cnv'), companyId, discount: 0, interestRate: 0, compounding: 'SIMPLE',
-    maturityDate: null, mfn: 0, proRataRight: 1, status: 'OUTSTANDING',
-    convertedIntoShareClassId: null, convertedOn: null, qualifiedFinancingMinimum: null,
-    notes: null, createdAt: now(), ...o,
-  });
+  const conv = async (o: Record<string, unknown>) => {
+    const cid = id('cnv');
+    await insert('convertibles', {
+      id: cid, companyId, discount: 0, interestRate: 0, compounding: 'SIMPLE',
+      maturityDate: null, mfn: 0, proRataRight: 1, status: 'OUTSTANDING',
+      convertedIntoShareClassId: null, convertedOn: null, qualifiedFinancingMinimum: null,
+      notes: null, createdAt: now(), ...o,
+    });
+    await tx('ISSUANCE', String(o.issueDate), `${o.instrument} issued`, { securityId: cid, stakeholderId: o.stakeholderId, amount: o.principal });
+    if (o.convertedOn) await tx('CONVERSION', String(o.convertedOn), `${o.instrument} converted`, { securityId: cid, stakeholderId: o.stakeholderId, shareClassId: o.convertedIntoShareClassId, amount: o.principal });
+  };
   await conv({ stakeholderId: sh['Cormac Doyle'], instrument: 'SAFE_POST', principal: $(250_000),
     issueDate: '2021-08-12', valuationCap: $(8_000_000), discount: 0.1,
     status: 'CONVERTED', convertedIntoShareClassId: seriesSeedId, convertedOn: '2022-09-15' });
@@ -213,8 +230,12 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
     issueDate: '2024-04-10', boardApprovalDate: '2024-04-05' });
 
   // --- Warrants -----------------------------------------------------------
+  const warrantId = id('wrt');
+  await tx('ISSUANCE', '2024-11-01', 'Warrant coverage on the venture debt facility', {
+    securityId: warrantId, stakeholderId: sh['Bridgepoint Venture Debt'], shareClassId: seriesAId, quantity: 46_700, pricePerShare: pps(3.2145),
+  });
   await insert('warrants', {
-    id: id('wrt'), companyId, stakeholderId: sh['Bridgepoint Venture Debt'],
+    id: warrantId, companyId, stakeholderId: sh['Bridgepoint Venture Debt'],
     shareClassId: seriesAId, quantity: 46_700, strikePrice: pps(3.2145),
     issueDate: '2024-11-01', expirationDate: '2034-11-01', status: 'OUTSTANDING',
     exercisedQuantity: 0, netExercise: 1, notes: 'Coverage on the venture debt facility',
@@ -235,6 +256,7 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
       acceptedDate: grantDate, fmvAtGrant: strike, rsuLiquidityCondition: 0, notes: null,
       createdAt: now(), ...extra,
     });
+    await tx('GRANT', grantDate, `${type} grant`, { securityId: aid, stakeholderId: sh[holder], quantity: qty, pricePerShare: strike });
     return aid;
   };
 
@@ -251,21 +273,10 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
   // A large ISO grant that trips the $100,000 first-exercisable limit.
   await grant('Marcus Webb', 'ISO', 600_000, pps(0.96), '2024-07-15', STD);
 
-  // --- Ledger -------------------------------------------------------------
-  const tx = (type: string, date: string, memo: string, o: Record<string, unknown> = {}) =>
-    insert('transactions', {
-      id: id('tx'), companyId, type, date, stakeholderId: null, counterpartyId: null,
-      securityId: null, shareClassId: null, quantity: null, pricePerShare: null, amount: null,
-      memo, createdAt: now(), createdBy: 'Avery Stone', ...o,
-    });
-  await tx('ISSUANCE', '2021-02-01', 'Founder common stock issued', { quantity: 8_000_000, shareClassId: commonId });
+  // --- Ledger: the company's own events (each security wrote its entries above) ---
   await tx('POOL_INCREASE', '2021-02-15', '2021 Equity Incentive Plan adopted (1,500,000 shares)');
-  await tx('ISSUANCE', '2022-09-15', 'Series Seed closed at $0.8734 per share', { amount: $(2_280_000), shareClassId: seriesSeedId });
-  await tx('CONVERSION', '2022-09-15', 'Pre-seed SAFE converted into Series Seed', { amount: $(250_000) });
   await tx('POOL_INCREASE', '2022-09-15', 'Pool increased by 800,000 shares');
-  await tx('ISSUANCE', '2024-04-10', 'Series A closed at $3.2145 per share', { amount: $(14_000_000), shareClassId: seriesAId });
   await tx('POOL_INCREASE', '2024-04-10', 'Pool refreshed by 1,650,000 shares to 12% post-close');
-  await tx('ISSUANCE', '2024-11-01', 'Venture debt facility drawn with warrant coverage', { amount: $(1_000_000) });
 
   // --- Documents and signatures ------------------------------------------
   const docId = id('doc');

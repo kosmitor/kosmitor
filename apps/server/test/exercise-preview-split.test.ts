@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -49,8 +49,8 @@ await insert('pools', { id: 'pool_p', companyId: cid, name: 'Plan', shareClassId
 const grant = (id: string) => ({ id, companyId: cid, label: id.toUpperCase(), stakeholderId: optionee, poolId: 'pool_p', type: 'NSO', quantity: 120_000, strikePrice: 400_000,
   grantDate: '2022-05-02', vestingStartDate: '2022-05-02', vestingScheduleId: vestedAtGrant, status: 'OUTSTANDING', expirationDate: '2032-05-02', ptepMonths: 3,
   earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 400_000, rsuLiquidityCondition: 0, createdAt: now });
-await insert('awards', grant('opt_a'));
-await insert('awards', grant('opt_b'));
+await insertSecurity('awards', grant('opt_a'));
+await insertSecurity('awards', grant('opt_b'));
 assert.equal((await call('POST', `/api/c/${cid}/stock-splits`, { date: '2024-02-01', ratio: 2 }, admin)).status, 200);
 await insert('valuations', { id: 'val_p', companyId: cid, type: '409A', fairMarketValue: 1_300_000, effectiveDate: '2024-03-01', expirationDate: '2025-02-28', status: 'ACTIVE', createdAt: now });
 

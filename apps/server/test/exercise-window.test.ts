@@ -15,7 +15,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -50,8 +50,8 @@ await insert('pools', { id: 'pool_w', companyId: cid, name: 'Plan', shareClassId
 const grant = (id: string, ptepMonths: number) => ({ id, companyId: cid, label: id.toUpperCase(), stakeholderId: leaver.json.id, poolId: 'pool_w', type: 'NSO', quantity: 10_000, strikePrice: 250_000,
   grantDate: '2023-04-03', vestingStartDate: '2023-04-03', vestingScheduleId: vestedAtGrant, status: 'OUTSTANDING', expirationDate: '2033-04-03', ptepMonths,
   earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 250_000, rsuLiquidityCondition: 0, createdAt: now });
-await insert('awards', grant('opt_zero', 0));
-await insert('awards', grant('opt_two', 2));
+await insertSecurity('awards', grant('opt_zero', 0));
+await insertSecurity('awards', grant('opt_two', 2));
 
 const exercise = (awardId: string, exerciseDate: string) =>
   call('POST', `/api/c/${cid}/awards/${awardId}/exercise`, { quantity: 1_000, exerciseDate, method: 'CASH' }, admin);

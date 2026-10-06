@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -41,10 +41,10 @@ const schedule = (await one<{ id: string }>("SELECT id FROM vesting_schedules WH
 await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
 await insert('stakeholders', { id: 'stk_lark', companyId: cid, name: 'Larkspur Ventures Fund II, L.P.', email: 'ops@larkspur.example', type: 'ENTITY', relation: 'INVESTOR', createdAt: now });
 await insert('pools', { id: 'pool_x', companyId: cid, name: '2022 Stock Plan', shareClassId: common, authorized: 1_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', createdAt: now });
-await insert('awards', { id: 'awa_7', companyId: cid, label: 'OPT-7', stakeholderId: 'stk_priya', poolId: 'pool_x', type: 'ISO', quantity: 10_000, strikePrice: 500_000,
+await insertSecurity('awards', { id: 'awa_7', companyId: cid, label: 'OPT-7', stakeholderId: 'stk_priya', poolId: 'pool_x', type: 'ISO', quantity: 10_000, strikePrice: 500_000,
   grantDate: '2024-01-01', vestingStartDate: '2024-01-01', vestingScheduleId: schedule, status: 'OUTSTANDING', expirationDate: '2034-01-01', ptepMonths: 3,
   earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 500_000, rsuLiquidityCondition: 0, createdAt: now });
-await insert('issuances', { id: 'iss_12', companyId: cid, certificateNo: 'CS-12', stakeholderId: 'stk_lark', shareClassId: common,
+await insertSecurity('issuances', { id: 'iss_12', companyId: cid, certificateNo: 'CS-12', stakeholderId: 'stk_lark', shareClassId: common,
   quantity: 250_000, pricePerShare: 420_000, issueDate: '2024-03-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 await insert('documents', { id: 'doc_all', companyId: cid, name: 'Employee handbook', category: 'OTHER', visibility: 'ALL', stakeholderId: null, status: 'FINAL', requiresSignature: 0, createdAt: now });
 await insert('documents', { id: 'doc_board', companyId: cid, name: 'Board deck Q3', category: 'OTHER', visibility: 'ADMIN', stakeholderId: null, status: 'FINAL', requiresSignature: 0, createdAt: now });

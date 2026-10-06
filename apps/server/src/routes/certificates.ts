@@ -17,18 +17,27 @@ import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 export interface Doc { id: string; company_id: string; name: string; category: string; body: string | null; face: string | null; status: string; stakeholder_id: string | null; security_id: string | null; visibility: string; requires_signature: number; created_at: string }
 interface Sig { signer_name: string; status: string; typed_signature: string | null; signed_at: string | null; ip_address: string | null; stakeholder_id: string | null; body_sha256?: string | null }
 
+/** The SHA-256 a signature keeps of what was signed: the text and the stored certificate face. */
+export const signedHash = (body: string | null, face: string | null): string =>
+  createHash('sha256').update(JSON.stringify([body ?? '', face])).digest('hex');
+
 /**
- * Whether the text is no longer what someone signed: a signature's stored hash of the
- * body differs from the body now. The routes refuse that edit, so it means the row was
- * changed past them. Signatures from before hashes were kept are not checked.
+ * Whether the document is no longer what someone signed: a signature's stored hash differs
+ * from the text and face now. The routes refuse that edit, so it means the row was changed
+ * past them. Signatures from before faces were hashed kept the hash of the text alone, which
+ * is still checked; those from before hashes were kept are not checked.
  */
-export function changedSinceSigned(body: string | null, sigs: { status?: unknown; bodySha256?: unknown; body_sha256?: unknown }[]): boolean {
-  const hash = createHash('sha256').update(body ?? '').digest('hex');
-  return sigs.some((s) => s.status === 'SIGNED' && (s.bodySha256 ?? s.body_sha256) != null && (s.bodySha256 ?? s.body_sha256) !== hash);
+export function changedSinceSigned(body: string | null, face: string | null, sigs: { status?: unknown; bodySha256?: unknown; body_sha256?: unknown }[]): boolean {
+  const now = signedHash(body, face);
+  const bodyOnly = createHash('sha256').update(body ?? '').digest('hex');
+  return sigs.some((s) => {
+    const kept = s.bodySha256 ?? s.body_sha256;
+    return s.status === 'SIGNED' && kept != null && kept !== now && kept !== bodyOnly;
+  });
 }
 /** The warning printed on a document whose text changed after it was signed. */
 const TAMPERED = 'WARNING: this text has changed since it was signed';
-const warnIfChanged = (doc: Doc, sigs: Sig[]): string => (changedSinceSigned(doc.body, sigs) ? `${TAMPERED} \u00b7 ` : '');
+const warnIfChanged = (doc: Doc, sigs: Sig[]): string => (changedSinceSigned(doc.body, doc.face, sigs) ? `${TAMPERED} \u00b7 ` : '');
 
 const STYLE = `
   @page { margin: 22mm 20mm; }
