@@ -144,7 +144,7 @@ export function modelRound(data: CompanyData, input: RoundModelInput): RoundMode
 
   // Post-money SAFEs (by their own terms or an MFN's) are solved together on
   // Company Capitalization; everything else prices on its own.
-  const terms = new Map(convertibles.map((c) => [c.id, resolveMFN(c, data.convertibles, asOf)]));
+  const terms = new Map(convertibles.map((c) => [c.id, resolveMFN(c, data.convertibles, asOf, preMoney)]));
   const isPostMoney = (c: Convertible): boolean => terms.get(c.id)!.instrument === 'SAFE_POST';
   const preMoneyInstruments = convertibles.filter((c) => !isPostMoney(c));
   const postMoneySafes = convertibles.filter(isPostMoney);
@@ -185,18 +185,18 @@ export function modelRound(data: CompanyData, input: RoundModelInput): RoundMode
           asOf, roundPPS: pps,
           preMoneyCapitalization: Math.max(1, preMoneyCap),
           postMoneyCapitalization: Math.max(1, existingFD + conversionShares),
-          allConvertibles: data.convertibles,
+          allConvertibles: data.convertibles, valuation: preMoney,
         })
       : [];
     const preShares = preConversions.reduce((s, c) => s + c.shares, 0);
     let postConversions: ConversionResult[] = [];
     if (postMoneySafes.length) {
-      const solved = solvePostMoneySafes(postMoneySafes, existingFD + preShares, pps, asOf, data.convertibles);
+      const solved = solvePostMoneySafes(postMoneySafes, existingFD + preShares, pps, asOf, data.convertibles, preMoney);
       postConversions = convertAll(postMoneySafes, {
         asOf, roundPPS: pps,
         preMoneyCapitalization: Math.max(1, preMoneyCap),
         postMoneyCapitalization: Math.max(1, solved.totalCapitalization),
-        allConvertibles: data.convertibles,
+        allConvertibles: data.convertibles, valuation: preMoney,
       }).map((r) => ({ ...r, shares: solved.shares.get(r.convertibleId) ?? r.shares }));
     }
     conversions = [...preConversions, ...postConversions];
@@ -466,10 +466,11 @@ export function modelConvertibleStack(input: CompanyData, asOf: ISODate) {
   const totalWithInterest = live.reduce((s, c) => s + conversionAmount(c, asOf), 0);
   const impliedOwnership = live.map((c) => {
     const amount = conversionAmount(c, asOf);
-    const own = c.instrument === 'SAFE_POST' && c.valuationCap ? amount / c.valuationCap : null;
+    const t = resolveMFN(c, data.convertibles, asOf);
+    const own = t.instrument === 'SAFE_POST' && t.cap ? amount / t.cap : null;
     return {
       id: c.id, stakeholderId: c.stakeholderId, instrument: c.instrument,
-      principal: c.principal, amount, cap: c.valuationCap, discount: c.discount,
+      principal: c.principal, amount, cap: t.cap, discount: t.discount,
       impliedOwnershipPct: own,
       matured: c.maturityDate != null && c.maturityDate <= asOf,
     };

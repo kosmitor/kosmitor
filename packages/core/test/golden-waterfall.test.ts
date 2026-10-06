@@ -15,7 +15,7 @@ import { computeWaterfall, computeBreakpoints, waterfallCurve, type WaterfallOpt
 import { ppsToDollars, dollarsToCents as $ } from '../src/util.ts';
 import { waterfallCompany } from './builders.ts';
 import { refEquilibria, refModel, type WaterfallSpec } from './reference/waterfall.ts';
-import { rng, int, randomWaterfallSpec } from './reference/gen.ts';
+import { rng, int, randomWaterfallSpec, randomExit } from './reference/gen.ts';
 
 const AS_OF = '2025-01-01';
 const run = (spec: WaterfallSpec, exit: number, o: WaterfallOptions = {}) => computeWaterfall(waterfallCompany(spec), $(exit), { asOf: AS_OF, ...o });
@@ -395,4 +395,78 @@ test('Between two consecutive breakpoints every payout is linear, with fees, esc
       for (const [id, total] of mid) near(total, ((q1.get(id) ?? 0) + (q3.get(id) ?? 0)) / 2, 3, `table ${n}, ${id} between ${lo} and ${hi}`);
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// MFN safes. YC Safe (MFN), "MFN Amendment Provision": the safe is amended "to be
+// identical to" one later convertible security whose terms the holder prefers.
+// ---------------------------------------------------------------------------
+
+/** 10,000,000 common; an uncapped $1M MFN safe (Jan 2022) and later $1M safes. */
+const mfnSpec = (mfn: 'SAFE_PRE' | 'SAFE_POST', ...later: NonNullable<WaterfallSpec['safes']>): WaterfallSpec => ({
+  common: [{ holder: 'founders', shares: 10_000_000 }],
+  safes: [{ id: 'M', holder: 'mfn', amount: 1_000_000, cap: null, instrument: mfn, mfn: true, issueDate: '2022-01-01' }, ...later],
+});
+
+test('YC MFN safe in a $100M sale: an uncapped MFN adopts the later $5M pre-money cap and converts like it, $14,285,714.29 each', () => {
+  // Liquidity Capitalization 10,000,000. Both safes are $1M at a $5M pre-money cap: 1,000,000 x 10,000,000 /
+  // 5,000,000 = 2,000,000 shares each, as the cap table shows. 14,000,000 shares share $100M: each safe
+  // $100M x 2 / 14 = $14,285,714.29, common $100M x 10 / 14 = $71,428,571.43. Before the fix the waterfall
+  // read the MFN's own (absent) cap: it took its $1M cash-out and the later safe got $99M x 2 / 12 = $16.5M.
+  const spec = mfnSpec('SAFE_PRE', { id: 'L', holder: 'later', amount: 1_000_000, cap: 5_000_000, instrument: 'SAFE_PRE', issueDate: '2022-06-01' });
+  const w = run(spec, 100_000_000);
+  assert.deepEqual([paid(w, 'M').asConvertedShares, paid(w, 'L').asConvertedShares], [2_000_000, 2_000_000]);
+  near(paid(w, 'M').total, 1_428_571_429, 2, 'MFN');
+  near(paid(w, 'L').total, 1_428_571_429, 2, 'later');
+  near(paid(w, 'Common').total, 7_142_857_143, 2, 'common');
+  assert.ok(!w.warnings.some((x) => /no valuation cap/.test(x)), w.warnings.join('; '));
+  assert.equal(Math.floor(refEquilibria(100_000_000, refModel(spec))[0].safeShares.M), 2_000_000);
+});
+
+test('YC MFN safe: a post-money MFN that adopts a pre-money cap converts on the pre-money base, 2,000,000 shares, not 3,000,000', () => {
+  // The amended safe is identical to the later pre-money safe, so it prices on 10,000,000 as above. Had it kept a
+  // post-money basis at $5M it would own 20% of 10,000,000 + 2,000,000 + itself: 0.2 x 12,000,000 / 0.8 = 3,000,000.
+  const w = run(mfnSpec('SAFE_POST', { id: 'L', holder: 'later', amount: 1_000_000, cap: 5_000_000, instrument: 'SAFE_PRE', issueDate: '2022-06-01' }), 100_000_000);
+  assert.deepEqual([paid(w, 'M').asConvertedShares, paid(w, 'L').asConvertedShares], [2_000_000, 2_000_000]);
+  near(paid(w, 'M').total, 1_428_571_429, 2, 'MFN');
+});
+
+test('YC MFN safe: a safe issued after the sale is not one the MFN can adopt', () => {
+  // A ($10M pre-money cap, Jun 2022) is adopted; C ($2M cap) is issued Jun 2025, after the 1 Jan 2025 sale, and
+  // is not outstanding then. MFN and A get 1,000,000 shares each on 10,000,000: $100M x 1 / 12 = $8,333,333.33.
+  // Adopting C would have given 5,000,000 shares and $31.25M.
+  const w = run(mfnSpec('SAFE_PRE',
+    { id: 'A', holder: 'a', amount: 1_000_000, cap: 10_000_000, instrument: 'SAFE_PRE', issueDate: '2022-06-01' },
+    { id: 'C', holder: 'c', amount: 1_000_000, cap: 2_000_000, instrument: 'SAFE_PRE', issueDate: '2025-06-01' }), 100_000_000);
+  assert.equal(paid(w, 'M').asConvertedShares, 1_000_000);
+  near(paid(w, 'M').total, 833_333_333, 2, 'MFN');
+});
+
+test('Seeded waterfalls with MFN safes: the engine agrees with the independent reference (80 tables)', () => {
+  // randomWaterfallSpec plus an MFN safe and one to three later capped safes, pre- or post-money. Only exits
+  // where the reference finds a single stable set of elections are compared.
+  const pickKind = (r: () => number) => (r() < 0.5 ? 'SAFE_PRE' : 'SAFE_POST') as 'SAFE_PRE' | 'SAFE_POST';
+  let compared = 0;
+  for (let seed = 1; seed <= 80; seed++) {
+    const r = rng(seed * 104_729);
+    const spec = randomWaterfallSpec(r);
+    spec.safes = [
+      { id: 'M', holder: 'MFN holder', amount: 100_000 + int(r, 0, 10) * 50_000, cap: r() < 0.3 ? 5_000_000 + int(r, 0, 30) * 1_000_000 : null,
+        instrument: pickKind(r), mfn: true, issueDate: '2021-06-01' },
+      ...Array.from({ length: int(r, 1, 3) }, (_, k) => ({
+        id: `S${k}`, holder: `Safe holder ${k}`, amount: 100_000 + int(r, 0, 10) * 50_000, cap: 5_000_000 + int(r, 0, 30) * 1_000_000,
+        instrument: pickKind(r), issueDate: `2022-0${k + 1}-01`,
+      })),
+    ];
+    const exit = randomExit(r, spec);
+    const eq = refEquilibria(exit, refModel(spec));
+    if (eq.length !== 1) continue;
+    const w = run(spec, exit);
+    for (const [id, want] of Object.entries(eq[0].payouts)) {
+      if (id === 'common' || id.startsWith('opt')) continue;
+      near(paid(w, id).total, want * 100, Math.max(500, exit * 1e-3), `seed ${seed}, ${id} at $${exit}`);
+    }
+    compared++;
+  }
+  assert.ok(compared > 50, `only ${compared} of 80 tables compared`);
 });

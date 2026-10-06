@@ -152,7 +152,7 @@ export function waterfallCompany(spec: WaterfallSpec): CompanyData {
     }));
   }
   for (const w of spec.warrants ?? []) d.warrants.push(warrant(add(w.holder), 'sc_common', w.shares, { strikePrice: $$(w.strike), issueDate: '2020-06-01', expirationDate: null }));
-  for (const s of spec.safes ?? []) d.convertibles.push(convertible(add(s.holder), s.instrument ?? 'SAFE_POST', s.amount, s.cap, { id: s.id, issueDate: '2022-01-01' }));
+  for (const s of spec.safes ?? []) d.convertibles.push(convertible(add(s.holder), s.instrument ?? 'SAFE_POST', s.amount, s.cap, { id: s.id, issueDate: s.issueDate ?? '2022-01-01', mfn: s.mfn ?? false }));
   for (const h of holders) d.stakeholders.push(holder(h, h, 'OTHER'));
   return d;
 }

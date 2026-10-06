@@ -33,7 +33,31 @@ export function refPostMoneySafes(base: number, safes: RefPostSafe[]): { T: numb
   return { T, shares: safes.map((x) => Math.max(x.cap ? x.amount * T / x.cap : 0, x.amount / x.fixedPrice)) };
 }
 
-export interface RefSafe { amount: number; cap: number | null; discount: number; kind: 'POST' | 'PRE' }
+/** A safe; a list of them is in issue order. */
+export interface RefSafe { amount: number; cap: number | null; discount: number; kind: 'POST' | 'PRE'; mfn?: boolean }
+
+/**
+ * YC Safe (MFN), "MFN Amendment Provision": if the company issues Subsequent Convertible
+ * Securities and the investor finds their terms preferable, the company amends the safe "to be
+ * identical to" that instrument. The holder takes one later safe whole: its cap, its discount
+ * and its pre- or post-money basis, never a cap from one and a discount from another.
+ * Preferable: the lower effective valuation min(cap, pre-money x (1 - discount)); on a tie a
+ * pre-money basis (its capitalization leaves the safes out), then the larger discount.
+ */
+export function refAdoptMFN(safes: RefSafe[], preMoney: number): RefSafe[] {
+  const score = (s: RefSafe) => [Math.min(s.cap ?? Infinity, preMoney * (1 - s.discount)), s.kind === 'PRE' ? 0 : 1, -s.discount];
+  const better = (a: RefSafe, b: RefSafe) => {
+    const x = score(a), y = score(b);
+    const i = x.findIndex((v, k) => v !== y[k]);
+    return i >= 0 && x[i] < y[i];
+  };
+  return safes.map((s, i) => {
+    if (!s.mfn) return s;
+    let best = s;
+    for (const later of safes.slice(i + 1)) if (better(later, best)) best = later;
+    return { ...best, amount: s.amount, mfn: false };
+  });
+}
 
 export interface RefRound {
   baseFD: number;            // pre-round fully diluted, including the existing unissued pool
@@ -59,7 +83,8 @@ export interface RefRoundResult {
  * Bisection on the pool increase, with an inner fixed point on the price, all in
  * full precision. Returns real-valued shares; floor them to compare with a cap table.
  */
-export function refRound(r: RefRound): RefRoundResult {
+export function refRound(input: RefRound): RefRoundResult {
+  const r = { ...input, safes: refAdoptMFN(input.safes, input.preMoney) };
   const fromPre = r.poolFromPreMoney !== false;
   const inner = (inc: number) => {
     let p = r.preMoney / r.baseFD;

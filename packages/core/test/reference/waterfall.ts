@@ -26,7 +26,8 @@ export interface WaterfallSpec {
     divRate?: number; divType?: DividendType; divCompound?: boolean; issueDate?: string; convertible?: boolean;
   }[];
   options?: { holder: string; shares: number; strike: number; type?: AwardType }[];
-  safes?: { id: string; holder: string; amount: number; cap: number | null; instrument?: ConvertibleInstrument }[];
+  /** `mfn` adopts the terms of one safe issued after it (issueDate, default 2022-01-01); see refModel. */
+  safes?: { id: string; holder: string; amount: number; cap: number | null; instrument?: ConvertibleInstrument; mfn?: boolean; issueDate?: string }[];
   warrants?: { holder: string; shares: number; strike: number }[];
 }
 
@@ -76,7 +77,22 @@ export function refModel(spec: WaterfallSpec): RefModel {
   const options = (spec.options ?? []).map((o) => ({ n: o.shares, K: o.strike }));
   const optionShares = options.reduce((s, o) => s + o.n, 0);
   const prefShares = prefs.reduce((s, p) => s + p.shares, 0);
-  const safes = (spec.safes ?? []).filter((s) => s.cap != null).map((s) => ({ id: s.id, amount: s.amount, cap: s.cap!, instrument: s.instrument }));
+  // YC Safe (MFN), "MFN Amendment Provision": the holder may have its safe amended "to be identical to"
+  // a later convertible security whose terms it prefers, so it takes one later safe's cap and pre- or
+  // post-money basis in full. With no round price, preferable is the lower cap; on equal caps a
+  // pre-money one, whose capitalization leaves the safes out.
+  const all = spec.safes ?? [];
+  const day = (s: (typeof all)[number]) => s.issueDate ?? '2022-01-01';
+  const kind = (s: (typeof all)[number]) => (s.instrument === 'SAFE_PRE' ? 0 : 1);
+  const better = (a: (typeof all)[number], b: (typeof all)[number]) =>
+    (a.cap ?? Infinity) < (b.cap ?? Infinity) || ((a.cap ?? Infinity) === (b.cap ?? Infinity) && kind(a) < kind(b));
+  const adopted = all.map((s) => {
+    if (!s.mfn) return s;
+    let best = s;
+    for (const o of all) if (day(o) > day(s) && better(o, best)) best = o;
+    return { ...s, cap: best.cap, instrument: best.instrument };
+  });
+  const safes = adopted.filter((s) => s.cap != null).map((s) => ({ id: s.id, amount: s.amount, cap: s.cap!, instrument: s.instrument }));
   return { common, prefs, options, safes, liqBase: () => common + optionShares + prefShares };
 }
 
