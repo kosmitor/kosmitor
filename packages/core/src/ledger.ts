@@ -1,4 +1,4 @@
-import type { Award, CompanyData, Convertible, CorrectedField, ISODate, Issuance, LedgerEntry, Warrant } from './types.ts';
+import { CORRECTED_TERMS, type Award, type CompanyData, type Convertible, type CorrectedField, type ISODate, type Issuance, type LedgerEntry, type Warrant } from './types.ts';
 import { roundShares } from './util.ts';
 
 /**
@@ -166,13 +166,22 @@ function counter(data: CompanyData, on: ISODate, entries: LedgerEntry[], asOf: I
   };
 }
 
+const TERMS = new Set<string>(CORRECTED_TERMS);
+
 /**
- * A convertible that converted, was repaid or was cancelled after `asOf` was still
+ * A convertible whose terms were corrected after `asOf` (an amendment, or a fix
+ * dated from when it applies) had the terms of before the earliest such entry.
+ * One that converted, was repaid or was cancelled after `asOf` was still
  * outstanding then. The convert route dates the conversion on the instrument and in
  * the ledger, the repay and cancel routes in the ledger; a row older than the
  * ledger may have neither, and then nothing says when.
  */
-function rewindConvertible(c: Convertible, entries: LedgerEntry[], asOf: ISODate): Convertible {
+function rewindConvertible(input: Convertible, entries: LedgerEntry[], asOf: ISODate): Convertible {
+  let c = input;
+  // Latest first, so each term ends at the value before its earliest correction after asOf.
+  const amended = entries.filter((e) => e.type === 'CORRECTION' && e.date > asOf && TERMS.has(String(e.field)))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  for (const e of amended) c = { ...c, [e.field!]: e.before };
   if (c.status === 'OUTSTANDING' || !Object.values(SETTLES).includes(c.status)) return c;
   const on = (c.status === 'CONVERTED' ? c.convertedOn : null)
     ?? entries.filter((e) => SETTLES[e.type] === c.status).map((e) => e.date).sort()[0] ?? null;
