@@ -193,10 +193,13 @@ test('a document out for signature stays put until every party has signed', asyn
   const same = await call('PATCH', `/api/c/${cid}/documents/${inFlight.id}`, { securityId: certificate.id, category: 'AGREEMENT' }, admin);
   assert.equal(same.status, 200, JSON.stringify(same.json));
 
-  // Once signed it is an ordinary document again.
+  // Once signed it is evidence of that holding: it can be renamed and refiled, never relinked.
   await run("UPDATE signatures SET status = 'SIGNED' WHERE document_id = ?", inFlight.id);
-  const freed = await call('PATCH', `/api/c/${cid}/documents/${inFlight.id}`, { securityId: null }, admin);
-  assert.equal(freed.status, 200, JSON.stringify(freed.json));
+  const relinked = await call('PATCH', `/api/c/${cid}/documents/${inFlight.id}`, { securityId: null }, admin);
+  assert.equal(relinked.status, 400);
+  assert.match(relinked.json.error, /has signed this document, so it cannot be linked to another holding/);
+  const refiled = await call('PATCH', `/api/c/${cid}/documents/${inFlight.id}`, { folder: 'Signed' }, admin);
+  assert.equal(refiled.status, 200, JSON.stringify(refiled.json));
 });
 
 test('a document cannot be created against another company\'s holder or holding', async () => {

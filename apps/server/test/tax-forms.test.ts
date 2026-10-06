@@ -6,7 +6,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -44,9 +44,9 @@ await insert('pools', { id: 'pool_1', companyId: cid, name: 'Plan', shareClassId
 await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', address: '12 Elm St, Oakland, CA', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
 await insert('stakeholders', { id: 'stk_noor', companyId: cid, name: 'Noor Haddad', email: 'noor@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
 const issued = today();
-await insert('issuances', { id: 'iss_restricted', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_priya', shareClassId: common, quantity: 40_000, pricePerShare: 10_000, issueDate: issued, status: 'OUTSTANDING',
+await insertSecurity('issuances', { id: 'iss_restricted', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_priya', shareClassId: common, quantity: 40_000, pricePerShare: 10_000, issueDate: issued, status: 'OUTSTANDING',
   vestingScheduleId: vesting, vestingStartDate: issued, earlyExercised: 0, createdAt: now });
-await insert('issuances', { id: 'iss_plain', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_noor', shareClassId: common, quantity: 1_000, pricePerShare: 10_000, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+await insertSecurity('issuances', { id: 'iss_plain', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_noor', shareClassId: common, quantity: 1_000, pricePerShare: 10_000, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 await insert('valuations', { id: 'val_1', companyId: cid, type: '409A', fairMarketValue: 250_000, effectiveDate: '2024-01-01', status: 'ACTIVE', provider: 'Test', createdAt: now });
 
 function today(): string { return new Date().toISOString().slice(0, 10); }

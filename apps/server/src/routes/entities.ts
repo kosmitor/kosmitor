@@ -2,7 +2,8 @@ import { route, newId, nowISO, audit, badRequest, notFound, date, type Ctx } fro
 import { all, one, run, insert, update, toCamel, toCamelAll, snake } from '../db.ts';
 import { validateEntity } from '../validation.ts';
 import { getCompanyData, invalidate } from '../store.ts';
-import { roundShares, splitFactor, today, type CompanyData, type CorrectedField } from '@kosmitor/core';
+import { roundShares, splitFactor, today, CORRECTED_TERMS, type CompanyData, type CorrectedField } from '@kosmitor/core';
+import { reissueCertificate } from './workflows.ts';
 import { reportLink } from './valuation-report.ts';
 import { config } from '../config.ts';
 
@@ -252,8 +253,59 @@ const EVENTS: Record<string, { ownDate: string; closed: string[]; routes: Record
   convertibles: { ownDate: 'issueDate', closed: ['CONVERTED', 'REPAID', 'CANCELLED'],
     routes: { CONVERTED: 'convert', REPAID: 'repay', CANCELLED: 'cancel', convertedOn: 'convert', convertedIntoShareClassId: 'convert' } },
 };
-/** Fields an edit cannot change once a security has ledger history: its entries are dated, held and counted by them. */
-const FIXED_BY_HISTORY = ['stakeholderId', 'shareClassId'];
+/**
+ * Who holds a security, its class or plan, and its own date. A change is a typo fix: a
+ * CORRECTION with a reason that the rewind applies on every date, never a transfer.
+ */
+const IDENTITY: Record<string, string[]> = {
+  issuances: ['stakeholderId', 'shareClassId', 'issueDate'], awards: ['stakeholderId', 'poolId', 'grantDate'],
+  warrants: ['stakeholderId', 'shareClassId', 'issueDate'], convertibles: ['stakeholderId', 'issueDate'],
+};
+/** Not yet issued: not on the cap table, so not in the ledger either (the trigger in db.ts agrees). */
+const UNISSUED = ['DRAFT', 'PENDING_APPROVAL', 'PENDING_SIGNATURE'];
+const isIssued = (status: unknown): boolean => !UNISSUED.includes(String(status ?? 'OUTSTANDING'));
+const json = (v: unknown): string => JSON.stringify(v ?? null);
+
+/** The dated entry a security enters the ledger with: an ISSUANCE, or a GRANT for an award. */
+async function recordCreation(ctx: Ctx, table: string, id: string, v: Record<string, unknown>, memo: string): Promise<void> {
+  const quantity = table === 'convertibles' ? null : Number(v.quantity);
+  const price = table === 'issuances' ? Number(v.pricePerShare ?? 0) : table === 'convertibles' ? null : Number(v.strikePrice ?? 0);
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: table === 'awards' ? 'GRANT' : 'ISSUANCE', date: v[EVENTS[table].ownDate],
+    stakeholderId: v.stakeholderId ?? null, securityId: id, shareClassId: v.shareClassId ?? null, quantity, pricePerShare: price,
+    amount: table === 'convertibles' ? Number(v.principal) : table === 'issuances' ? Math.round((quantity! * price!) / 10_000) : null,
+    memo, createdAt: nowISO(), createdBy: ctx.user?.name ?? null,
+  });
+}
+
+/**
+ * Splits restate every share count dated before them, the ledger's entries among them,
+ * which are in the shares of their own day. A split dated on or before an entry already
+ * recorded against a security issued before it would restate that entry, and the cap
+ * table of every earlier date with it, so it is refused.
+ */
+async function refuseSplitBehindLedger(companyId: string, on: string): Promise<void> {
+  const hit = await one<{ type: string; date: string }>(
+    `SELECT t.type, t.date FROM transactions t
+       LEFT JOIN issuances i ON i.id = t.security_id LEFT JOIN awards a ON a.id = t.security_id LEFT JOIN warrants w ON w.id = t.security_id
+      WHERE t.company_id = ? AND t.security_id IS NOT NULL AND t.date >= ? AND COALESCE(i.issue_date, a.grant_date, w.issue_date) < ?
+      ORDER BY t.date DESC LIMIT 1`, companyId, on, on);
+  if (hit) {
+    throw badRequest(`A split dated ${on} would restate ledger entries already recorded on or after it (the latest, a ${hit.type.toLowerCase()} on ${hit.date}), and every earlier cap table with them. Date the split after ${hit.date}.`);
+  }
+}
+
+/** The company STOCK_SPLIT entry a change to a split is recorded with. */
+async function recordSplit(ctx: Ctx, before: Record<string, unknown> | null, after: Record<string, unknown> | null): Promise<void> {
+  const terms = (v: Record<string, unknown> | null) => (v ? { date: v.date, ratio: Number(v.ratio) } : null);
+  const on = String((after ?? before)!.date);
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: 'STOCK_SPLIT', date: on, securityId: null,
+    memo: !before ? `${after!.ratio}:1 split recorded` : !after ? `${before.ratio}:1 split of ${before.date} removed` : `Split of ${before.date} (${before.ratio}:1) changed to ${after.date} (${after.ratio}:1)`,
+    beforeValue: before ? json(terms(before)) : null, afterValue: after ? json(terms(after)) : null,
+    createdAt: nowISO(), createdBy: ctx.user?.name ?? null,
+  });
+}
 
 /**
  * A security starts outstanding with nothing exercised, cancelled or converted. A
@@ -272,7 +324,11 @@ function initialState(r: Resource, values: Record<string, unknown>): void {
   if (values.convertedOn || values.convertedIntoShareClassId) throw badRequest('A new instrument starts outstanding. Record the conversion with its action, or use the import.');
 }
 const COUNTS: CorrectedField[] = ['quantity', 'exercisedQuantity', 'cancelledQuantity'];
-const same = (a: unknown, b: unknown): boolean => String(a ?? '') === String(b ?? '');
+/** Equal as stored: a flag sent as true or false is the 1 or 0 the column holds. */
+const same = (a: unknown, b: unknown): boolean => {
+  const stored = (v: unknown) => String(v === true ? 1 : v === false ? 0 : v ?? '');
+  return stored(a) === stored(b);
+};
 
 /**
  * What an edit changes in a security's dated state. Events are refused with their
@@ -354,7 +410,10 @@ for (const r of RESOURCES) {
     initialState(r, values);
     await validateEntity(r.table, values, ctx.companyId!);
     const id = newId(r.path.slice(0, 3));
+    if (r.table === 'stock_splits') await refuseSplitBehindLedger(ctx.companyId!, String(values.date));
     await insert(r.table, { id, companyId: ctx.companyId, ...values, ...(r.table === 'share_classes' ? {} : { createdAt: nowISO() }) });
+    if (EVENTS[r.table] && isIssued(values.status)) await recordCreation(ctx, r.table, id, values, `${r.label} created`);
+    if (r.table === 'stock_splits') await recordSplit(ctx, null, values);
     invalidate(ctx.companyId!);
     await audit(ctx, 'CREATE', r.table, id, `${r.label} created`);
     return toCamel(await one(`SELECT * FROM ${r.table} WHERE id = ?`, id));
@@ -369,22 +428,45 @@ for (const r of RESOURCES) {
     await validateEntity(r.table, values, ctx.companyId!);
     const fixes = corrections(r, ctx.params.id, before, values);
     const ev = EVENTS[r.table];
-    if (ev && await one('SELECT 1 FROM transactions WHERE security_id = ? AND company_id = ? LIMIT 1', ctx.params.id, ctx.companyId)) {
-      // Entries are dated in the shares of their day against this holder and class:
-      // moving the security's own date would restate them across a split or put it
-      // after its own events, and a new holder or class would be an unrecorded transfer.
-      for (const key of [ev.ownDate, ...FIXED_BY_HISTORY]) {
-        if (key in values && !same(before[key], values[key])) {
-          throw badRequest(`This ${r.label.toLowerCase()} has ledger history, so its ${key} cannot be edited.` +
-            (key === 'stakeholderId' && r.table === 'issuances' ? ` Record a transfer (POST /api/c/:cid/issuances/${ctx.params.id}/transfer).` : ''));
-        }
+    if (ev && isIssued(before.status) && !isIssued(values.status)) throw badRequest(`An issued ${r.label.toLowerCase()} cannot go back to ${values.status}.`);
+    if (ev && !isIssued(before.status) && isIssued(values.status)) await recordCreation(ctx, r.table, ctx.params.id, values, `${r.label} recorded as ${values.status}`);
+    const identity = ev && isIssued(before.status) ? IDENTITY[r.table].filter((k) => k in values && !same(before[k], values[k])) : [];
+    const terms = r.table === 'convertibles' && isIssued(before.status) ? CORRECTED_TERMS.filter((k) => k in values && !same(before[k], values[k])) : [];
+    const reason = typeof ctx.body.reason === 'string' ? ctx.body.reason.trim().slice(0, 500) : '';
+    const entry = (o: Record<string, unknown>) => insert('transactions', {
+      id: newId('tx'), companyId: ctx.companyId, type: 'CORRECTION', stakeholderId: values.stakeholderId ?? null, securityId: ctx.params.id,
+      shareClassId: values.shareClassId ?? null, reason: reason || null, createdAt: nowISO(), createdBy: ctx.user!.name, ...o,
+    });
+    if (identity.length > 0) {
+      // A typo in who holds it, its class or its date: the record always should have said
+      // so. It is not a transfer, and the rewind applies it on every date.
+      if (!reason) {
+        throw badRequest(`This ${r.label.toLowerCase()} is issued, so a change to its ${identity.join(', ')} is a correction: it says the record was always wrong and applies on every date. Give a reason to record it.`
+          + (identity.includes('stakeholderId') && r.table === 'issuances' ? ` If the shares changed hands, record a transfer instead (POST /api/c/:cid/issuances/${ctx.params.id}/transfer).` : ''));
       }
+      const ownDate = ev.ownDate;
+      if (identity.includes(ownDate)) {
+        const [from, to] = [String(before[ownDate]), String(values[ownDate])].sort();
+        const split = await one<{ date: string }>('SELECT date FROM stock_splits WHERE company_id = ? AND date > ? AND date <= ? LIMIT 1', ctx.companyId, from, to);
+        if (split) throw badRequest(`A stock split on ${split.date} falls between ${from} and ${to}, so this date cannot be corrected: the share count would change with it.`);
+        const event = await one<{ type: string; date: string }>(
+          "SELECT type, date FROM transactions WHERE security_id = ? AND type NOT IN ('ISSUANCE', 'GRANT', 'CORRECTION') AND date < ? ORDER BY date LIMIT 1", ctx.params.id, values[ownDate]);
+        if (event) throw badRequest(`The ${event.type.toLowerCase()} on ${event.date} comes before ${values[ownDate]}, so the date cannot move past it.`);
+        // A certificate an event issued (a transfer, an exercise, a conversion) is dated by that event,
+        // written in the same transaction as its ISSUANCE entry. Its date is the event's to correct.
+        const source = await one<{ type: string; date: string }>(
+          `SELECT e.type, e.date FROM transactions i JOIN transactions e ON e.xact_id = i.xact_id AND e.id <> i.id
+            WHERE i.security_id = ? AND i.type = 'ISSUANCE' AND e.type IN ('TRANSFER', 'EXERCISE', 'CONVERSION') AND e.date = i.date LIMIT 1`, ctx.params.id);
+        if (source) throw badRequest(`This ${r.label.toLowerCase()} was issued by the ${source.type.toLowerCase()} on ${source.date}, which sets its date.`);
+      }
+      for (const field of identity) await entry({ date: values[ownDate], field, beforeValue: json(before[field]), afterValue: json(values[field]), memo: `${field} corrected from ${before[field]} to ${values[field]}: ${reason}` });
     }
-    if (fixes.length > 0) {
+    if (fixes.length > 0 || terms.length > 0) {
       // A correction says the record was wrong from a date on: the security's own date
       // if it always was, or a later one. Its entry is in the shares of that date.
       if (r.table === 'issuances' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding certificate\'s share count can be corrected.');
       if (r.table === 'warrants' && ['CANCELLED', 'EXPIRED'].includes(String(before.status))) throw badRequest('A cancelled or expired warrant\'s counts cannot be corrected.');
+      if (r.table === 'convertibles' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding instrument\'s terms can be corrected.');
       const ownDate = String(values[EVENTS[r.table].ownDate]);
       const effective = date(ctx.body.effectiveDate, 'Effective date');
       if (effective < ownDate) throw badRequest(`The effective date cannot be before the ${r.label.toLowerCase()}'s own date, ${ownDate}.`);
@@ -393,16 +475,22 @@ for (const r of RESOURCES) {
       const k = splitFactor(data, ownDate, effective);
       if (r.table === 'awards' || r.table === 'warrants') usedUp(r, ctx.params.id, values, data);
       for (const { field, delta } of fixes) {
-        await insert('transactions', {
-          id: newId('tx'), companyId: ctx.companyId, type: 'CORRECTION', date: effective,
-          stakeholderId: values.stakeholderId ?? null, counterpartyId: null, securityId: ctx.params.id,
-          shareClassId: values.shareClassId ?? null, quantity: roundShares(delta * k), pricePerShare: null, amount: null, field,
-          memo: `${field} corrected from ${before[field]} to ${values[field]}`, createdAt: nowISO(), createdBy: ctx.user!.name,
-        });
+        await entry({ date: effective, quantity: roundShares(delta * k), field, memo: `${field} corrected from ${before[field]} to ${values[field]}` });
       }
+      for (const field of terms) {
+        await entry({ date: effective, field, beforeValue: json(before[field]), afterValue: json(values[field]), memo: `${field} corrected from ${before[field]} to ${values[field]}` });
+      }
+    }
+    if (r.table === 'stock_splits' && (!same(before.date, values.date) || Number(before.ratio) !== Number(values.ratio))) {
+      for (const on of new Set([String(before.date), String(values.date)])) await refuseSplitBehindLedger(ctx.companyId!, on);
+      await recordSplit(ctx, before, values);
     }
     await update(r.table, ctx.params.id, values);
     invalidate(ctx.companyId!);
+    // The signed certificate no longer says what the record does: it is voided, and a new one goes out for signature.
+    if (r.table === 'issuances' && isIssued(before.status) && ['quantity', 'pricePerShare', ...IDENTITY.issuances].some((k) => !same(before[k], values[k]))) {
+      await reissueCertificate(ctx, ctx.params.id);
+    }
     // Only what moved, with its value before and after.
     const show = (v: unknown) => JSON.stringify(v ?? null).slice(0, 120);
     const changed = Object.keys(values).filter((k) => !same(before[k], values[k]));
@@ -424,10 +512,31 @@ for (const r of RESOURCES) {
     for (const [table, field] of references[r.table] ?? []) {
       if (await one(`SELECT 1 FROM ${table} WHERE ${field} = ? AND company_id = ? LIMIT 1`, ctx.params.id, ctx.companyId)) throw badRequest(`${r.label} is still referenced by ${table.replaceAll('_', ' ')}.`);
     }
-    if (['issuances', 'awards', 'warrants', 'convertibles'].includes(r.table)
-        && await one('SELECT 1 FROM transactions WHERE (security_id = ? OR adopted_security_id = ?) AND company_id = ? LIMIT 1', ctx.params.id, ctx.params.id, ctx.companyId)) throw badRequest('This security has ledger history and cannot be deleted.');
+    const ev = EVENTS[r.table];
+    const issued = !!ev && isIssued(existing.status);
+    // An issued security entered by mistake can go while the ledger has only its creation;
+    // anything that happened to it since is history, and an event route ends it instead.
+    if (issued && await one("SELECT 1 FROM transactions WHERE security_id = ? AND company_id = ? AND type NOT IN ('ISSUANCE', 'GRANT') LIMIT 1", ctx.params.id, ctx.companyId)) {
+      throw badRequest(`This ${r.label.toLowerCase()} has ledger history beyond its creation, so it cannot be deleted. Cancel it instead (POST /api/c/:cid/${r.path}/${ctx.params.id}/cancel).`);
+    }
+    // A convertible whose terms an MFN holder elected stays: the election points at it.
+    if (r.table === 'convertibles' && await one('SELECT 1 FROM transactions WHERE adopted_security_id = ? AND company_id = ? LIMIT 1', ctx.params.id, ctx.companyId)) {
+      throw badRequest('An MFN holder elected the terms of this instrument, so it cannot be deleted.');
+    }
     const block = await r.guardDelete?.(ctx.params.id, ctx.companyId!);
     if (block) throw badRequest(block);
+    if (issued) {
+      const row = toCamel<Record<string, unknown>>(existing)!;
+      const reason = (ctx.query.get('reason') ?? '').trim().slice(0, 500);
+      await insert('transactions', {
+        id: newId('tx'), companyId: ctx.companyId, type: 'CORRECTION', date: row[ev.ownDate], stakeholderId: row.stakeholderId ?? null, securityId: ctx.params.id,
+        field: 'deleted', reason: reason || null, memo: `${r.label} entered by mistake, deleted`, createdAt: nowISO(), createdBy: ctx.user!.name,
+      });
+    }
+    if (r.table === 'stock_splits') {
+      await refuseSplitBehindLedger(ctx.companyId!, String(existing.date));
+      await recordSplit(ctx, toCamel(existing)!, null);
+    }
     await run(`DELETE FROM ${r.table} WHERE id = ? AND company_id = ?`, ctx.params.id, ctx.companyId);
     invalidate(ctx.companyId!);
     await audit(ctx, 'DELETE', r.table, ctx.params.id, `${r.label} deleted`);

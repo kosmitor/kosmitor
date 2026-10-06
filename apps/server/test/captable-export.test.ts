@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -48,10 +48,10 @@ await run("UPDATE share_classes SET issue_date = '2023-01-01' WHERE id = ?", com
 await insert('stakeholders', { id: 'stk_ava', companyId: cid, name: 'Ava Founder', email: 'ava@example.com', type: 'INDIVIDUAL', relation: 'FOUNDER', createdAt: now });
 await insert('stakeholders', { id: 'stk_ben', companyId: cid, name: 'Ben Investor', email: 'ben@example.com', type: 'INDIVIDUAL', relation: 'INVESTOR', createdAt: now });
 await insert('stakeholders', { id: 'stk_cam', companyId: cid, name: 'Cam Employee', email: 'cam@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
-await insert('issuances', { id: 'iss_1', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_ava', shareClassId: common, quantity: 6_000_000, pricePerShare: 100, issueDate: '2023-01-15', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
-await insert('issuances', { id: 'iss_2', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_ben', shareClassId: common, quantity: 2_000_000, pricePerShare: 500_000, issueDate: '2024-03-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+await insertSecurity('issuances', { id: 'iss_1', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_ava', shareClassId: common, quantity: 6_000_000, pricePerShare: 100, issueDate: '2023-01-15', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+await insertSecurity('issuances', { id: 'iss_2', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_ben', shareClassId: common, quantity: 2_000_000, pricePerShare: 500_000, issueDate: '2024-03-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 await insert('pools', { id: 'pool_1', companyId: cid, name: '2023 Plan', shareClassId: common, authorized: 1_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', createdAt: now });
-await insert('awards', { id: 'awa_1', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_cam', poolId: 'pool_1', type: 'ISO', quantity: 400_000, strikePrice: 500_000,
+await insertSecurity('awards', { id: 'awa_1', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_cam', poolId: 'pool_1', type: 'ISO', quantity: 400_000, strikePrice: 500_000,
   grantDate: '2024-06-01', vestingStartDate: '2024-06-01', vestingScheduleId: schedule, status: 'OUTSTANDING', expirationDate: '2034-06-01', ptepMonths: 3,
   earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 500_000, rsuLiquidityCondition: 0, createdAt: now });
 

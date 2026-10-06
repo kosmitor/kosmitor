@@ -129,3 +129,26 @@ test('a cancellation dated before the grant is an error, and a date with nothing
   assert.ok(r.json.rows[0].messages.some((m: any) => m.text === 'Cancellation date is before the grant date'));
   assert.ok(r.json.rows[1].messages.some((m: any) => m.text === 'Cancellation date given with no cancelled shares — not used'));
 });
+
+test('exercised options and settled instruments are dated in the ledger, so past cap tables still show them', async () => {
+  const cid = await company('Tidewater Exercises');
+  const headers = [...HEADERS, 'Exercised', 'Exercise Date'];
+  await importGrants(cid, headers, [[...odile('TW-9', '10,000', '2022-02-07'), '4,000', '2023-03-01'], [...odile('TW-10', '5,000', '2022-02-07'), '1,000', '']]);
+  const exercises = await all<{ date: string; quantity: number }>("SELECT date, quantity FROM transactions WHERE company_id = ? AND type = 'EXERCISE' ORDER BY quantity DESC", cid);
+  assert.deepEqual(exercises.map((e) => [e.date, Number(e.quantity)]), [['2023-03-01', 4_000], ['2022-02-07', 1_000]]);
+  const options = async (asOf: string) => (await call('GET', `/api/c/${cid}/captable?asOf=${asOf}`, undefined, admin)).json.table.rows
+    .reduce((s: number, r: any) => s + (r.optionsOutstanding ?? 0), 0);
+  assert.equal(await options('2022-06-01'), 14_000, 'before 2023-03-01 the 4,000 were not yet exercised; the undated 1,000 were');
+  assert.equal(await options('2023-06-01'), 10_000);
+
+  const safeHeaders = ['Stakeholder', 'Instrument', 'Principal', 'Issue date', 'Valuation cap', 'Status', 'Converted on'];
+  const suggested = (await call('POST', `/api/c/${cid}/imports/suggest`, { kind: 'convertibles', headers: safeHeaders }, admin)).json;
+  const rows = [['Lior Vance', 'Post-money SAFE', '$100,000', '2022-01-10', '$10,000,000', 'Converted', '2023-05-01'], ['Mae Ostrow', 'Post-money SAFE', '$50,000', '2022-01-10', '$10,000,000', 'Cancelled', '']];
+  const r = await call('POST', `/api/c/${cid}/imports/commit`, { kind: 'convertibles', headers: safeHeaders, rows, mapping: suggested.mapping, options: { fileName: 'safes.csv', createMissingStakeholders: true } }, admin);
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const settled = await all<{ type: string; date: string }>("SELECT type, date FROM transactions WHERE company_id = ? AND type IN ('CONVERSION', 'CANCELLATION') ORDER BY type", cid);
+  assert.deepEqual(settled.map((e) => [e.type, e.date]), [['CANCELLATION', '2022-01-10'], ['CONVERSION', '2023-05-01']]);
+  const principal = async (asOf: string) => (await call('GET', `/api/c/${cid}/captable?asOf=${asOf}&includeConvertibles=true`, undefined, admin)).json.table.rows
+    .reduce((s: number, x: any) => s + (x.convertiblePrincipal ?? 0), 0);
+  assert.deepEqual([await principal('2022-06-01'), await principal('2023-06-01')], [10_000_000, 0]);
+});

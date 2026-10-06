@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -37,7 +37,7 @@ test('an invited employee is linked by email, sees their own equity, and is refu
   const now = new Date().toISOString();
   await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'Priya@Example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
   const common = await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid);
-  await insert('issuances', { id: 'iss_priya', companyId: cid, certificateNo: 'CS-7', stakeholderId: 'stk_priya', shareClassId: common!.id,
+  await insertSecurity('issuances', { id: 'iss_priya', companyId: cid, certificateNo: 'CS-7', stakeholderId: 'stk_priya', shareClassId: common!.id,
     quantity: 25_000, pricePerShare: 10_000, issueDate: '2024-01-15', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
   await insert('documents', { id: 'doc_all', companyId: cid, name: 'Employee handbook', category: 'OTHER', visibility: 'ALL', stakeholderId: null, status: 'FINAL', requiresSignature: 0, createdAt: now });
   await insert('documents', { id: 'doc_priya', companyId: cid, name: 'Priya stock certificate', category: 'CERTIFICATE', visibility: 'HOLDER', stakeholderId: 'stk_priya', status: 'FINAL', requiresSignature: 0, createdAt: now });

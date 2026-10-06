@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -48,7 +48,7 @@ const now = new Date().toISOString();
 await insert('pools', { id: 'pool_n', companyId: cid, name: 'Plan', shareClassId: common, authorized: 500_000, returnForfeitures: 1, planType: 'STOCK_PLAN', boardApprovalDate: '2022-01-03', createdAt: now });
 await insert('vesting_schedules', { id: 'vs_cliff', companyId: cid, name: 'One year cliff', kind: 'TIME', durationMonths: 12,
   cliffMonths: 12, frequency: 'MONTHLY', immediatePortion: 0, accelerationSingle: 0, accelerationDouble: 0, createdAt: now });
-const iso = (id: string, quantity: number, grantDate: string) => insert('awards', { id, companyId: cid, label: id.toUpperCase(), stakeholderId: holder, poolId: 'pool_n', type: 'ISO',
+const iso = (id: string, quantity: number, grantDate: string) => insertSecurity('awards', { id, companyId: cid, label: id.toUpperCase(), stakeholderId: holder, poolId: 'pool_n', type: 'ISO',
   quantity, strikePrice: 1_000_000, grantDate, vestingStartDate: grantDate, vestingScheduleId: 'vs_cliff', status: 'OUTSTANDING', expirationDate: `${Number(grantDate.slice(0, 4)) + 10}${grantDate.slice(4)}`,
   ptepMonths: 3, earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 1_000_000, rsuLiquidityCondition: 0, createdAt: now });
 await iso('nl_1', 60_000, '2022-02-07');

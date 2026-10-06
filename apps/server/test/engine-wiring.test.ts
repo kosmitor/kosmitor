@@ -13,7 +13,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -51,7 +51,7 @@ async function newCompany(name: string, founderShares: number) {
   const cid = (await call('POST', '/api/companies', { name, incorporationDate: '2023-11-01', authorizedCommon: 50_000_000 }, admin)).json.id as string;
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
   const founder = (await call('POST', `/api/c/${cid}/stakeholders`, { name: 'Odile Varga', type: 'INDIVIDUAL', relation: 'FOUNDER' }, admin)).json.id as string;
-  await insert('issuances', { id: `iss_${cid}`, companyId: cid, certificateNo: 'CS-1', stakeholderId: founder, shareClassId: common, quantity: founderShares,
+  await insertSecurity('issuances', { id: `iss_${cid}`, companyId: cid, certificateNo: 'CS-1', stakeholderId: founder, shareClassId: common, quantity: founderShares,
     pricePerShare: 100, issueDate: '2024-01-15', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
   await insert('pools', { id: `pool_${cid}`, companyId: cid, name: 'Plan', shareClassId: common, authorized: 5_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', boardApprovalDate: '2023-12-01', createdAt: now });
   const schedule = async (kind: string) => (await one<{ id: string }>('SELECT id FROM vesting_schedules WHERE company_id = ? AND kind = ? ORDER BY duration_months DESC LIMIT 1', cid, kind))!.id;
@@ -61,7 +61,7 @@ async function newCompany(name: string, founderShares: number) {
 
 async function grant(c: Awaited<ReturnType<typeof newCompany>>, holder: string, o: Record<string, unknown>) {
   const id = String(o.id ?? `aw_${Math.random().toString(36).slice(2, 10)}`);
-  await insert('awards', {
+  await insertSecurity('awards', {
     id, companyId: c.cid, label: id.toUpperCase(), stakeholderId: holder, poolId: c.pool, type: 'NSO', quantity: 48_000, strikePrice: 100_000,
     grantDate: '2023-01-01', vestingStartDate: '2023-01-01', vestingScheduleId: c.fourYear, status: 'OUTSTANDING', expirationDate: '2033-01-01', ptepMonths: 3,
     earlyExerciseAllowed: 0, exercisedQuantity: 0, cancelledQuantity: 0, fmvAtGrant: 100_000, rsuLiquidityCondition: 0, createdAt: now, ...o,
@@ -75,7 +75,7 @@ test('a round no price solves is refused with the reason, not a server error', a
   // takes 120% of it (math audit CR-2). Before the fix the route answered 500 "Something went wrong".
   const c = await newCompany('Roundless Co', 10_000_000);
   const investor = (await call('POST', `/api/c/${c.cid}/stakeholders`, { name: 'Pike Hollow Ventures', type: 'ENTITY', relation: 'INVESTOR' }, admin)).json.id as string;
-  await insert('convertibles', { id: 'cnv_r', companyId: c.cid, stakeholderId: investor, instrument: 'SAFE_PRE', principal: 6_000_000_00, issueDate: '2024-06-01',
+  await insertSecurity('convertibles', { id: 'cnv_r', companyId: c.cid, stakeholderId: investor, instrument: 'SAFE_PRE', principal: 6_000_000_00, issueDate: '2024-06-01',
     valuationCap: null, discount: 0, interestRate: 0, compounding: 'SIMPLE', mfn: 0, proRataRight: 0, status: 'OUTSTANDING', createdAt: now });
   invalidate(c.cid);
   const round = (preMoney: number) => call('POST', `/api/c/${c.cid}/model/round`, {
@@ -93,7 +93,7 @@ test('Rule 701 measures the class at the company\'s own fiscal year end', async 
   // last balance sheet date is 2025-06-30 and the class is 10,000,000 (17 CFR 230.701(d)(2)(iii); math audit
   // TAX-11). Before the fix the route measured it at 2025-12-31, 20,000,000, whatever the fiscal year.
   const c = await newCompany('Midyear Co', 10_000_000);
-  await insert('issuances', { id: 'iss_mid_2', companyId: c.cid, certificateNo: 'CS-2', stakeholderId: c.founder, shareClassId: c.common, quantity: 10_000_000,
+  await insertSecurity('issuances', { id: 'iss_mid_2', companyId: c.cid, certificateNo: 'CS-2', stakeholderId: c.founder, shareClassId: c.common, quantity: 10_000_000,
     pricePerShare: 100, issueDate: '2025-09-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
   await run("UPDATE companies SET fiscal_year_end = '06-30' WHERE id = ?", c.cid);
   invalidate(c.cid);

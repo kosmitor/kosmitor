@@ -16,6 +16,7 @@ import { config, mailSignature } from '../config.ts';
 import { templateFor, renderTemplate, ENTITY_WORDS, usd, type MergeContext } from '../templates.ts';
 import { convertibleFace, longDate } from '../certificate-face.ts';
 import { today, INSTRUMENT_NAMES } from '@kosmitor/core';
+import { withdrawDocuments } from './workflows.ts';
 
 const COMPOUNDING_WORDS: Record<string, string> = { SIMPLE: 'simple interest', ANNUAL: 'compounded annually', MONTHLY: 'compounded monthly', DAILY: 'compounded daily' };
 const pct = (x: number): string => `${(x * 100).toLocaleString(config().locale.locale, { maximumFractionDigits: 2 })}%`;
@@ -194,6 +195,10 @@ export async function startConvertibleSigning(ctx: Ctx, id: string): Promise<{ d
 export async function activateConvertible(ctx: Ctx, id: string): Promise<void> {
   const row = await convertibleRow(ctx, id);
   await update('convertibles', row.id, { status: 'OUTSTANDING' });
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: 'ISSUANCE', date: row.issue_date, stakeholderId: row.stakeholder_id, securityId: row.id,
+    amount: Number(row.principal), memo: `${row.label ?? INSTRUMENT_NAMES[row.instrument] ?? 'Instrument'} issued`, createdAt: nowISO(), createdBy: ctx.user?.name ?? null,
+  });
   invalidate(ctx.companyId!);
   await audit(ctx, 'CONVERTIBLE_ISSUED', 'convertibles', row.id, `${INSTRUMENT_NAMES[row.instrument] ?? row.instrument} ${row.label ?? row.id} for ${usd(Number(row.principal))} recorded as outstanding`);
 }
@@ -286,7 +291,7 @@ route.post('/api/c/:cid/convertibles/issue', 'write', async (ctx) => {
 route.post('/api/c/:cid/convertibles/:id/cancel-signing', 'write', async (ctx) => {
   const row = await convertibleRow(ctx, ctx.params.id);
   if (!['PENDING_APPROVAL', 'PENDING_SIGNATURE'].includes(row.status)) throw badRequest('Only an instrument that is not yet outstanding can be withdrawn.');
-  await run('DELETE FROM documents WHERE security_id = ? AND company_id = ?', row.id, ctx.companyId);
+  await withdrawDocuments(ctx, row.id, `${row.label ?? 'instrument'} withdrawn before every party signed`);
   await detachFromPendingConsents(ctx.companyId!, 'convertibles', row.id);
   await run('DELETE FROM convertibles WHERE id = ?', row.id);
   invalidate(ctx.companyId!);

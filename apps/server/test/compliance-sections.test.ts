@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase, sessionCookie } from './helpers.ts';
+import { freshDatabase, sessionCookie, insertSecurity } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -43,12 +43,12 @@ test('83(b), Form 3921 and BOI sections read from the cap table; filings and the
   await insert('stakeholders', { id: 'stk_f', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'FOUNDER', title: 'Chief Executive Officer', address: '1 Main St, Dover, DE', createdAt: now });
   await insert('stakeholders', { id: 'stk_e', companyId: cid, name: 'Marcus Webb', email: null, type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
   await insert('stakeholders', { id: 'stk_v', companyId: cid, name: 'Kestrel Ventures II, L.P.', email: null, type: 'FUND', relation: 'INVESTOR', createdAt: now });
-  await insert('issuances', { id: 'iss_f', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_f', shareClassId: common, quantity: 6_000_000, pricePerShare: 100,
+  await insertSecurity('issuances', { id: 'iss_f', companyId: cid, certificateNo: 'CS-1', stakeholderId: 'stk_f', shareClassId: common, quantity: 6_000_000, pricePerShare: 100,
     issueDate: '2024-01-15', status: 'OUTSTANDING', vestingScheduleId: schedule, vestingStartDate: '2024-01-15', earlyExercised: 0, createdAt: now });
-  await insert('issuances', { id: 'iss_v', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_v', shareClassId: common, quantity: 3_000_000, pricePerShare: 5_000_000,
+  await insertSecurity('issuances', { id: 'iss_v', companyId: cid, certificateNo: 'CS-2', stakeholderId: 'stk_v', shareClassId: common, quantity: 3_000_000, pricePerShare: 5_000_000,
     issueDate: '2024-06-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
   await insert('pools', { id: 'pool_s', companyId: cid, name: '2024 Plan', shareClassId: common, authorized: 1_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', createdAt: now });
-  await insert('awards', { id: 'awa_iso', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_e', poolId: 'pool_s', type: 'ISO', quantity: 100_000, strikePrice: 500_000,
+  await insertSecurity('awards', { id: 'awa_iso', companyId: cid, label: 'OPT-1', stakeholderId: 'stk_e', poolId: 'pool_s', type: 'ISO', quantity: 100_000, strikePrice: 500_000,
     grantDate: '2023-03-01', vestingStartDate: '2023-03-01', vestingScheduleId: schedule, status: 'OUTSTANDING', expirationDate: '2033-03-01', ptepMonths: 3,
     earlyExerciseAllowed: 0, exercisedQuantity: 10_000, cancelledQuantity: 0, fmvAtGrant: 500_000, rsuLiquidityCondition: 0, createdAt: now });
   await insert('exercises', { id: 'ex_1', companyId: cid, awardId: 'awa_iso', stakeholderId: 'stk_e', quantity: 10_000, exerciseDate: '2025-05-10', method: 'CASH',

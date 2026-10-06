@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, insertSecurity } from './helpers.ts';
 
 // Point the legacy uploads directory at a scratch folder before files.ts loads.
 const legacyDir = mkdtempSync(join(tmpdir(), 'kosmitor-legacy-'));
@@ -57,7 +57,7 @@ test('files an earlier build left on disk are moved into the database once', asy
 
 test('money columns hold values beyond 32 bits', async () => {
   await insert('stakeholders', { id: 'stk_big', companyId: 'co_files', name: 'Big', type: 'FUND', relation: 'INVESTOR', createdAt: now });
-  await insert('convertibles', { id: 'cnv_big', companyId: 'co_files', stakeholderId: 'stk_big', instrument: 'NOTE',
+  await insertSecurity('convertibles', { id: 'cnv_big', companyId: 'co_files', stakeholderId: 'stk_big', instrument: 'NOTE',
     principal: 5_000_000_000_00, issueDate: '2024-01-01', valuationCap: 90_000_000_000_00, discount: 0, interestRate: 0,
     compounding: 'SIMPLE', mfn: 0, proRataRight: 0, status: 'OUTSTANDING', createdAt: now });
   const row = await one<{ principal: number; valuation_cap: number }>('SELECT principal, valuation_cap FROM convertibles WHERE id = ?', 'cnv_big');

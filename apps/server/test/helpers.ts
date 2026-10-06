@@ -42,3 +42,18 @@ export async function freshDatabase(): Promise<string> {
   });
   return name;
 }
+
+/**
+ * Inserts a security with the ledger entry it is issued with, in one transaction, as the
+ * routes and the import do: the database refuses the row alone (db.ts, ledger_entry_required).
+ */
+export async function insertSecurity(table: 'issuances' | 'awards' | 'warrants' | 'convertibles', row: Record<string, unknown>): Promise<void> {
+  const db = await import('../src/db.ts');
+  await db.transaction(async () => {
+    await db.insert(table, row);
+    await db.insert('transactions', {
+      id: `tx_${String(row.id)}`, companyId: row.companyId, type: table === 'awards' ? 'GRANT' : 'ISSUANCE', date: row.grantDate ?? row.issueDate,
+      stakeholderId: row.stakeholderId, securityId: row.id, quantity: row.quantity ?? null, amount: row.principal ?? null, createdAt: new Date().toISOString(),
+    });
+  });
+}

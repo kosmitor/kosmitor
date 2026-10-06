@@ -889,6 +889,86 @@ ALTER TABLE investor_updates ADD COLUMN IF NOT EXISTS updated_at TEXT;
 -- The count a CORRECTION entry changes (PATCH on a security), and the SHA-256 of the body each signer signed.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS field TEXT;
 ALTER TABLE signatures ADD COLUMN IF NOT EXISTS body_sha256 TEXT;
+-- A CORRECTION of a term or of a holder, class or date: the value before and after, as JSON, and why.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS before_value TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS after_value TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reason TEXT;
+
+-- Every change to a security's dated state is a dated ledger entry (docs/design/dated-ledger.md).
+-- The database holds every writer to it, not only the routes: an INSERT, a DELETE, or an UPDATE
+-- of a column below on issuances, awards, warrants or convertibles fails at COMMIT unless the
+-- same transaction also wrote a transactions row for that security, and a change to a stock
+-- split unless it wrote a company STOCK_SPLIT entry. The check is deferred, so the entry may
+-- follow the change. A row not yet issued (draft, awaiting approval or signatures) is not on
+-- the cap table and needs none; nor does a company being deleted. xact_id records which
+-- transaction wrote an entry; older rows have none.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS xact_id xid8;
+ALTER TABLE transactions ALTER COLUMN xact_id SET DEFAULT pg_current_xact_id();
+CREATE INDEX IF NOT EXISTS idx_tx_security ON transactions(security_id);
+
+CREATE OR REPLACE FUNCTION ledger_entry_required() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+  company TEXT;
+  security TEXT;
+  unissued CONSTANT TEXT[] := ARRAY['DRAFT', 'PENDING_APPROVAL', 'PENDING_SIGNATURE'];
+BEGIN
+  IF TG_OP = 'DELETE' THEN company := OLD.company_id; security := OLD.id; ELSE company := NEW.company_id; security := NEW.id; END IF;
+  IF NOT EXISTS (SELECT 1 FROM companies WHERE id = company) THEN RETURN NULL; END IF;
+  IF TG_TABLE_NAME = 'stock_splits' THEN
+    IF EXISTS (SELECT 1 FROM transactions WHERE company_id = company AND type = 'STOCK_SPLIT' AND security_id IS NULL AND xact_id = pg_current_xact_id()) THEN RETURN NULL; END IF;
+    RAISE EXCEPTION 'A change to stock split % needs a dated STOCK_SPLIT ledger entry in the same transaction.', security USING ERRCODE = 'integrity_constraint_violation';
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status = ANY (unissued) THEN RETURN NULL; END IF;
+  ELSIF TG_OP = 'DELETE' THEN
+    IF OLD.status = ANY (unissued) THEN RETURN NULL; END IF;
+  ELSIF OLD.status = ANY (unissued) AND NEW.status = ANY (unissued) THEN RETURN NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM transactions WHERE security_id = security AND xact_id = pg_current_xact_id()) THEN RETURN NULL; END IF;
+  RAISE EXCEPTION 'A change to % % needs a dated ledger entry for it in the same transaction.', TG_TABLE_NAME, security USING ERRCODE = 'integrity_constraint_violation';
+END
+$fn$;
+
+DROP TRIGGER IF EXISTS ledger_required_write ON issuances;
+CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON issuances DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
+DROP TRIGGER IF EXISTS ledger_required_update ON issuances;
+CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON issuances DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+  WHEN ((OLD.stakeholder_id, OLD.share_class_id, OLD.quantity, OLD.issue_date, OLD.status)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.share_class_id, NEW.quantity, NEW.issue_date, NEW.status))
+  EXECUTE FUNCTION ledger_entry_required();
+
+DROP TRIGGER IF EXISTS ledger_required_write ON awards;
+CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON awards DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
+DROP TRIGGER IF EXISTS ledger_required_update ON awards;
+CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON awards DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+  WHEN ((OLD.stakeholder_id, OLD.pool_id, OLD.quantity, OLD.grant_date, OLD.status, OLD.exercised_quantity, OLD.cancelled_quantity)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.pool_id, NEW.quantity, NEW.grant_date, NEW.status, NEW.exercised_quantity, NEW.cancelled_quantity))
+  EXECUTE FUNCTION ledger_entry_required();
+
+DROP TRIGGER IF EXISTS ledger_required_write ON warrants;
+CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON warrants DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
+DROP TRIGGER IF EXISTS ledger_required_update ON warrants;
+CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON warrants DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+  WHEN ((OLD.stakeholder_id, OLD.share_class_id, OLD.quantity, OLD.issue_date, OLD.status, OLD.exercised_quantity)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.share_class_id, NEW.quantity, NEW.issue_date, NEW.status, NEW.exercised_quantity))
+  EXECUTE FUNCTION ledger_entry_required();
+
+DROP TRIGGER IF EXISTS ledger_required_write ON convertibles;
+CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON convertibles DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
+DROP TRIGGER IF EXISTS ledger_required_update ON convertibles;
+CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON convertibles DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+  WHEN ((OLD.stakeholder_id, OLD.instrument, OLD.principal, OLD.issue_date, OLD.valuation_cap, OLD.discount, OLD.interest_rate, OLD.compounding,
+         OLD.maturity_date, OLD.mfn, OLD.qualified_financing_minimum, OLD.status, OLD.converted_into_share_class_id, OLD.converted_on)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.instrument, NEW.principal, NEW.issue_date, NEW.valuation_cap, NEW.discount, NEW.interest_rate, NEW.compounding,
+         NEW.maturity_date, NEW.mfn, NEW.qualified_financing_minimum, NEW.status, NEW.converted_into_share_class_id, NEW.converted_on))
+  EXECUTE FUNCTION ledger_entry_required();
+
+DROP TRIGGER IF EXISTS ledger_required_write ON stock_splits;
+CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON stock_splits DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
+DROP TRIGGER IF EXISTS ledger_required_update ON stock_splits;
+CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON stock_splits DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+  WHEN ((OLD.date, OLD.ratio) IS DISTINCT FROM (NEW.date, NEW.ratio))
+  EXECUTE FUNCTION ledger_entry_required();
 
 -- Who each update went to, whether they were emailed, and when they opened it in their portal.
 CREATE TABLE IF NOT EXISTS update_recipients (

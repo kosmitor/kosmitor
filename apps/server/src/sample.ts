@@ -281,7 +281,7 @@ export async function createSampleCompany(ownerEmail: string, ownerName = 'Avery
         const iid = id('iss'); issuanceIds[c.no] = iid;
         await insert('issuances', { id: iid, companyId, certificateNo: c.no, stakeholderId: sh[c.holder], shareClassId: classId, quantity: c.qty, pricePerShare: pps(c.price), issueDate: c.date, status: 'OUTSTANDING',
           vestingScheduleId: c.schedule ? schedules[c.schedule] : null, vestingStartDate: c.vestStart ?? null, earlyExercised: 0, election83bFiledOn: c.filed83b ?? null, sourceAwardId: null, boardApprovalDate: c.board, notes: c.source ? `Issued on exercise of ${c.source}` : null, createdAt: now() });
-        if (!c.source) await tx({ type: 'ISSUANCE', date: c.date, stakeholderId: sh[c.holder], securityId: iid, shareClassId: classId, quantity: c.qty, pricePerShare: pps(c.price), amount: Math.round(c.qty * c.price * 100), memo: `Certificate ${c.no} issued` });
+        await tx({ type: 'ISSUANCE', date: c.date, stakeholderId: sh[c.holder], securityId: iid, shareClassId: classId, quantity: c.qty, pricePerShare: pps(c.price), amount: Math.round(c.qty * c.price * 100), memo: c.source ? `Certificate ${c.no} issued on exercise of ${c.source}` : `Certificate ${c.no} issued` });
       }
     }
     // Plan and grants
@@ -306,7 +306,11 @@ export async function createSampleCompany(ownerEmail: string, ownerName = 'Avery
     await tx({ type: 'CANCELLATION', date: ex.cancelledOn, stakeholderId: sh[exGrant.holder], securityId: awardIds[ex.grant], quantity: exGrant.cancelled, memo: 'Unvested options cancelled after the post-termination exercise window' });
     // SAFEs
     for (const s of SAFES) {
-      await insert('convertibles', { id: id('cnv'), companyId, label: s.label, stakeholderId: sh[s.holder], instrument: 'SAFE_POST', principal: $(s.principal), issueDate: s.date, valuationCap: s.cap ? $(s.cap) : null, discount: s.discount,
+      const cid = id('cnv');
+      await tx({ type: 'ISSUANCE', date: s.date, stakeholderId: sh[s.holder], securityId: cid, amount: $(s.principal), memo: `${s.label} issued` });
+      // Withdrawn before it was funded: off the cap table from the day it was signed.
+      if (s.status === 'CANCELLED') await tx({ type: 'CANCELLATION', date: s.date, stakeholderId: sh[s.holder], securityId: cid, memo: `${s.label} cancelled: the investor withdrew before funding` });
+      await insert('convertibles', { id: cid, companyId, label: s.label, stakeholderId: sh[s.holder], instrument: 'SAFE_POST', principal: $(s.principal), issueDate: s.date, valuationCap: s.cap ? $(s.cap) : null, discount: s.discount,
         interestRate: 0, compounding: 'SIMPLE', maturityDate: null, mfn: s.mfn ? 1 : 0, proRataRight: s.proRata ? 1 : 0, status: s.status, convertedIntoShareClassId: null, convertedOn: null, qualifiedFinancingMinimum: null,
         notes: s.status === 'CANCELLED' ? 'Investor withdrew before funding' : null, fundsReceivedOn: s.funded, fundsReference: s.funded ? `Wire ${s.label}` : null, boardApprovalDate: '2024-01-25', signingConfig: null, createdAt: now() });
     }
