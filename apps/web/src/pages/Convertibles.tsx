@@ -12,7 +12,7 @@ import { PdfViewer } from '../PdfViewer.tsx';
 import { DocumentPreview } from '../PdfFrame.tsx';
 import { SecurityDocuments } from '../SecurityDocuments.tsx';
 import { readableDocumentPath, documentFilename, documentAccess, newestPerHolding, downloadDocumentPath } from '../documents.ts';
-import { money, percent, date, today, parseMoney, parsePercent, INSTRUMENT_LABELS, amountHint } from '../format.ts';
+import { money, percent, date, today, parseMoney, parsePercent, INSTRUMENT_LABELS, amountHint, shares } from '../format.ts';
 import { config } from '../config.ts';
 
 /** Instruments issued on the platform that are not yet outstanding. */
@@ -65,6 +65,9 @@ export default function Convertibles() {
   const [funding, setFunding] = useState<any>(null);
   const [funds, setFunds] = useState({ receivedOn: today(), reference: '' });
   const [documentsFor, setDocumentsFor] = useState<any>(null);
+  // An MFN holder's election of one later instrument's terms, recorded as a dated ledger entry.
+  const [electing, setElecting] = useState<any>(null);
+  const [election, setElection] = useState({ adoptedId: '', date: today() });
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
   const directors = useMemo(() => (stakeholders ?? []).filter((s) => s.relation === 'BOARD_MEMBER' || s.relation === 'FOUNDER'), [stakeholders]);
@@ -204,6 +207,30 @@ export default function Convertibles() {
     } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
   };
 
+  const mfnOf = new Map<string, any>((stack?.instruments ?? []).filter((i: any) => i.mfn).map((i: any) => [i.id, i]));
+  const labelOf = (id: string) => {
+    const o = crud.items.find((c) => c.id === id);
+    return o ? `${o.label ?? INSTRUMENT_LABELS[o.instrument]} · ${nameOf.get(o.stakeholderId) ?? 'investor'}` : 'another instrument';
+  };
+  /** Instruments the MFN holder of `c` can elect on `on`: issued on or after it and on or before that date. */
+  const candidatesOf = (c: any, on: string) => crud.items.filter((o) => o.id !== c.id && o.issueDate >= c.issueDate && o.issueDate <= on
+    && ['OUTSTANDING', 'CONVERTED', 'REPAID'].includes(o.status));
+  const openElection = (c: any) => {
+    setElection({ adoptedId: mfnOf.get(c.id)?.mfnSuggestion?.adoptedId ?? '', date: today() });
+    setElecting(c);
+  };
+  const recordElection = async () => {
+    setBusy(true);
+    try {
+      await api(`/c/${companyId}/convertibles/${electing.id}/mfn-election`, {
+        body: { ...election, correction: !!mfnOf.get(electing.id)?.mfnElection },
+      });
+      toast('MFN election recorded');
+      setElecting(null);
+      reloadStack();
+    } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
+  };
+
   if (crud.loading) return <Loading label="Loading convertibles" />;
   if (crud.error) return <ErrorNote error={crud.error} onRetry={crud.reload} />;
 
@@ -311,6 +338,18 @@ export default function Convertibles() {
                           <Badge tone="neutral">Min {money(c.qualifiedFinancingMinimum, { compact: true })}</Badge>
                         )}
                       </span>
+                      {mfnOf.get(c.id)?.mfnElection ? (
+                        <span className="mt-1 block text-[11px] text-ink-500">
+                          Elected {labelOf(mfnOf.get(c.id).mfnElection.adoptedId)} on {date(mfnOf.get(c.id).mfnElection.date)}
+                        </span>
+                      ) : mfnOf.get(c.id)?.mfnSuggestion && (
+                        <span className="mt-1 block text-[11px] text-ink-500">
+                          Best for the holder today: {labelOf(mfnOf.get(c.id).mfnSuggestion.adoptedId)}, {shares(mfnOf.get(c.id).mfnSuggestion.shares)} shares as converted
+                          {canEdit && (
+                            <button className="ml-1 text-brand-600 hover:text-brand-700" onClick={() => openElection(c)}>Record election</button>
+                          )}
+                        </span>
+                      )}
                     </TD>
                     <TD>
                       <StatusBadge status={c.status} />
@@ -377,6 +416,8 @@ export default function Convertibles() {
                             ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(c); } }] : []),
                           ...(canEdit && !pending
                             ? [{ label: 'Edit the terms', icon: 'edit' as const, onClick: () => openEdit(c) }] : []),
+                          ...(canEdit && mfnOf.has(c.id) && c.status === 'OUTSTANDING'
+                            ? [{ label: mfnOf.get(c.id).mfnElection ? 'Correct the MFN election' : 'Record the MFN election', icon: 'convert' as const, onClick: () => openElection(c) }] : []),
                           ...(canEdit && pending
                             ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(c) }] : []),
                           ...(canEdit && !pending
@@ -623,6 +664,20 @@ export default function Convertibles() {
         <FormGrid>
           <Field label="Date received" required><Input type="date" value={funds.receivedOn} onChange={(e) => setFunds({ ...funds, receivedOn: e.target.value })} required /></Field>
           <Field label="Reference" hint="Wire reference or bank memo."><Input value={funds.reference} onChange={(e) => setFunds({ ...funds, reference: e.target.value })} /></Field>
+        </FormGrid>
+      </FormModal>
+
+      <FormModal open={!!electing} onClose={() => setElecting(null)} busy={busy}
+        title={electing && mfnOf.get(electing.id)?.mfnElection ? 'Correct the MFN election' : 'Record the MFN election'} submitLabel="Record" onSubmit={recordElection}
+        description="The holder's safe is amended to match one later instrument: its cap, discount and pre- or post-money basis. Every view uses those terms from the election date.">
+        <FormGrid>
+          <Field label="Adopted instrument" required>
+            <Select value={election.adoptedId} onChange={(e) => setElection({ ...election, adoptedId: e.target.value })} required>
+              <option value="">Choose…</option>
+              {electing && candidatesOf(electing, election.date).map((o) => <option key={o.id} value={o.id}>{labelOf(o.id)}</option>)}
+            </Select>
+          </Field>
+          <Field label="Election date" required><Input type="date" value={election.date} onChange={(e) => setElection({ ...election, date: e.target.value })} required /></Field>
         </FormGrid>
       </FormModal>
 

@@ -12,6 +12,7 @@ Status: Option A accepted and partly built. Math audit 2026-10-05, bug CAP-1. Se
 - **Partial fix.** A convertible counts as outstanding before `convertedOn`. If `convertedOn` is not set, the date of its `CONVERSION` entry is used.
 - **Fallback.** When the ledger cannot rebuild a row's history, the row keeps today's state, the same as before the ledger existed. This covers rows older than the ledger, imports, rows edited by hand, and entries without a quantity.
 - **Tests.** Unit tests per entry type are in `packages/core/test/ledger.test.ts`. The model-based route test is `apps/server/test/ledger-replay.test.ts`.
+- **MFN elections.** `POST /api/c/:cid/convertibles/:id/mfn-election` writes an `MFN_ELECTION` entry naming the adopted instrument (`adopted_security_id`) and leaves the convertible row as issued. From the entry's date every view converts the MFN instrument on the adopted terms (`electedTerms`, `packages/core/src/convertibles.ts`); before it, on its own.
 - **Delete guard.** A security that has ledger history cannot be deleted (`apps/server/src/routes/entities.ts`).
 
 ### Not built: what the code does instead

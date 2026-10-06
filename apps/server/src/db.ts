@@ -709,6 +709,8 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TEXT NOT NULL,
   created_by TEXT
 );
+-- MFN_ELECTION: the later convertible whose terms the MFN instrument (security_id) adopts.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS adopted_security_id TEXT;
 
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,

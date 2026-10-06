@@ -15,7 +15,7 @@ import { updatesFor, markUpdateRead } from './communications.ts';
 import { isEditor, seesWholeCompany, seesWholeVault } from '../auth.ts';
 import {
   computeCapTable, activeValuation, summarizeVesting, vestingCurve, portfolioValue, modelExercise,
-  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES,
+  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES, mfnCandidates,
 } from '@kosmitor/core';
 
 // A certificate or grant keeps the share count and price of the day it was
@@ -643,6 +643,42 @@ route.post('/api/c/:cid/convertibles/:id/convert', 'write', async (ctx) => {
   invalidate(ctx.companyId!);
   await audit(ctx, 'CONVERT', 'convertibles', convertible.id, `Converted into ${formatShares(shares)} shares`);
   return toCamel(await one('SELECT * FROM issuances WHERE id = ?', issuanceId));
+});
+
+/**
+ * Records an MFN holder's election of a later convertible's terms (YC Safe, MFN
+ * Amendment Provision). Only a dated MFN_ELECTION ledger entry is written: the
+ * convertible keeps its terms as issued, and every view applies the election from
+ * its date (electedTerms). A holder elects once; a second election is refused
+ * unless sent as a `correction`, dated on or after the one it corrects, which then
+ * applies from its own date.
+ */
+route.post('/api/c/:cid/convertibles/:id/mfn-election', 'write', async (ctx) => {
+  const data = await getCompanyData(ctx.companyId!);
+  const mfn = data.convertibles.find((c) => c.id === ctx.params.id);
+  if (!mfn) throw notFound('Instrument not found.');
+  if (!mfn.mfn) throw badRequest('This instrument has no MFN clause.');
+  if (mfn.status !== 'OUTSTANDING') throw badRequest('This instrument has already been settled.');
+  const adoptedId = str(ctx.body.adoptedId, 'Adopted instrument');
+  const electedOn = date(ctx.body.date, 'Election date');
+  const adopted = mfnCandidates(mfn, data.convertibles, electedOn).find((c) => c.id === adoptedId);
+  if (!adopted) throw badRequest('The adopted instrument must be a convertible of this company issued on or after this one and on or before the election date.');
+  const previous = (data.ledger ?? []).filter((e) => e.type === 'MFN_ELECTION' && e.securityId === mfn.id).map((e) => e.date).sort().at(-1);
+  const correction = ctx.body.correction === true;
+  if (previous && !correction) throw badRequest('This holder has already made its MFN election. Send it as a correction to change it.');
+  if (previous && electedOn < previous) throw badRequest(`A correction must be dated on or after the election it corrects (${previous}).`);
+
+  const terms = `${INSTRUMENT_NAMES[adopted.instrument]}${adopted.valuationCap != null ? `, ${fmtUsd(adopted.valuationCap)} cap` : ''}${adopted.discount ? `, ${Math.round(adopted.discount * 100)}% discount` : ''}`;
+  const memo = `${correction && previous ? 'Correction: e' : 'E'}lected the terms of ${terms}`;
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: 'MFN_ELECTION', date: electedOn,
+    stakeholderId: mfn.stakeholderId, counterpartyId: null, securityId: mfn.id, adoptedSecurityId: adopted.id,
+    shareClassId: null, quantity: null, pricePerShare: null, amount: null, memo,
+    createdAt: nowISO(), createdBy: ctx.user!.name,
+  });
+  invalidate(ctx.companyId!);
+  await audit(ctx, 'MFN_ELECTION', 'convertibles', mfn.id, memo);
+  return { ok: true };
 });
 
 // ---------------------------------------------------------------------------
