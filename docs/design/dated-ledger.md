@@ -7,23 +7,35 @@ Status: Option A accepted and built, except for the items listed under "Not buil
 ### Built
 
 - **Store.** `loadCompanyData` reads `transactions` rows that have a `security_id` into `CompanyData.ledger` (`apps/server/src/store.ts:38`, `:180`).
-- **Engine.** `rewindToDate` (`packages/core/src/ledger.ts`) undoes transfers, repurchases, exercises (of grants and warrants), cancellations (including an import's `FORFEITURE` and `EXPIRATION`), conversions and corrections dated after `asOf`.
+- **Engine.** `rewindToDate` (`packages/core/src/ledger.ts`) undoes transfers, repurchases, exercises (of grants and warrants), cancellations (of certificates, grants, warrants and convertibles, including an import's `FORFEITURE` and `EXPIRATION`), warrant expiries, conversions, repayments (`REPAYMENT`) and corrections dated after `asOf`.
 - **Order.** `normalizeSplits` calls `rewindToDate` first, before it applies splits (`packages/core/src/splits.ts`), not after it as proposed below. The ledger converts units itself with `splitsBetween`, a copy of `splitFactor` that avoids an import cycle.
 - **Partial fix.** A convertible counts as outstanding before `convertedOn`. If `convertedOn` is not set, the date of its `CONVERSION` entry is used.
 - **Fallback.** When the ledger cannot rebuild a row's history, the row keeps today's state, the same as before the ledger existed. This covers rows older than the ledger, imports, rows edited by hand, and entries without a quantity.
 - **Tests.** Unit tests per entry type are in `packages/core/test/ledger.test.ts`. The model-based route test is `apps/server/test/ledger-replay.test.ts`.
 - **MFN elections.** `POST /api/c/:cid/convertibles/:id/mfn-election` writes an `MFN_ELECTION` entry naming the adopted instrument (`adopted_security_id`) and leaves the convertible row as issued. From the entry's date every view converts the MFN instrument on the adopted terms (`electedTerms`, `packages/core/src/convertibles.ts`); before it, on its own.
 - **Delete guard.** A security that has ledger history cannot be deleted (`apps/server/src/routes/entities.ts`).
-- **`PATCH` guard.** `PATCH /api/c/:cid/{issuances,awards,warrants,convertibles}/:id` refuses a change that an event route makes, and names the route: a transfer, repurchase, exercise, cancellation or conversion status, a raised `exercisedQuantity` or `cancelledQuantity`, or a changed `convertedOn`. It also refuses to close or reopen a security in a way that has no route, such as a cancelled certificate or a repaid note.
-- **`CORRECTION` entries.** A changed `quantity`, or a lowered `exercisedQuantity` or `cancelledQuantity`, is a correction. The request must give an `effectiveDate`, on or after the security's own date and not in the future. The route writes one `CORRECTION` entry per count, with the signed change in the shares of that date and the count's name in `transactions.field`. A correction dated the security's own date holds for every date. Only an outstanding certificate's count can be corrected. The web forms ask for the date when the share count changes.
-- **Warrant exercise.** `POST /api/c/:cid/warrants/:id/exercise` issues the shares and writes a dated `EXERCISE` entry, as the grant exercise route does.
-- **Manual ledger route.** `POST /api/c/:cid/transactions` checks `type` against `TRANSACTION_TYPES`, refuses `CORRECTION`, requires a positive integer `quantity` for an entry against a security, checks that the security belongs to the company, and calls `invalidate()`.
+- **`PATCH` guard.** `PATCH /api/c/:cid/{issuances,awards,warrants,convertibles}/:id` refuses a change that an event route makes, and names the route: a transfer, repurchase, exercise, cancellation, expiry, repayment or conversion status, a raised `exercisedQuantity` or `cancelledQuantity`, or a changed `convertedOn`. It also refuses to reopen a closed security.
+- **Fixed by history.** Once a security has any ledger entry (an `ISSUANCE` or `GRANT` from signing or the import counts), `PATCH` refuses to change its own date (`issueDate`, `grantDate`), its `stakeholderId` or its `shareClassId`. The entries are in the shares of their date for that holder and class, so a new date would restate them across a split, and a new holder would be a transfer with no entry. Before any history, a typo can still be fixed.
+- **Creation.** `POST` creates a security in its initial state only: not closed, nothing exercised or cancelled, not converted. A security with a past comes through the import.
+- **`CORRECTION` entries.** A changed `quantity`, or a lowered `exercisedQuantity` or `cancelledQuantity`, is a correction. The request must give an `effectiveDate`, on or after the security's own date and not in the future. The route writes one `CORRECTION` entry per count, with the signed change in the shares of that date and the count's name in `transactions.field`. A correction dated the security's own date holds for every date. Only an outstanding certificate's count can be corrected, and not a cancelled or expired warrant's. The web forms ask for the date when the share count changes.
+- **Consistent corrections.** A grant's or warrant's exercised count cannot fall below the shares its `EXERCISE` entries issued (those certificates stand), and its size cannot fall below what was exercised and cancelled. After a correction the status follows the counts, as the exercise and cancel routes set it: `OUTSTANDING` while something is left, else `EXERCISED` (or `CANCELLED`).
+- **Event routes.** Each changes the row, writes a dated entry in the shares of its date, records an audit entry and calls `invalidate()`:
+  - `POST /api/c/:cid/warrants/:id/exercise`: issues the shares, `EXERCISE`, as the grant exercise route does;
+  - `POST /api/c/:cid/issuances/:id/cancel`: part or all of an outstanding certificate, `CANCELLATION`;
+  - `POST /api/c/:cid/warrants/:id/cancel`: what is left of a warrant, `EXPIRATION` (reason `EXPIRED`) or `CANCELLATION`;
+  - `POST /api/c/:cid/convertibles/:id/repay` and `/cancel`: `REPAYMENT` (with the amount paid) or `CANCELLATION`.
+
+  The web has buttons for each on the certificate, warrant and SAFE/note lists.
+- **Manual ledger route.** `POST /api/c/:cid/transactions` checks `type` against `TRANSACTION_TYPES`, requires a positive integer `quantity` for an entry against a security, checks that the security belongs to the company, and calls `invalidate()`. It refuses an entry the engine rewinds (`REWOUND_TYPES`: transfer, repurchase, exercise, cancellation, forfeiture, expiration, conversion, correction, repayment) against a security: only the event routes, which change the row too, write those.
+- **Signed documents.** Once anyone has signed, a document's `body` and `status` cannot be edited and the document cannot be deleted. A signature stores the SHA-256 of the body it signed (`signatures.body_sha256`). The documents list flags `tampered` when a body no longer matches, and the printed and PDF copies carry a warning.
 - **Event dates.** A transfer, repurchase or cancellation cannot be dated before the security's issue or grant date. Only an outstanding certificate can be repurchased.
 
 ### Not built: what the code does instead
 
 - **`resultingSecurityIds`.** `LedgerEntry` is `{ id, type, date, securityId, quantity, field }`. A transfer entry does not record which certificate it created.
 - **Backfill and migration report.** No script exists for steps 2 and 3 of [Migration](#migration). Entries written before the CAP-2 fix have not been restated.
+- **Import of closed states.** The import writes `ISSUANCE`, `GRANT` and dated `CANCELLATION`/`FORFEITURE` entries. It writes no `EXERCISE` for a grant's exercised count (the file gives no date), no entry for a convertible imported as converted, repaid or cancelled (`convertedOn` stays empty), and it does not import warrants. Those rows read as today on every date (the fallback above).
+- **Certificates in a signed document.** A correction of a certificate's quantity does not rewrite its executed certificate document, which still names the old count.
 
 ## The problem
 
