@@ -1,0 +1,19 @@
+node_modules
+**/node_modules
+**/dist
+# Local data, reconcile reports from real exports included, never goes into the image.
+data
+**/data
+**/.env
+**/*.db
+**/*.db-wal
+**/*.db-shm
+infra
+apps/server/samples
+apps/server/test
+packages/core/test
+.git
+*.md
+docs
+# kosmitor.config*.json stays in the context: the Dockerfile copies the param
+# file, its schema and kosmitor.config.local.json when there is one.

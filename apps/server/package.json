@@ -1,0 +1,25 @@
+{
+  "name": "@ct/server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "seed": "node src/seed.ts",
+    "sample": "node src/sample.ts",
+    "reconcile": "node src/reconcile/cli.ts",
+    "backup": "node src/backup.ts",
+    "db:create": "node src/db-create.ts",
+    "db:migrate-sqlite": "node src/migrate-sqlite.ts",
+    "config:docs": "node src/config-docs.ts",
+    "test": "node --test test/*.test.ts",
+    "emails:preview": "node src/email-preview.ts"
+  },
+  "dependencies": {
+    "@ct/core": "*",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

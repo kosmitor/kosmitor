@@ -1,0 +1,30 @@
+# Remote state. terraform.tfstate holds the generated database password in clear
+# and is the only record of what this stack owns, so it does not belong on a
+# laptop. Create a storage account for it once (any region; the original
+# deployment keeps it in the US with everything else):
+#
+#   name=tfstate$RANDOM
+#   az group create -n rg-terraform-state -l eastus2
+#   az storage account create -n $name -g rg-terraform-state -l eastus2 \
+#     --sku Standard_GZRS --min-tls-version TLS1_2 --allow-blob-public-access false \
+#     --allow-shared-key-access false
+#   az storage container create -n tfstate --account-name $name --auth-mode login
+#
+# use_azuread_auth (in backend.hcl) means Terraform reaches the blob as you, not
+# with an account key, so your sign-in needs the data-plane role as well as
+# Contributor:
+#
+#   az role assignment create --role "Storage Blob Data Contributor" \
+#     --assignee $(az ad signed-in-user show --query id -o tsv) \
+#     --scope $(az storage account show -n $name -g rg-terraform-state --query id -o tsv)
+#
+# Then rename this file to backend.tf, copy backend.hcl.example to backend.hcl
+# with the account name printed above, and move the state across:
+#
+#   terraform init -backend-config=backend.hcl -migrate-state
+#
+# Both backend.tf and backend.hcl are ignored by git, so each deployment keeps
+# its own.
+terraform {
+  backend "azurerm" {}
+}

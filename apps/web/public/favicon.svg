@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Kosmitor</title>
+  <!-- The tab icon: the logo's shield filled in, drawn on a 32-unit grid so its edges
+       and bars land on whole pixels at 16px and 32px. The outline logo (logo.svg) is
+       too thin to read at that size. -->
+  <path d="M2 7A5 5 0 0 1 7 2H25A5 5 0 0 1 30 7V16.5C30 24.2 21.6 29.9 16 31.6C10.4 29.9 2 24.2 2 16.5Z" fill="#4F46E5"/>
+  <path d="M8 8h16v2H8zM8 14h16v2H8zM8 20h16v2H8z" fill="#fff"/>
+</svg>

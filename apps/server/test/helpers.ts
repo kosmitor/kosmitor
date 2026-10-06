@@ -1,0 +1,40 @@
+/**
+ * Test databases. Each test file calls `freshDatabase()` at the top level,
+ * before importing anything from src/, so the server code binds to a private
+ * PostgreSQL database that is dropped again when the file finishes.
+ */
+import { randomBytes } from 'node:crypto';
+import { after } from 'node:test';
+import pg from 'pg';
+
+const ADMIN_URL = process.env.PG_ADMIN_URL ?? 'postgres://localhost:5432/postgres';
+
+// pg 9 refuses a query sent to a connection still running one (a transaction's,
+// say); pg 8 only warns, once per process. Fail the test that does it instead.
+process.on('warning', (warning) => {
+  if (warning.name === 'DeprecationWarning' && /already executing a query/.test(warning.message)) throw warning;
+});
+
+export async function freshDatabase(): Promise<string> {
+  const name = `strata_test_${randomBytes(6).toString('hex')}`;
+  const admin = new pg.Client({ connectionString: ADMIN_URL });
+  await admin.connect();
+  await admin.query(`CREATE DATABASE ${name}`);
+  await admin.end();
+
+  const url = new URL(ADMIN_URL);
+  url.pathname = `/${name}`;
+  process.env.DATABASE_URL = url.toString();
+
+  const db = await import('../src/db.ts');
+  await db.migrate();
+
+  after(async () => {
+    await db.close();
+    const cleanup = new pg.Client({ connectionString: ADMIN_URL });
+    await cleanup.connect();
+    await cleanup.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    await cleanup.end();
+  });
+  return name;
+}

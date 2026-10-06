@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-50:  #f6f7f9;
+  --color-ink-100: #eceef2;
+  --color-ink-200: #d9dde5;
+  --color-ink-300: #b9c0ce;
+  --color-ink-400: #8d97ab;
+  --color-ink-500: #6b7689;
+  --color-ink-600: #545d6e;
+  --color-ink-700: #434a58;
+  --color-ink-800: #2b313c;
+  --color-ink-900: #171b22;
+  --color-ink-950: #0e1116;
+
+  /* The content area behind the cards; the sidebar and cards stay pure white against it. */
+  --color-canvas: #f3f5f8;
+
+  /* The brand and secondary palettes below are the shipped defaults. The page head
+     replaces them with brand.colors.primary and brand.colors.accent from
+     kosmitor.config.json (apps/server/src/config.ts themeStyle), so edit them there. */
+  --color-brand-50:  #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+
+  /* Secondary accent: lime by default. Fills use 500–600; text needs 800+ for contrast. */
+  --color-secondary-50:  #f7ffe0;
+  --color-secondary-100: #ecffb8;
+  --color-secondary-200: #dbff80;
+  --color-secondary-300: #c4ff3d;
+  --color-secondary-400: #adf70f;
+  --color-secondary-500: #99f200;
+  --color-secondary-600: #7ac400;
+  --color-secondary-700: #5c9600;
+  --color-secondary-800: #457000;
+  --color-secondary-900: #2f4d00;
+  --font-sans: "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: #ffffff; /* a true white canvas; cards and panels sit on it with their borders */
+  color: var(--color-ink-900);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1, "cv05" 1;
+}
+
+/* Tailwind v4 leaves buttons with the default arrow; anything clickable shows a hand, anything disabled says so. */
+@layer base {
+  a[href], button, [role="button"], summary, label[for], select,
+  input[type="checkbox"], input[type="radio"], input[type="submit"], input[type="button"], input[type="file"],
+  .cursor-pointer { cursor: pointer; }
+  button:disabled, input:disabled, select:disabled, [aria-disabled="true"] { cursor: not-allowed; }
+  /* Native ticks and radios take the brand colour instead of the platform blue. */
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--color-brand-600); }
+}
+
+/* Numeric columns line up when every digit is the same width. */
+.tabular { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--color-ink-300); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-ink-400); background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes fade-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.animate-in { animation: fade-up .18s ease-out both; }
+
+/* A form's sections arriving one after another, and a tick popping in when one is
+   answered. "backwards" rather than "both", so nothing is left transformed once
+   the animation ends: a transform would trap the date picker and menus inside.
+   Nothing moves for someone who has asked their system for less motion. */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pop { 0% { opacity: 0; transform: scale(.4); } 70% { transform: scale(1.15); } 100% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: no-preference) {
+  .rise { animation: rise .38s cubic-bezier(.2, .7, .3, 1) backwards; }
+  .pop { animation: pop .28s ease-out backwards; }
+}

@@ -1,0 +1,120 @@
+# Settings for one deployment. Copy to terraform.tfvars (ignored by git) and
+# fill in the first block; everything below it is optional and shows the
+# default. variables.tf describes each one in full.
+#
+# Secrets do not belong here: pass smtp_url as TF_VAR_smtp_url in the shell
+# that runs terraform. The application's own settings (branding, sign-in,
+# limits, the valuation desk and the rest) are in kosmitor.config.json and
+# kosmitor.config.local.json at the repository root, not here.
+
+# --- Required -----------------------------------------------------------------
+
+subscription_id = "<your-subscription-id>"
+alert_email     = "ops@example.com"
+
+# --- Naming and regions ---------------------------------------------------------
+
+# Resource names are built from these: rg-<name>-<environment>, and so on.
+# name            = "kosmitor"
+# environment     = "prod"
+
+# The original deployment keeps everything in the United States; any regions
+# work. The primary must offer zone-redundant PostgreSQL Flexible Server to your
+# subscription: az postgres flexible-server list-skus --location <region>
+# location        = "centralus"
+# backup_location = "westus2"
+
+# Choose these before the first apply.
+# vnet_address_space       = ["10.60.0.0/16"]
+# apps_subnet_prefixes     = ["10.60.0.0/23"]
+# postgres_subnet_prefixes = ["10.60.2.0/28"]
+
+# --- Database ---------------------------------------------------------------------
+
+# postgres_sku_name              = "GP_Standard_D2ds_v5"
+# postgres_storage_mb            = 131072
+# Zone-redundant standby; false halves the database cost for a staging copy.
+# postgres_high_availability     = true
+# postgres_backup_retention_days = 35
+# Turn on once real data is in (README, "Operations").
+# protect_database               = false
+
+# --- Backups ----------------------------------------------------------------------
+
+# Days each nightly dump stays immutable.
+# backup_retention_days = 90
+
+# Schedules are cron in UTC. Set only the entries you change.
+# backup_job = {
+#   schedule        = "0 2 * * *"
+#   timeout_seconds = 3600
+#   retry_limit     = 1
+#   cpu             = 0.5
+#   memory          = "1Gi"
+# }
+# restore_drill_job = {
+#   schedule        = "0 4 * * 0"
+#   timeout_seconds = 7200
+#   retry_limit     = 0
+#   cpu             = 1
+#   memory          = "2Gi"
+# }
+
+# Empty uses backup.drillDatabase from kosmitor.config.json.
+# drill_database = ""
+
+# --- Application --------------------------------------------------------------------
+
+# Bump the tag and apply to build and roll out a new image.
+# image_tag   = "v1"
+# build_image = true
+
+# app_cpu                        = 0.5
+# app_memory                     = "1Gi"
+# min_replicas                   = 1
+# max_replicas                   = 3
+# http_scale_concurrent_requests = 50
+# Connections per replica (PG_POOL_MAX).
+# pg_pool_max                    = 10
+
+# --- Domains ----------------------------------------------------------------------
+
+# Bind a hostname only once its DNS records answer (README, "Custom domain"):
+# CNAME for a subdomain, HTTP for a bare domain served by an A record.
+# custom_hostnames = {
+#   "app.example.com" = "CNAME"
+# }
+# The canonical address used in email links and accepted as the browser origin.
+# custom_domain = "app.example.com"
+
+# --- Email ------------------------------------------------------------------------
+
+# Azure Communication Services sends from a free managed domain out of the box.
+# communication_data_location = "United States"
+# email_domain                = "example.com"
+# email_domain_verified       = false
+# email_sender_local_part     = "DoNotReply"   # the only name Azure accepts until the sending limit is raised
+# mail_display_name           = "Kosmitor"
+# mail_from                   = "Example <DoNotReply@example.com>"
+
+# --- Sign in with Google ----------------------------------------------------------
+
+# google_client_id       = "<your-client-id>.apps.googleusercontent.com"
+# Comma separated; empty accepts any Google account.
+# google_allowed_domains = "example.com"
+
+# --- Monitoring -------------------------------------------------------------------
+
+# log_retention_days = 90
+# Set only the entries you change; variables.tf lists the accepted periods.
+# alerts = {
+#   postgres_down    = { frequency = "PT1M", window = "PT5M" }
+#   postgres_storage = { percent = 85, frequency = "PT5M", window = "PT15M" }
+#   postgres_cpu     = { percent = 85, frequency = "PT5M", window = "PT15M" }
+#   app_5xx          = { requests = 25, frequency = "PT5M", window = "PT15M" }
+#   job_failed       = { frequency = "PT1H", window = "P1D" }
+# }
+
+# tags = {
+#   owner = "platform-team"
+# }

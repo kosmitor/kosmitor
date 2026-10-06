@@ -1,0 +1,88 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+# Test coverage reports
+coverage/
+
+# Local data: databases, dumps, uploads and reconcile reports (data/reconcile/) never belong in the repository
+data/
+*.db
+*.db-wal
+*.db-shm
+*.dump
+# SQLite databases under their other extensions (the earlier SQLite build, ad hoc copies)
+*.sqlite
+*.sqlite3
+# Plain-format pg_dump output: npm run backup writes .dump files, but a dump taken by hand is usually .sql
+*.sql
+*.sql.gz
+
+# Real exports and certificates hold real people's holdings (Pulley or Carta workbooks, CSVs, certificate PDFs, reconcile's differences.csv)
+*.xlsx
+*.xls
+*.csv
+*.pdf
+# except the fictional Marlowe Systems sample workbooks, which npm run sample -- --files-only writes and sample-import.test.ts reads
+!apps/server/samples/marlowe-*.xlsx
+
+# Rendered email previews (npm run emails:preview or a one-off render): generated output, not source
+/apps/server/*.html
+kosmitor-email-preview/
+
+# Logs: without mail configured the server prints every email to its log, password-reset and invitation links included
+*.log
+logs/
+
+# Secrets and per-deployment settings
+.env
+/apps/server/.env
+.env.*
+!.env.example
+kosmitor.config.local.json
+# Private keys and certificate bundles
+*.pem
+*.key
+*.p12
+*.pfx
+# npm config, where a registry auth token ends up after npm login or a CI setup
+.npmrc
+
+# Terraform: state holds every generated password and key in clear
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log
+crash.*.log
+terraform.tfvars
+*.auto.tfvars
+# The JSON forms of the variable files, which Terraform loads the same way
+terraform.tfvars.json
+*.auto.tfvars.json
+# Override files, meant for one machine's values
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Terraform CLI configuration, which can hold registry tokens
+.terraformrc
+terraform.rc
+backend.tf
+backend.hcl
+
+# Local assistant and tool state: per-machine settings with local paths, and generated code graphs
+.claude/settings.local.json
+CLAUDE.local.md
+graphify-out/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+# Editor swap and backup files keep a copy of whatever was open, .env and terraform.tfvars included
+*.swp
+*.swo
+*~

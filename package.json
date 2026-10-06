@@ -1,0 +1,26 @@
+{
+  "name": "captable-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@ct/server & npm run dev --workspace=@ct/web",
+    "start": "npm start --workspace=@ct/server",
+    "dev:server": "npm run dev --workspace=@ct/server",
+    "dev:web": "npm run dev --workspace=@ct/web",
+    "build": "npm run build --workspace=@ct/core && npm run build --workspace=@ct/web",
+    "test": "npm run test --workspace=@ct/core && npm run test --workspace=@ct/server",
+    "sample": "npm run sample --workspace=@ct/server --",
+    "reconcile": "npm run reconcile --workspace=@ct/server --",
+    "seed": "npm run seed --workspace=@ct/server",
+    "backup": "npm run backup --workspace=@ct/server --",
+    "db:create": "npm run db:create --workspace=@ct/server",
+    "db:migrate-sqlite": "npm run db:migrate-sqlite --workspace=@ct/server --",
+    "config:docs": "npm run config:docs --workspace=@ct/server --",
+    "emails:preview": "npm run emails:preview --workspace=@ct/server --"
+  }
+}

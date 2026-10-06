@@ -1,0 +1,1664 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kosmitor configuration",
+  "description": "Every setting an operator can change. kosmitor.config.json holds them all at their defaults; put your changes in kosmitor.config.local.json (or the file named by KOSMITOR_CONFIG), which only needs the entries you change. Secrets never go here: they stay in environment variables.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path to this schema, for editor hints."
+    },
+    "brand": {
+      "description": "The product's name, look and sign-in page. Change these to rebrand the app.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "productName": {
+          "description": "Product name shown beside the logo, in page titles, emails, PDFs and exports.",
+          "type": "string",
+          "minLength": 1
+        },
+        "pageTitle": {
+          "description": "Browser tab title.",
+          "type": "string",
+          "minLength": 1
+        },
+        "tagline": {
+          "description": "Short line under the product name in the sidebar when no company is open.",
+          "type": "string"
+        },
+        "logoUrl": {
+          "description": "Image used as the logo (a path under apps/web/public, such as /logo.svg, or a full URL). null draws the built-in shield in the primary colour.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "icons": {
+          "description": "Browser tab and home-screen icons. Replace the files in apps/web/public or point these at your own.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "svg": {
+              "description": "Scalable tab icon.",
+              "type": "string",
+              "minLength": 1
+            },
+            "ico": {
+              "description": "Fallback tab icon for browsers and tools that ask for /favicon.ico.",
+              "type": "string",
+              "minLength": 1
+            },
+            "appleTouch": {
+              "description": "180×180 PNG used when the app is added to an iPhone or iPad home screen.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "colors": {
+          "description": "Colours. Each palette runs from 50 (lightest) to 900 (darkest); 600 is the main shade.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "type": "object",
+              "description": "Main brand colour: buttons, links, focus rings, the active page in the sidebar.",
+              "additionalProperties": false,
+              "properties": {
+                "50": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 50."
+                },
+                "100": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 100."
+                },
+                "200": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 200."
+                },
+                "300": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 300."
+                },
+                "400": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 400."
+                },
+                "500": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 500."
+                },
+                "600": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 600."
+                },
+                "700": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 700."
+                },
+                "800": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 800."
+                },
+                "900": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 900."
+                }
+              }
+            },
+            "accent": {
+              "type": "object",
+              "description": "Secondary accent: success badges, positive figures and highlights.",
+              "additionalProperties": false,
+              "properties": {
+                "50": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 50."
+                },
+                "100": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 100."
+                },
+                "200": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 200."
+                },
+                "300": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 300."
+                },
+                "400": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 400."
+                },
+                "500": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 500."
+                },
+                "600": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 600."
+                },
+                "700": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 700."
+                },
+                "800": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 800."
+                },
+                "900": {
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "description": "Shade 900."
+                }
+              }
+            },
+            "charts": {
+              "description": "Series colours for charts, used in order.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "minItems": 1
+            },
+            "status": {
+              "description": "Colours of the compliance score gauge.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "good": {
+                  "description": "Score in the top band.",
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "warning": {
+                  "description": "Score in the middle band.",
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "bad": {
+                  "description": "Score in the bottom band.",
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                },
+                "track": {
+                  "description": "The unfilled part of the gauge.",
+                  "type": "string",
+                  "pattern": "^#[0-9a-fA-F]{6}$"
+                }
+              }
+            },
+            "avatarChoices": {
+              "description": "Avatar colours a person can pick in Preferences; a new account is given one at random.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "description": "The colour.",
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  },
+                  "label": {
+                    "description": "Its name, read out by screen readers.",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "minItems": 1
+            },
+            "initialsFallback": {
+              "description": "Colours for initials avatars of people who have not picked one, chosen by name.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              "minItems": 1
+            },
+            "certificateFrame": {
+              "description": "Frame around stock certificates, award certificates and SAFE/note certificates; the faint title behind the text is a pale tint of it.",
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          }
+        },
+        "signIn": {
+          "description": "Words on the sign-in and sign-up pages.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "headline": {
+              "description": "Large headline on the right-hand panel.",
+              "type": "string"
+            },
+            "subheadline": {
+              "description": "Paragraph under the headline.",
+              "type": "string"
+            },
+            "features": {
+              "description": "The list under the paragraph: a bold lead and the rest of the line.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "description": "Bold lead.",
+                    "type": "string"
+                  },
+                  "detail": {
+                    "description": "Rest of the line.",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "signInTitle": {
+              "description": "Heading of the sign-in form.",
+              "type": "string"
+            },
+            "signInSubtitle": {
+              "description": "Line under the sign-in heading.",
+              "type": "string"
+            },
+            "signUpTitle": {
+              "description": "Heading of the sign-up form.",
+              "type": "string"
+            },
+            "signUpSubtitle": {
+              "description": "Line under the sign-up heading.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "app": {
+      "description": "Where the app is reached.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "Public address of the web app, used for every link in an email. Set it to your real address in production. Environment variable APP_URL wins over it.",
+          "type": "string",
+          "pattern": "^https?://[^/]+$"
+        }
+      }
+    },
+    "server": {
+      "description": "How the API server listens.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "description": "Port the API listens on. Environment variable PORT wins over it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "allowedOrigins": {
+          "description": "Origins the API accepts browser requests from, besides app.url. Environment variable ALLOWED_ORIGINS (comma separated) wins over it.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https?://[^/]+$"
+          }
+        },
+        "trustProxy": {
+          "description": "Take the client address from the last X-Forwarded-For entry, the one the proxy in front of the server appends. Turn it on only behind exactly one reverse proxy or load balancer (the Azure deployment is); without one, anyone could forge the address recorded in the audit log and on signatures. Environment variable TRUST_PROXY wins over it.",
+          "type": "boolean"
+        }
+      }
+    },
+    "database": {
+      "description": "PostgreSQL. The connection string itself is a secret and stays in the DATABASE_URL environment variable.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "poolMax": {
+          "description": "Connections each server process keeps open. Environment variable PG_POOL_MAX wins over it.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      }
+    },
+    "mail": {
+      "description": "Outgoing email. The transport (SMTP_URL or ACS_CONNECTION_STRING) is a secret and stays in the environment.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "Sender of every email, as \"Name <address>\". Environment variable MAIL_FROM wins over it.",
+          "type": "string",
+          "minLength": 3
+        },
+        "signature": {
+          "description": "Name signed at the end of system emails. null uses brand.productName.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "smtpTimeoutSeconds": {
+          "description": "How long one SMTP delivery may take.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "acsTimeoutSeconds": {
+          "description": "How long one Azure Communication Services delivery may take.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "welcomeEmail": {
+          "description": "Email a welcome, once, to each person who creates an account themselves: by signing up, or by a first Google sign-in. Invited people get their invitation instead, and the demo account gets nothing.",
+          "type": "boolean"
+        },
+        "welcomeEmailsPerHour": {
+          "description": "Welcome emails the server sends per hour, from every sign-up together, so the sign-up form cannot be used to send email in bulk. Sign-ups over the limit go through without one. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. 0 turns them off.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
+    },
+    "auth": {
+      "description": "Accounts, passwords and sign-in.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionDays": {
+          "description": "How long a sign-in lasts.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        },
+        "passwordMinLength": {
+          "description": "Shortest password accepted.",
+          "type": "integer",
+          "minimum": 6,
+          "maximum": 128
+        },
+        "passwordMaxLength": {
+          "description": "Longest password accepted.",
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 1024
+        },
+        "resetLinkMinutes": {
+          "description": "Lifetime of a \"forgot password\" link.",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440
+        },
+        "adminResetLinkHours": {
+          "description": "Lifetime of a reset link an administrator creates for a member.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168
+        },
+        "resetEmailsPerHour": {
+          "description": "\"Forgot password\" emails one address can receive per hour.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "inviteLinkDays": {
+          "description": "Lifetime of the link in an invitation email, with which someone new chooses their password.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "inviteEmailsPerAddressPerDay": {
+          "description": "Invitation emails one address can receive in a day, from every company together, resends included.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "passwordSignIn": {
+          "description": "Offer email-and-password sign-in. Turn it off to allow Google sign-in only.",
+          "type": "boolean"
+        },
+        "selfSignup": {
+          "description": "Let anyone create an account from the sign-in page. Turn it off so only invited people and existing accounts get in.",
+          "type": "boolean"
+        },
+        "google": {
+          "description": "Sign in with Google.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "clientId": {
+              "description": "OAuth client ID of type \"Web application\". Empty turns Google sign-in off. Environment variable GOOGLE_CLIENT_ID wins over it.",
+              "type": "string"
+            },
+            "allowedDomains": {
+              "description": "Only accept Google accounts on these email domains. Empty accepts any. Environment variable GOOGLE_ALLOWED_DOMAINS (comma separated) wins over it.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9.-]+\\.[a-z]{2,}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "demo": {
+      "description": "A card on the sign-in page that hands out a demo login. Create the account with `npm run sample`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Show the card and prefill the form. Keep it off anywhere the demo password is not meant to be public.",
+          "type": "boolean"
+        },
+        "email": {
+          "description": "Demo account email.",
+          "type": "string"
+        },
+        "password": {
+          "description": "Demo account password. It is shown to every visitor, so never reuse a real one.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Text after \"Sign in with <email> and <password>\".",
+          "type": "string"
+        }
+      }
+    },
+    "valuationDesk": {
+      "description": "An optional service: companies ask a valuation team you run for a new 409A, the team gets an email with a private status link, and the company follows the request in the app. Off by default.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Offer the service. Off hides it everywhere and refuses new requests.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "What the team is called, as it reads after \"the\" (for example \"Acme valuation team\"). null uses \"<productName> valuation team\".",
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 2
+        },
+        "email": {
+          "description": "Inbox that receives each request. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL wins over it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+\\.[^\\s@<>,;\"]+$"
+        },
+        "linkOpenDays": {
+          "description": "How long the team's status link works while a request is open.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "linkClosedDays": {
+          "description": "How long it keeps working after the request closes.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "requestsPerCompanyPerDay": {
+          "description": "New requests one company can make per day.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "requestsPerPersonPerDay": {
+          "description": "New requests one person can make per day.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "noticesPerRequestPerDay": {
+          "description": "Times one request can be sent to the team per day.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "noticesPerCompanyPerDay": {
+          "description": "Notices to the team one company can trigger per day.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "noticesPerPersonPerDay": {
+          "description": "Notices to the team one person can trigger per day.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "noticesPerHour": {
+          "description": "Notices to the team across all companies per hour.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "statusEmailsPerRequestPerDay": {
+          "description": "Emails one request can send the person who asked per day, each time its status changes. 0 turns them off.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "reportUploadsPerRequestPerDay": {
+          "description": "Reports the team can upload to one request per day from its page. The app reads the values from each one for the company to check. 0 turns uploads off.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sendCooldownSeconds": {
+          "description": "Wait between two sends of the same request.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "resendCooldownMinutes": {
+          "description": "Wait before a request can be sent to the team again with a new link.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "intake": {
+          "description": "The questions a company answers when it asks for a 409A. Keep each value: answers already given are stored by it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "companySizes": {
+              "description": "Company size.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stored value. Do not change it once answers exist."
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words used in emails and summaries."
+                  },
+                  "shortLabel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words on the button in the form."
+                  }
+                }
+              },
+              "minItems": 1
+            },
+            "stages": {
+              "description": "Funding stage.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stored value. Do not change it once answers exist."
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words used in emails and summaries."
+                  },
+                  "shortLabel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words on the button in the form."
+                  }
+                }
+              },
+              "minItems": 1
+            },
+            "plans": {
+              "description": "What the company plans to do soon. Keep a value of NEITHER: it is the answer that needs no timing.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stored value. Do not change it once answers exist."
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words used in emails and summaries."
+                  },
+                  "shortLabel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words on the button in the form."
+                  }
+                }
+              },
+              "minItems": 1
+            },
+            "planTimings": {
+              "description": "When it plans to do it.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stored value. Do not change it once answers exist."
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words used in emails and summaries."
+                  },
+                  "shortLabel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words on the button in the form."
+                  }
+                }
+              },
+              "minItems": 1
+            },
+            "securityTypes": {
+              "description": "The kinds of security a secondary transaction can be in, for the information request's question on buybacks and sales between holders.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Stored value. Do not change it once answers exist."
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words used in emails and summaries."
+                  },
+                  "shortLabel": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Words on the button in the form."
+                  }
+                }
+              },
+              "minItems": 1
+            },
+            "softwareSuggestions": {
+              "description": "One-click answers to \"What do you use for your cap table today?\".",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "limits": {
+      "description": "Sizes and page lengths.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jsonBodyMb": {
+          "description": "Largest request body the API reads, in MB.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "uploadMb": {
+          "description": "Largest document upload, in MB. Files are stored in PostgreSQL.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "importUploadMb": {
+          "description": "Largest spreadsheet import, in MB.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "importMaxRows": {
+          "description": "Rows read from one import sheet.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "importMaxSheets": {
+          "description": "Sheets imported from one workbook.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "ledgerPageSize": {
+          "description": "Transactions and audit entries returned by default.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "ledgerMaxPageSize": {
+          "description": "Most transactions and audit entries one request can return; the pages ask for this many.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "reportRows": {
+          "description": "Rows a report run returns by default.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "reportMaxRows": {
+          "description": "Most rows one report run can return.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "reportPreviewRows": {
+          "description": "Rows shown in the report builder preview.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "compliance": {
+      "description": "How findings are scored and how early they are raised. Legal limits themselves (the ISO $100K limit, Rule 701, the 83(b) 30 days, the 12-month 409A presumption) are law and not configurable.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scoring": {
+          "description": "The compliance score: it starts here and each finding takes points off.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "start": {
+              "description": "Score with no findings.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "points": {
+              "description": "Points each finding takes off, by how serious it is.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "error": {
+                  "description": "A must-fix finding.",
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "warning": {
+                  "description": "A should-review finding.",
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "info": {
+                  "description": "A for-information note.",
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "bands": {
+              "description": "Words for each score range, highest first. The last band must start at 0.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min": {
+                    "description": "Lowest score in the band.",
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "label": {
+                    "description": "What the band says.",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "minItems": 1
+            }
+          }
+        },
+        "valuationExpiryWarningDays": {
+          "description": "Days before a 409A's twelve months run out that it shows as ending soon.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        },
+        "election83bUrgentDays": {
+          "description": "Days left in an open 83(b) window when it becomes a must-fix finding.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "rule701WarnHeadroom": {
+          "description": "Warn when the room left under the Rule 701 limit falls below this share of it (0.2 = 20%).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "authorizedSharesWarnRemaining": {
+          "description": "Warn when less than this share of a common class's authorized shares is left (0.05 = 5%).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "exerciseWindowWarnDays": {
+          "description": "Days ahead that a closing post-termination exercise window is flagged.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "grantExpiryNoticeDays": {
+          "description": "Days ahead that an award's expiration is noted.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "noteMaturityWarnDays": {
+          "description": "Days ahead that a convertible note's maturity is flagged.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "alerts": {
+      "description": "When overview and SAFE tiles turn to a warning.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "optionPoolLow": {
+          "description": "Unallocated option pool below this share of fully diluted (0.02 = 2%).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "postMoneySafeOwnershipBanner": {
+          "description": "Post-money SAFEs together promise more than this share of the company: show a banner.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "postMoneySafeOwnershipWarning": {
+          "description": "Post-money SAFEs together promise more than this share: the tile turns to a warning.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "company": {
+      "description": "What a new company starts with. Each company can change these afterwards.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entityType": {
+          "description": "Legal form.",
+          "type": "string",
+          "enum": [
+            "C_CORP",
+            "S_CORP",
+            "LLC",
+            "LTD"
+          ]
+        },
+        "jurisdiction": {
+          "description": "Jurisdiction of incorporation, also used in documents when a company has none recorded.",
+          "type": "string",
+          "minLength": 1
+        },
+        "legalNameSuffix": {
+          "description": "Added to the company name to suggest its legal name (\", Inc.\").",
+          "type": "string"
+        },
+        "fiscalYearEnd": {
+          "description": "Fiscal year end as MM-DD.",
+          "type": "string",
+          "pattern": "^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+        },
+        "brandColor": {
+          "description": "Company colour.",
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "commonClass": {
+          "description": "The common share class created with the company.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "Its name.",
+              "type": "string",
+              "minLength": 1
+            },
+            "authorized": {
+              "description": "Shares authorized.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "parValue": {
+              "description": "Par value per share, in dollars.",
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "exerciseRequests": {
+          "description": "Holders can ask to exercise their options from the portal.",
+          "type": "boolean"
+        },
+        "portal": {
+          "description": "What the stakeholder portal shows a holder.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "showOwnership": {
+              "description": "Their ownership.",
+              "type": "boolean"
+            },
+            "showValuation": {
+              "description": "The current 409A.",
+              "type": "boolean"
+            },
+            "showDocuments": {
+              "description": "Their documents.",
+              "type": "boolean"
+            },
+            "showExitModel": {
+              "description": "The exit model.",
+              "type": "boolean"
+            },
+            "showUpdates": {
+              "description": "Investor updates.",
+              "type": "boolean"
+            }
+          }
+        },
+        "vestingSchedules": {
+          "description": "Vesting schedules created with every new company.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "Name shown when picking a schedule.",
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "description": "TIME vests over time; FULLY_VESTED vests at grant.",
+                "type": "string",
+                "enum": [
+                  "TIME",
+                  "FULLY_VESTED"
+                ]
+              },
+              "durationMonths": {
+                "description": "Total length.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "cliffMonths": {
+                "description": "Cliff length.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "frequency": {
+                "description": "How often shares vest after the cliff.",
+                "type": "string",
+                "enum": [
+                  "MONTHLY",
+                  "QUARTERLY",
+                  "ANNUAL",
+                  "WEEKLY",
+                  "DAILY"
+                ]
+              },
+              "immediatePortion": {
+                "description": "Share vested at grant, 0 to 1.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "yearWeights": {
+                "description": "Share vesting in each year, adding up to 1, for back-loaded schedules. null vests evenly.",
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "singleTrigger": {
+                "description": "Share of the unvested balance that vests on a change of control, 0 to 1.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "doubleTrigger": {
+                "description": "Share that vests on a change of control followed by a termination, 0 to 1.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "equity": {
+      "description": "What new awards, certificates, offers and SAFEs are prefilled with.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "awardType": {
+          "description": "Award type.",
+          "type": "string",
+          "enum": [
+            "ISO",
+            "NSO",
+            "RSU",
+            "RSA",
+            "SAR",
+            "PHANTOM",
+            "GROWTH_SHARE"
+          ]
+        },
+        "optionTermYears": {
+          "description": "Option term for new awards, also assumed for imported options without an expiration. An ISO's default term never goes past the legal 10 years.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 15
+        },
+        "postTerminationExerciseMonths": {
+          "description": "Post-termination exercise window for new awards, and the one assumed when an award records none. Under US tax law an ISO exercised more than 3 months after leaving loses ISO treatment, whatever the window; the tax estimates do not model that.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120
+        },
+        "vestingMonths": {
+          "description": "Vesting length for a new schedule.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "cliffMonths": {
+          "description": "Cliff for a new schedule.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "backLoadedWeights": {
+          "description": "Share vesting each year when \"back-loaded\" is ticked, adding up to 1.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 1
+        },
+        "doubleTriggerWindowDays": {
+          "description": "A termination must fall within this many days of a change of control for double-trigger acceleration.",
+          "type": "number",
+          "minimum": 1
+        },
+        "signerTitle": {
+          "description": "Title of the company signatory on certificates and awards, and on documents the server prepares, when the company has no default signatory.",
+          "type": "string",
+          "minLength": 1
+        },
+        "convertibleSignerTitle": {
+          "description": "Signatory title the \"Raise with SAFEs or notes\" form starts with when the company has no default signatory.",
+          "type": "string",
+          "minLength": 1
+        },
+        "offerSignerTitle": {
+          "description": "Title of the signer of an offer letter.",
+          "type": "string",
+          "minLength": 1
+        },
+        "offerExpiryDays": {
+          "description": "Days an offer letter stays open.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "stockholderConsentThreshold": {
+          "description": "Share of voting shares a stockholder consent needs (0.5 = a majority), above 0. Your charter and the law may require more.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "convertibleInstrument": {
+          "description": "Instrument for a new SAFE or note.",
+          "type": "string",
+          "enum": [
+            "SAFE_PRE",
+            "SAFE_POST",
+            "NOTE",
+            "KISS"
+          ]
+        },
+        "noteCompounding": {
+          "description": "Interest compounding for a note that is recorded, or issued without one stated.",
+          "type": "string",
+          "enum": [
+            "SIMPLE",
+            "ANNUAL",
+            "MONTHLY",
+            "DAILY"
+          ]
+        },
+        "raiseNoteCompounding": {
+          "description": "Interest compounding the \"Raise with SAFEs or notes\" form starts with.",
+          "type": "string",
+          "enum": [
+            "SIMPLE",
+            "ANNUAL",
+            "MONTHLY",
+            "DAILY"
+          ]
+        },
+        "preferredClass": {
+          "description": "A new preferred share class.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "authorized": {
+              "description": "Shares authorized.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "originalIssuePrice": {
+              "description": "Original issue price per share, in dollars.",
+              "type": "number",
+              "minimum": 0
+            },
+            "liquidationMultiple": {
+              "description": "Liquidation preference multiple.",
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "modeling": {
+      "description": "Starting values of the scenario models.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roundName": {
+          "description": "Name of a modeled round.",
+          "type": "string"
+        },
+        "preMoneyValuation": {
+          "description": "Pre-money valuation of a modeled round, in dollars.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "leadInvestment": {
+          "description": "Lead investor's check, in dollars.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetPoolPercent": {
+          "description": "Option pool target after the round, in percent.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "exitPresetsMillions": {
+          "description": "Exit values offered as one-click presets, in millions of dollars.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "exitValue": {
+          "description": "Exit value the waterfall opens with, in dollars.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "portalMaxExit": {
+          "description": "Largest exit on a holder's portal chart, in dollars.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "portalSalePriceMultiple": {
+          "description": "In the portal's exercise model, the assumed sale price as a multiple of the current fair market value.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "tax": {
+      "description": "Rates assumed by exercise and sale tax estimates. They are planning figures, not advice; a holder can change them on the page.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultRates": {
+          "description": "Flat marginal rates, as fractions (0.37 = 37%).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "federalOrdinary": {
+              "description": "Federal ordinary income.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "stateOrdinary": {
+              "description": "State ordinary income.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "federalLongTerm": {
+              "description": "Federal long-term capital gains.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "stateLongTerm": {
+              "description": "State long-term capital gains.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "amtRate": {
+              "description": "Alternative minimum tax.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "medicare": {
+              "description": "Medicare, including the additional 0.9%.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "socialSecurity": {
+              "description": "Social Security (0 assumes the wage base is already reached).",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "niit": {
+              "description": "Net investment income tax.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "stockComp": {
+      "description": "Stock-based compensation (ASC 718 / IFRS 2).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultAssumptions": {
+          "description": "Assumptions used until a company sets its own.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "volatility": {
+              "description": "Expected volatility (0.6 = 60%).",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "riskFreeRate": {
+              "description": "Risk-free rate.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "dividendYield": {
+              "description": "Dividend yield.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "expectedTermYears": {
+              "description": "Expected term in years. null uses the simplified method for each tranche.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 15
+            },
+            "attribution": {
+              "description": "How expense is spread over vesting.",
+              "type": "string",
+              "enum": [
+                "GRADED",
+                "STRAIGHT_LINE"
+              ]
+            },
+            "forfeiturePolicy": {
+              "description": "Account for forfeitures as they occur, or estimate them.",
+              "type": "string",
+              "enum": [
+                "AS_OCCUR",
+                "ESTIMATE"
+              ]
+            },
+            "forfeitureRate": {
+              "description": "Annual forfeiture rate when estimating.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "standard": {
+              "description": "Accounting standard.",
+              "type": "string",
+              "enum": [
+                "GAAP",
+                "IFRS"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "locale": {
+      "description": "How the pages, documents, exports and emails write numbers, money and dates. The engine follows US law, so legal amounts stay in US dollars, and compliance findings and the assistant's figures are written US style.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "locale": {
+          "description": "Language tag for number and date formatting, such as en-US or en-GB.",
+          "type": "string",
+          "pattern": "^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$"
+        },
+        "currency": {
+          "description": "ISO 4217 currency code money is shown in.",
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "importDateOrder": {
+          "description": "How imports read a date like 03/04/2025: auto (month first when unclear), MDY or DMY.",
+          "type": "string",
+          "enum": [
+            "auto",
+            "MDY",
+            "DMY"
+          ]
+        }
+      }
+    },
+    "legal": {
+      "description": "Legal wording. Have your counsel check it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disclaimer": {
+          "description": "Under every explainer.",
+          "type": "string",
+          "minLength": 1
+        },
+        "taxEstimateNote": {
+          "description": "Under every tax estimate.",
+          "type": "string",
+          "minLength": 1
+        },
+        "esignConsent": {
+          "description": "Above the signature field.",
+          "type": "string",
+          "minLength": 1
+        },
+        "esignAgreement": {
+          "description": "Under the signature field.",
+          "type": "string",
+          "minLength": 1
+        },
+        "stockLegends": {
+          "description": "Restrictive legends printed on the back of every stock certificate, in order, each when its condition holds: always; restricted (vesting, early exercise or a repurchase right); plan (shares from the equity plan, such as an exercise); notPlan (any other shares); nonUs (a holder with a W-8 on file, a non-US tax country, or a Regulation S issue). A share class's own legend and the company's certificate terms are added after them. Have counsel review them.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "when": {
+                "description": "When this legend applies.",
+                "type": "string",
+                "enum": [
+                  "always",
+                  "restricted",
+                  "plan",
+                  "notPlan",
+                  "nonUs"
+                ]
+              },
+              "text": {
+                "description": "The legend, usually in capitals.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "convertibleLegend": {
+          "description": "Legend printed before the terms of every SAFE and convertible note.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ai": {
+      "description": "The assistant: people bring their own API key, and each question sends a summary of the cap table to the provider they chose.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Offer the assistant. Turn it off if cap table data must not leave your servers.",
+          "type": "boolean"
+        },
+        "providers": {
+          "description": "The providers people can choose.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "anthropic": {
+              "description": "Anthropic.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "description": "Offer it.",
+                  "type": "boolean"
+                },
+                "models": {
+                  "description": "Suggested models; people can type any other.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "endpoint": {
+                  "description": "Messages API URL, for a gateway or proxy.",
+                  "type": "string",
+                  "pattern": "^https://"
+                }
+              }
+            },
+            "openai": {
+              "description": "OpenAI.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "description": "Offer it.",
+                  "type": "boolean"
+                },
+                "models": {
+                  "description": "Suggested models; people can type any other.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "endpoint": {
+                  "description": "Chat Completions API URL, for a gateway or proxy.",
+                  "type": "string",
+                  "pattern": "^https://"
+                }
+              }
+            },
+            "google": {
+              "description": "Google.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "description": "Offer it.",
+                  "type": "boolean"
+                },
+                "models": {
+                  "description": "Suggested models; people can type any other.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1
+                },
+                "endpoint": {
+                  "description": "Generative Language API base URL; /models/<model>:generateContent is added.",
+                  "type": "string",
+                  "pattern": "^https://"
+                }
+              }
+            }
+          }
+        },
+        "maxOutputTokens": {
+          "description": "Longest answer requested from the model.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 100000
+        },
+        "timeoutSeconds": {
+          "description": "How long one answer may take.",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600
+        },
+        "historyTurns": {
+          "description": "Earlier messages sent with each question.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxQuestionChars": {
+          "description": "Longest question accepted.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "snapshot": {
+          "description": "How much of the cap table goes with each question. Fewer means less data shared and a cheaper call.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxHolders": {
+              "description": "Holders.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxConvertibles": {
+              "description": "SAFEs and notes.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxValuations": {
+              "description": "Valuations.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxComplianceFindings": {
+              "description": "Compliance findings.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "examplePrompts": {
+          "description": "Questions offered in an empty conversation.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "backup": {
+      "description": "Nightly backups to Azure Blob Storage (apps/server/src/backup-upload.ts). The Azure deployment sets these from Terraform.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "container": {
+          "description": "Blob container. Environment variable BACKUP_CONTAINER wins over it.",
+          "type": "string",
+          "minLength": 3
+        },
+        "prefix": {
+          "description": "Start of each dump's name. Environment variable BACKUP_PREFIX wins over it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "drillDatabase": {
+          "description": "Scratch database the weekly restore drill restores into. Environment variable DRILL_DATABASE wins over it.",
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]*$"
+        },
+        "maxRowDrift": {
+          "description": "Rows per table the restore drill tolerates between the dump and the live database.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
