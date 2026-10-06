@@ -467,3 +467,27 @@ test('a note repaid, or a SAFE cancelled, after the as-of date was outstanding t
   assert.deepEqual(rewindToDate(d, '2023-06-01').convertibles.map((c) => c.status), ['OUTSTANDING', 'CANCELLED', 'CANCELLED']);
   assert.deepEqual(rewindToDate(d, '2024-01-01').convertibles.map((c) => c.status), ['REPAID', 'CANCELLED', 'CANCELLED']);
 });
+
+test('a CORRECTION of a convertible\'s terms restores the terms before its date; one dated the issue date holds for every date', () => {
+  const d = base();
+  const safe = convertible('b', 'SAFE_POST', 500_000, 10_000_000, { id: 'safe', issueDate: '2021-06-01', discount: 0.2 });
+  d.convertibles = [safe];
+  d.ledger = [
+    { ...entry('CORRECTION', '2023-01-01', 'safe', null, 'valuationCap'), before: 1_500_000_000, after: 1_200_000_000 },
+    { ...entry('CORRECTION', '2024-01-01', 'safe', null, 'valuationCap'), before: 1_200_000_000, after: 1_000_000_000 },
+    { ...entry('CORRECTION', '2021-06-01', 'safe', null, 'discount'), before: 0.1, after: 0.2 },
+  ];
+  const at = (asOf: string) => rewindToDate(d, asOf).convertibles[0];
+  assert.equal(at('2022-06-01').valuationCap, 1_500_000_000, 'before both amendments: the first terms');
+  assert.equal(at('2023-06-01').valuationCap, 1_200_000_000);
+  assert.equal(at('2024-06-01').valuationCap, 1_000_000_000);
+  assert.equal(at('2022-06-01').discount, 0.2, 'a correction dated the issue date holds for every date');
+});
+
+test('a CORRECTION of a holder, class or date is how the record always read: the rewind leaves it alone', () => {
+  const d = base();
+  Object.assign(cert(d, 'cs1'), { stakeholderId: 'g' });
+  d.ledger = [{ ...entry('CORRECTION', '2024-01-01', 'cs1', null, 'stakeholderId'), before: 'f', after: 'g' }];
+  assert.equal(cert(rewindToDate(d, '2021-01-01'), 'cs1').stakeholderId, 'g');
+  assert.equal(cert(rewindToDate(d, '2021-01-01'), 'cs1').quantity, 4_500_000);
+});

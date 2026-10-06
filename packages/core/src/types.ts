@@ -304,8 +304,18 @@ export const REWOUND_TYPES: readonly TransactionType[] = [
   'TRANSFER', 'REPURCHASE', 'EXERCISE', 'CANCELLATION', 'FORFEITURE', 'EXPIRATION', 'CONVERSION', 'CORRECTION', 'REPAYMENT',
 ];
 
-/** The counts a CORRECTION entry can change. */
-export type CorrectedField = 'quantity' | 'exercisedQuantity' | 'cancelledQuantity';
+/** The counts a CORRECTION entry changes by a signed `quantity`. */
+export const CORRECTED_COUNTS = ['quantity', 'exercisedQuantity', 'cancelledQuantity'] as const;
+/** A convertible's terms: the entry carries the value `before` and `after`, and the rewind restores `before` on earlier dates. */
+export const CORRECTED_TERMS = ['principal', 'valuationCap', 'discount', 'interestRate', 'compounding', 'instrument', 'maturityDate', 'mfn', 'qualifiedFinancingMinimum'] as const;
+/**
+ * A typo in who holds a security, its class or plan, or its own date: the record always
+ * should have read `after`, so the rewind applies it on every date. Never a transfer.
+ * The entry needs a `reason`.
+ */
+export const CORRECTED_IDENTITY = ['stakeholderId', 'shareClassId', 'poolId', 'issueDate', 'grantDate'] as const;
+/** What a CORRECTION entry changes. `deleted`: a security entered by mistake was removed. */
+export type CorrectedField = typeof CORRECTED_COUNTS[number] | typeof CORRECTED_TERMS[number] | typeof CORRECTED_IDENTITY[number] | 'deleted';
 
 export interface Transaction {
   id: string;
@@ -338,8 +348,11 @@ export interface LedgerEntry {
   quantity: number | null;
   /** MFN_ELECTION: the later convertible whose terms the MFN instrument `securityId` adopts from `date` (mfnElections). */
   adoptedId?: string | null;
-  /** For a CORRECTION: the count it changed, by `quantity` (signed). */
+  /** For a CORRECTION: the count it changed, by `quantity` (signed), or the term or identity field it changed. */
   field?: CorrectedField | null;
+  /** For a CORRECTION of a term or identity field: the value before and after. */
+  before?: unknown;
+  after?: unknown;
 }
 
 // ---------------------------------------------------------------------------
