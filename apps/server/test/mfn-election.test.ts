@@ -59,8 +59,9 @@ const mfn = await safe('Mira Fenn', { instrument: 'SAFE_PRE', valuationCap: null
 const x = await safe('Xavier Lund', { instrument: 'SAFE_PRE', valuationCap: 5_000_000_00, issueDate: '2022-03-01' });
 const y = await safe('Yara Holt', { instrument: 'SAFE_POST', valuationCap: 5_500_000_00, issueDate: '2022-06-01' });
 const late = await safe('Lev Ortiz', { instrument: 'SAFE_PRE', valuationCap: 2_000_000_00, issueDate: '2024-01-01' });
-// Cancelled, so it converts in no view.
-const plain = await safe('Pia Snow', { instrument: 'SAFE_PRE', valuationCap: 8_000_000_00, issueDate: '2021-06-01', status: 'CANCELLED' });
+// Cancelled on the day it was issued, so it converts in no view.
+const plain = await safe('Pia Snow', { instrument: 'SAFE_PRE', valuationCap: 8_000_000_00, issueDate: '2021-06-01' });
+await post(`/convertibles/${plain}/cancel`, { date: '2021-06-01' });
 
 const stack = async (asOf: string) => {
   const r = await call('GET', `/api/c/${cid}/model/convertibles?asOf=${asOf}`, undefined, admin);
@@ -86,8 +87,9 @@ test('the route refuses what is not a valid election', async () => {
   await refused(`/convertibles/${mfn}/mfn-election`, { adoptedId: late, date: '2023-01-01' }, /on or before the election date/);
   await refused(`/convertibles/${mfn}/mfn-election`, { adoptedId: 'cv_elsewhere', date: '2023-01-01' }, /of this company/);
   await refused(`/convertibles/${mfn}/mfn-election`, { adoptedId: y }, /Election date/);
-  const converted = await safe('Cato Reyes', { instrument: 'SAFE_PRE', valuationCap: null, issueDate: '2022-01-01', mfn: 1, status: 'CONVERTED' });
-  await refused(`/convertibles/${converted}/mfn-election`, { adoptedId: y, date: '2023-01-01' }, /already been settled/);
+  const settled = await safe('Cato Reyes', { instrument: 'SAFE_PRE', valuationCap: null, issueDate: '2022-01-01', mfn: 1 });
+  await post(`/convertibles/${settled}/cancel`, { date: '2022-01-01' });
+  await refused(`/convertibles/${settled}/mfn-election`, { adoptedId: y, date: '2023-01-01' }, /already been settled/);
   assert.equal(Number((await one<{ n: string }>("SELECT COUNT(*) AS n FROM transactions WHERE type = 'MFN_ELECTION'"))!.n), 0);
 });
 
@@ -117,5 +119,5 @@ test('a second election is refused unless sent as a correction dated on or after
 test('an adopted instrument cannot be deleted while an election names it', async () => {
   const r = await call('DELETE', `/api/c/${cid}/convertibles/${y}`, undefined, admin);
   assert.equal(r.status, 400, JSON.stringify(r.json));
-  assert.match(r.json.error, /ledger history/);
+  assert.match(r.json.error, /MFN holder elected/);
 });
