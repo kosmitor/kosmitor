@@ -12,7 +12,7 @@ import { normalizeSplits, splitFactor } from '../src/splits.ts';
 import { computeCapTable, dilutionHistory } from '../src/captable.ts';
 import { roundShares, addDays, dollarsToPPS as $$ } from '../src/util.ts';
 import type { CompanyData, LedgerEntry } from '../src/types.ts';
-import { company, holder, issuance, award, pool, convertible, preferred, fullyVested, entry, warrant } from './builders.ts';
+import { company, holder, issuance, award, pool, convertible, preferred, fullyVested, fourYear, entry, warrant } from './builders.ts';
 
 /** Founder 4,500,000 (CS-1) and cofounder 3,500,000 common from 2020; 200,000 vested options; a 2,000,000 plan. */
 function base(): CompanyData {
@@ -490,4 +490,44 @@ test('a CORRECTION of a holder, class or date is how the record always read: the
   d.ledger = [{ ...entry('CORRECTION', '2024-01-01', 'cs1', null, 'stakeholderId'), before: 'f', after: 'g' }];
   assert.equal(cert(rewindToDate(d, '2021-01-01'), 'cs1').stakeholderId, 'g');
   assert.equal(cert(rewindToDate(d, '2021-01-01'), 'cs1').quantity, 4_500_000);
+});
+
+test('a CORRECTION of a grant\'s vesting start, strike or expiry restores the earlier term before its date', () => {
+  const d = base();
+  // Amended on 2023-01-01: vesting restarted from 2022-03-01, the strike lowered and the expiry brought in.
+  // Today's row has the new terms.
+  Object.assign(grant(d, 'opt'), { vestingScheduleId: fourYear.id, vestingStartDate: '2022-03-01', strikePrice: $$(0.5), expirationDate: '2030-03-01' });
+  d.ledger = [
+    { ...entry('CORRECTION', '2023-01-01', 'opt', null, 'vestingStartDate'), before: '2021-03-01', after: '2022-03-01' },
+    { ...entry('CORRECTION', '2023-01-01', 'opt', null, 'strikePrice'), before: $$(1), after: $$(0.5) },
+    { ...entry('CORRECTION', '2023-01-01', 'opt', null, 'expirationDate'), before: '2031-03-01', after: '2030-03-01' },
+  ];
+  const then = grant(rewindToDate(d, '2022-12-31'), 'opt');
+  assert.deepEqual([then.vestingStartDate, then.strikePrice, then.expirationDate], ['2021-03-01', $$(1), '2031-03-01']);
+  const now = grant(rewindToDate(d, '2023-01-01'), 'opt');
+  assert.deepEqual([now.vestingStartDate, now.strikePrice, now.expirationDate], ['2022-03-01', $$(0.5), '2030-03-01']);
+  // Vested as of a date counts from the start in force then: 21 of 48 months before the amendment,
+  // and still inside the one-year cliff of the new start after it.
+  const vested = (asOf: string) => computeCapTable(d, { asOf }).rows.find((r) => r.stakeholderId === 'e')!.optionsVested;
+  assert.equal(vested('2022-12-31'), 87_500);
+  assert.equal(vested('2023-01-01'), 0);
+});
+
+test('a CORRECTION of a warrant\'s expiry or strike, and of a certificate\'s vesting start, holds only from its date', () => {
+  const d = base();
+  d.warrants = [warrant('b', 'common', 10_000, { id: 'w', issueDate: '2021-01-01', expirationDate: '2022-01-01', strikePrice: $$(2) })];
+  Object.assign(cert(d, 'cs1'), { vestingScheduleId: fourYear.id, vestingStartDate: '2021-01-15' });
+  d.ledger = [
+    { ...entry('CORRECTION', '2023-06-01', 'w', null, 'expirationDate'), before: '2030-01-01', after: '2022-01-01' },
+    { ...entry('CORRECTION', '2023-06-01', 'w', null, 'strikePrice'), before: $$(1), after: $$(2) },
+    { ...entry('CORRECTION', '2022-01-01', 'cs1', null, 'vestingStartDate'), before: '2020-01-15', after: '2021-01-15' },
+  ];
+  // The views drop a warrant past its expiry (captable.ts, waterfall.ts): before the correction it ran to 2030.
+  const live = (asOf: string) => computeCapTable(d, { asOf }).totals.warrantsOutstanding;
+  assert.equal(live('2023-05-31'), 10_000);
+  assert.equal(live('2023-06-01'), 0);
+  assert.equal(rewindToDate(d, '2023-05-31').warrants[0].strikePrice, $$(1));
+  assert.equal(rewindToDate(d, '2023-06-01').warrants[0].strikePrice, $$(2));
+  assert.equal(cert(rewindToDate(d, '2021-12-31'), 'cs1').vestingStartDate, '2020-01-15');
+  assert.equal(cert(rewindToDate(d, '2022-01-01'), 'cs1').vestingStartDate, '2021-01-15');
 });

@@ -76,10 +76,10 @@ export function rewindToDate(data: CompanyData, asOf: ISODate): CompanyData {
 
   return {
     ...data,
-    issuances: data.issuances.map((i) => (later.has(i.id) ? rewindCertificate(data, i, entriesOf(i.id), asOf) : i)),
-    awards: data.awards.map((a) => (later.has(a.id) ? rewindGrant(data, a, entriesOf(a.id), asOf) : a)),
-    warrants: data.warrants.map((w) => (later.has(w.id) ? rewindWarrant(data, w, entriesOf(w.id), asOf) : w)),
-    convertibles: data.convertibles.map((c) => rewindConvertible(c, entriesOf(c.id), asOf)),
+    issuances: data.issuances.map((i) => (later.has(i.id) ? rewindCertificate(data, rewindTerms(i, entriesOf(i.id), asOf), entriesOf(i.id), asOf) : i)),
+    awards: data.awards.map((a) => (later.has(a.id) ? rewindGrant(data, rewindTerms(a, entriesOf(a.id), asOf), entriesOf(a.id), asOf) : a)),
+    warrants: data.warrants.map((w) => (later.has(w.id) ? rewindWarrant(data, rewindTerms(w, entriesOf(w.id), asOf), entriesOf(w.id), asOf) : w)),
+    convertibles: data.convertibles.map((c) => rewindConvertible(rewindTerms(c, entriesOf(c.id), asOf), entriesOf(c.id), asOf)),
     ...(data.ledger ? { ledger: ledger.filter((e) => e.date <= asOf) } : {}),
   };
 }
@@ -166,22 +166,30 @@ function counter(data: CompanyData, on: ISODate, entries: LedgerEntry[], asOf: I
   };
 }
 
-const TERMS = new Set<string>(CORRECTED_TERMS);
+const TERMS = new Set<string>(Object.values(CORRECTED_TERMS).flat());
 
 /**
- * A convertible whose terms were corrected after `asOf` (an amendment, or a fix
- * dated from when it applies) had the terms of before the earliest such entry.
- * One that converted, was repaid or was cancelled after `asOf` was still
+ * A security whose terms were corrected after `asOf` (an amendment, or a fix dated
+ * from when it applies) had the terms of before the earliest such entry. `entries`
+ * are the security's own.
+ */
+export function rewindTerms<T extends object>(input: T, entries: LedgerEntry[], asOf: ISODate): T {
+  // Latest first, so each term ends at the value before its earliest correction after asOf.
+  // Reversed first, so that of two on one day the later recorded comes first.
+  const amended = entries.filter((e) => e.type === 'CORRECTION' && e.date > asOf && TERMS.has(String(e.field)))
+    .reverse().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  let row = input;
+  for (const e of amended) row = { ...row, [e.field!]: e.before };
+  return row;
+}
+
+/**
+ * A convertible that converted, was repaid or was cancelled after `asOf` was still
  * outstanding then. The convert route dates the conversion on the instrument and in
  * the ledger, the repay and cancel routes in the ledger; a row older than the
  * ledger may have neither, and then nothing says when.
  */
-function rewindConvertible(input: Convertible, entries: LedgerEntry[], asOf: ISODate): Convertible {
-  let c = input;
-  // Latest first, so each term ends at the value before its earliest correction after asOf.
-  const amended = entries.filter((e) => e.type === 'CORRECTION' && e.date > asOf && TERMS.has(String(e.field)))
-    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  for (const e of amended) c = { ...c, [e.field!]: e.before };
+function rewindConvertible(c: Convertible, entries: LedgerEntry[], asOf: ISODate): Convertible {
   if (c.status === 'OUTSTANDING' || !Object.values(SETTLES).includes(c.status)) return c;
   const on = (c.status === 'CONVERTED' ? c.convertedOn : null)
     ?? entries.filter((e) => SETTLES[e.type] === c.status).map((e) => e.date).sort()[0] ?? null;

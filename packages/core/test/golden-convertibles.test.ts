@@ -16,7 +16,7 @@ import { computeWaterfall } from '../src/waterfall.ts';
 import { ppsToDollars, sharesForAmount, dollarsToCents as $, dollarsToPPS as $$ } from '../src/util.ts';
 import type { CompanyData, LedgerEntry } from '../src/types.ts';
 import { rewindToDate } from '../src/ledger.ts';
-import { abcInc, convertible, preferred, issuance, company, holder, award, pool, election } from './builders.ts';
+import { abcInc, convertible, preferred, issuance, company, holder, award, pool, election, entry } from './builders.ts';
 import { refRound, refPostMoneySafes, type RefSafe } from './reference/safes.ts';
 import { refActualActualYears } from './reference/calendar.ts';
 import { rng, randomRound } from './reference/gen.ts';
@@ -405,6 +405,17 @@ test('YC guide App. I.3: an MFN safe that elected a later pre-money safe becomes
   const terms = electedTerms({ convertibles: [mfn, later], ledger: [election('mfn', 'later', '2023-04-01')] }, '2024-01-01');
   const r = convertOne(mfn, { asOf: '2024-01-01', roundPPS: $$(2), preMoneyCapitalization: 9_000_000, postMoneyCapitalization: 10_000_000, terms });
   near(r.shares, 150_000, 1, 'shares');
+});
+
+test('an MFN holder elects the adopted safe\'s terms as they stood on the election date; a later correction of them is not elected', () => {
+  const mfn = convertible('x', 'SAFE_POST', 100_000, null, { id: 'mfn', mfn: true, issueDate: '2023-01-01' });
+  // Today's row: the later safe's cap was corrected from $6M to $4M.
+  const later = convertible('y', 'SAFE_PRE', 100_000, 4_000_000, { id: 'later', issueDate: '2023-03-01' });
+  const fix = (on: string): LedgerEntry => ({ ...entry('CORRECTION', on, 'later', null, 'valuationCap'), before: $(6_000_000), after: $(4_000_000) });
+  const capOn = (ledger: LedgerEntry[], asOf: string) => electedTerms({ convertibles: [mfn, later], ledger }, asOf).get('mfn')!.cap;
+  assert.equal(capOn([election('mfn', 'later', '2023-04-01'), fix('2023-09-01')], '2024-01-01'), $(6_000_000), 'corrected after the election');
+  assert.equal(capOn([election('mfn', 'later', '2023-04-01'), fix('2023-09-01')], '2023-06-01'), $(6_000_000));
+  assert.equal(capOn([election('mfn', 'later', '2023-04-01'), fix('2023-03-01')], '2024-01-01'), $(4_000_000), 'corrected before it: what was elected');
 });
 
 test('YC guide App. I.3: a safe not yet signed is not one an MFN can elect', () => {
