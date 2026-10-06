@@ -34,37 +34,19 @@ export function refPostMoneySafes(base: number, safes: RefPostSafe[]): { T: numb
 }
 
 /** A safe; a list of them is in issue order. */
-export interface RefSafe { amount: number; cap: number | null; discount: number; kind: 'POST' | 'PRE'; mfn?: boolean }
-
-/**
- * YC Safe (MFN), "MFN Amendment Provision": if the company issues Subsequent Convertible
- * Securities and the investor finds their terms preferable, the company amends the safe "to be
- * identical to" that instrument. The holder takes one later safe whole: its cap, its discount
- * and its pre- or post-money basis, never a cap from one and a discount from another.
- * By brute force: solve the round with the MFN safe on its own terms and on each later safe's,
- * and keep the one that gives it the most shares; a tie keeps its own terms. A candidate whose
- * post-money caps take 100% or more has no solution and is not taken. MFN safes are settled
- * from the last one back, and a later one is offered as amended.
- */
-function refAdoptMFN(input: RefRound): RefSafe[] {
-  const safes = input.safes.map((s) => ({ ...s }));
-  for (let i = safes.length - 1; i >= 0; i--) {
-    if (!safes[i].mfn) continue;
-    const sharesAs = (o: RefSafe) => {
-      const trial = safes.map((s, k) => (k === i ? { ...o, amount: s.amount, mfn: false } : s));
-      if (trial.reduce((t, s) => t + (s.kind === 'POST' && s.cap ? s.amount / s.cap : 0), 0) >= 1) return -1;
-      const r = solveRound({ ...input, safes: trial });
-      return r.preShares[i] + r.postShares[i];
-    };
-    let best = safes[i], most = sharesAs(safes[i]);
-    for (const o of safes.slice(i + 1)) {
-      const n = sharesAs(o);
-      if (n > most) { most = n; best = o; }
-    }
-    safes[i] = { ...best, amount: safes[i].amount, mfn: false };
-  }
-  return safes;
+export interface RefSafe {
+  amount: number; cap: number | null; discount: number; kind: 'POST' | 'PRE';
+  /**
+   * YC Safe (MFN), "MFN Amendment Provision": the holder elected the terms of the later safe at
+   * this index, and the company amended this safe "to be identical to" it: its cap, its discount
+   * and its pre- or post-money basis, never a cap from one and a discount from another. The
+   * amount stays this safe's own.
+   */
+  adopts?: number;
 }
+
+/** Each safe with its MFN election applied. */
+const elected = (safes: RefSafe[]): RefSafe[] => safes.map((s) => (s.adopts == null ? s : { ...safes[s.adopts], amount: s.amount, adopts: undefined }));
 
 export interface RefRound {
   baseFD: number;            // pre-round fully diluted, including the existing unissued pool
@@ -91,10 +73,10 @@ export interface RefRoundResult {
  * full precision. Returns real-valued shares; floor them to compare with a cap table.
  */
 export function refRound(input: RefRound): RefRoundResult {
-  return solveRound({ ...input, safes: refAdoptMFN(input) });
+  return solveRound({ ...input, safes: elected(input.safes) });
 }
 
-/** refRound with every safe on its own terms. */
+/** refRound once the elections are applied. */
 function solveRound(r: RefRound): RefRoundResult {
   const fromPre = r.poolFromPreMoney !== false;
   const inner = (inc: number) => {

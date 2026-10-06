@@ -3,7 +3,7 @@ import type {
 } from './types.ts';
 import { MICRO, CENTS } from './types.ts';
 import { computeCapTable, awardPosition, awardIsLive } from './captable.ts';
-import { conversionAmount, resolveMFNs, solvePostMoneySafes, termsOf, type ConversionTerms } from './convertibles.ts';
+import { conversionAmount, electedTerms, solvePostMoneySafes, termsOf, type ConversionTerms } from './convertibles.ts';
 import { summarizeVesting } from './vesting.ts';
 import { normalizeSplits } from './splits.ts';
 import { isTransferIssuance } from './valuation-refresh.ts';
@@ -375,15 +375,10 @@ function setupWaterfall(input: CompanyData, opts: WaterfallOptions): WaterfallSe
     liquidityCapitalization + [...fixed].reduce((s, [id, n]) => s + (converting.has(id) ? n : 0), 0),
     NO_ROUND_PRICE, asOf, terms,
   ).shares;
-  // An MFN instrument converts on the terms that give it the most shares when
-  // every instrument here converts (resolveMFNs), chosen among every instrument
-  // issued, not only the ones converting here. Its amount stays its own, a
-  // note's interest included.
+  // An MFN instrument converts on the terms it elected on or before asOf
+  // (electedTerms), or on its own. Its amount stays its own, a note's interest included.
   const everyone = new Set(instruments.map((c) => c.id));
-  const terms = resolveMFNs(instruments, data.convertibles, asOf, (id, t) => {
-    const fixed = fixedSharesOn(t);
-    return fixed.get(id) ?? postMoneySharesOn(t, fixed, everyone).get(id) ?? 0;
-  });
+  const terms = electedTerms(data, asOf);
   const fixedShares = fixedSharesOn(terms);
   const postMoneyShares = (converting: Set<string>): Map<string, number> => postMoneySharesOn(terms, fixedShares, converting);
   const postMoneySafes = instruments.filter((c) => termsOf(c, terms).instrument === 'SAFE_POST');

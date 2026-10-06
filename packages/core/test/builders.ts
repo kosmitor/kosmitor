@@ -91,6 +91,9 @@ export function entry(type: LedgerEntry['type'], date: string, securityId: strin
   return { id: nextId('tx'), type, date, securityId, quantity };
 }
 
+/** The MFN holder of `mfnId` elects, on `date`, the terms of `adoptedId`, as POST /convertibles/:id/mfn-election writes it. */
+export const election = (mfnId: string, adoptedId: string, date: string): LedgerEntry => ({ ...entry('MFN_ELECTION', date, mfnId, null), adoptedId });
+
 export function valuation(o: Partial<Valuation> = {}): Valuation {
   return {
     id: nextId('val'), type: '409A', fairMarketValue: $$(1), effectiveDate: '2021-01-01', expirationDate: null,
@@ -153,6 +156,8 @@ export function waterfallCompany(spec: WaterfallSpec): CompanyData {
   }
   for (const w of spec.warrants ?? []) d.warrants.push(warrant(add(w.holder), 'sc_common', w.shares, { strikePrice: $$(w.strike), issueDate: '2020-06-01', expirationDate: null }));
   for (const s of spec.safes ?? []) d.convertibles.push(convertible(add(s.holder), s.instrument ?? 'SAFE_POST', s.amount, s.cap, { id: s.id, issueDate: s.issueDate ?? '2022-01-01', mfn: s.mfn ?? false }));
+  const elected = (spec.safes ?? []).filter((s) => s.adopts != null);
+  if (elected.length) d.ledger = elected.map((s) => election(s.id, s.adopts!, s.electedOn ?? spec.safes!.find((x) => x.id === s.adopts)!.issueDate ?? '2022-01-01'));
   for (const h of holders) d.stakeholders.push(holder(h, h, 'OTHER'));
   return d;
 }

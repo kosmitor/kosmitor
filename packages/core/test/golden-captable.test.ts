@@ -15,7 +15,7 @@ import { computeWaterfall } from '../src/waterfall.ts';
 import { portfolioValue } from '../src/tax.ts';
 import { shareValue, dollarsToCents as $, dollarsToPPS as $$ } from '../src/util.ts';
 import type { CompanyData } from '../src/types.ts';
-import { abcInc, company, holder, issuance, award, pool, convertible, warrant, preferred, valuation, fullyVested, entry } from './builders.ts';
+import { abcInc, company, holder, issuance, award, pool, convertible, warrant, preferred, valuation, fullyVested, entry, election } from './builders.ts';
 
 const row = (t: ReturnType<typeof computeCapTable>, id: string) => t.rows.find((r) => r.stakeholderId === id)!;
 const pct2 = (x: number) => Math.round(x * 10_000) / 100;   // a fraction as a percentage with two decimals
@@ -109,11 +109,12 @@ test('YC App. II Ex.2: a post-money safe owns exactly principal/cap of a capital
   near(b / t.totals.fullyDiluted, 0.1, 1e-6, 'B ownership');
 });
 
-test('YC guide App. I.3: in the cap table an MFN safe is estimated as the instrument whose cap it adopts, base and all', () => {
-  // 9,000,000 common. A $100k post-money MFN safe at a $10M cap, then a $1M pre-money safe at a $6M cap: the
-  // MFN safe becomes the pre-money safe apart from its Purchase Amount, 100,000 / 6,000,000 x 9,000,000 =
-  // 150,000 shares. Before the fix it was neither estimated nor solved and showed 0.
+test('YC guide App. I.3: in the cap table an MFN safe is estimated as the instrument it elected, base and all', () => {
+  // 9,000,000 common. A $100k post-money MFN safe at a $10M cap, then a $1M pre-money safe at a $6M cap, which
+  // the holder elects: the MFN safe becomes the pre-money safe apart from its Purchase Amount, 100,000 /
+  // 6,000,000 x 9,000,000 = 150,000 shares. Before the fix it was neither estimated nor solved and showed 0.
   const d = company({
+    ledger: [election('mfn', 'pre', '2021-07-01')],
     stakeholders: [holder('f', 'Founders'), holder('m', 'MFN holder', 'INVESTOR'), holder('p', 'Pre-money holder', 'INVESTOR')],
     issuances: [issuance('f', 'common', 9_000_000, $$(0.0001), '2020-01-01')],
     convertibles: [
@@ -124,10 +125,10 @@ test('YC guide App. I.3: in the cap table an MFN safe is estimated as the instru
   const t = computeCapTable(d, { asOf: '2022-01-01', includeConvertibles: true });
   near(row(t, 'm').convertibleAsConverted, 150_000, 1e-6, 'MFN safe');
   near(row(t, 'p').convertibleAsConverted, 1_500_000, 1e-6, 'pre-money safe');
-  // The other way round: a $100k uncapped pre-money MFN safe, then a $1.8M post-money safe at a $9M cap. Both are
-  // post-money safes at $9M, owning 1/90 and 1/5 of 9,000,000 / (1 - 1/90 - 1/5) = 11,408,450.7. Before the fix
-  // the MFN safe was estimated as uncapped at the 409A and also counted in the post-money capitalization.
-  const e = company({
+  // The other way round: a $100k uncapped pre-money MFN safe, then a $1.8M post-money safe at a $9M cap, elected.
+  // Both are post-money safes at $9M, owning 1/90 and 1/5 of 9,000,000 / (1 - 1/90 - 1/5) = 11,408,450.7. Before
+  // the fix the MFN safe was estimated as uncapped at the 409A and also counted in the post-money capitalization.
+  const unelected = company({
     stakeholders: [holder('f', 'Founders'), holder('m', 'MFN holder', 'INVESTOR'), holder('q', 'Post-money holder', 'INVESTOR')],
     issuances: [issuance('f', 'common', 9_000_000, $$(0.0001), '2020-01-01')],
     convertibles: [
@@ -136,10 +137,18 @@ test('YC guide App. I.3: in the cap table an MFN safe is estimated as the instru
     ],
     valuations: [valuation({ fairMarketValue: $$(0.5), effectiveDate: '2021-01-01' })],
   });
-  const u = computeCapTable(e, { asOf: '2022-01-01', includeConvertibles: true });
+  const u = computeCapTable({ ...unelected, ledger: [election('mfn', 'post', '2021-07-01')] }, { asOf: '2022-01-01', includeConvertibles: true });
   const T = 9_000_000 / (1 - 1 / 90 - 1 / 5);
   assert.deepEqual([row(u, 'm').convertibleAsConverted, row(u, 'q').convertibleAsConverted], [Math.floor(T / 90), Math.floor(T / 5)]);
   assert.equal(u.uncappedConversionPrice, null);
+  // Before any election the MFN safe is on its own terms: uncapped, so estimated at the 409A, $100k / $0.50 =
+  // 200,000 shares, and the post-money safe owns 1/5 of (9,000,000 + 200,000) / 0.8 = 11,500,000, 2,300,000.
+  // The suggestion weighs only the later safe, T / 90 = 126,760: the 409A estimate is the table's assumption
+  // for an uncapped safe, not terms the holder could elect, so it is not compared with the candidates.
+  const v = computeCapTable(unelected, { asOf: '2022-01-01', includeConvertibles: true });
+  assert.deepEqual([row(v, 'm').convertibleAsConverted, row(v, 'q').convertibleAsConverted], [200_000, 2_300_000]);
+  assert.deepEqual(v.uncappedConversionPrice?.convertibleIds, ['mfn']);
+  assert.deepEqual(v.mfnSuggestions, { mfn: { adoptedId: 'post', shares: Math.floor(T / 90) } });
 });
 
 test('YC guide §C.1: switching the unissued pool off the display does not change a safe\'s share count', () => {

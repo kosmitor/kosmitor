@@ -285,7 +285,9 @@ export type TransactionType =
   | 'CONVERSION' | 'STOCK_SPLIT' | 'GRANT' | 'VESTING_ACCELERATION'
   | 'POOL_INCREASE' | 'SECONDARY_SALE' | 'RETIREMENT' | 'DIVIDEND'
   // An import dates a leaver's cancelled options to the termination when the file names no date.
-  | 'FORFEITURE' | 'EXPIRATION';
+  | 'FORFEITURE' | 'EXPIRATION'
+  // An MFN holder's election of a later convertible's terms (LedgerEntry.adoptedId).
+  | 'MFN_ELECTION';
 
 export interface Transaction {
   id: string;
@@ -306,9 +308,9 @@ export interface Transaction {
 /**
  * A dated change to a security since it was issued, as the engine reads the
  * transactions ledger: shares transferred or repurchased off a certificate,
- * options exercised or cancelled, a convertible converted. The rows hold the
- * state of today; these say when it changed (rewindToDate, ledger.ts). The
- * quantity is in the shares of the entry's own date.
+ * options exercised or cancelled, a convertible converted, an MFN safe's terms
+ * elected. The rows hold the state of today; these say when it changed
+ * (rewindToDate, ledger.ts). The quantity is in the shares of the entry's own date.
  */
 export interface LedgerEntry {
   id: string;
@@ -316,6 +318,8 @@ export interface LedgerEntry {
   date: ISODate;
   securityId: string;
   quantity: number | null;
+  /** MFN_ELECTION: the later convertible whose terms the MFN instrument `securityId` adopts from `date` (mfnElections). */
+  adoptedId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
