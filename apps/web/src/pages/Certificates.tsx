@@ -22,7 +22,7 @@ const PAR = String(config.company.commonClass.parValue);
 const blank = {
   certificateNo: '', stakeholderId: '', shareClassId: '', quantity: '',
   pricePerShare: PAR, issueDate: today(), vestingScheduleId: '', vestingStartDate: '',
-  earlyExercised: false, election83bFiledOn: '', boardApprovalDate: '', notes: '',
+  earlyExercised: false, election83bFiledOn: '', boardApprovalDate: '', notes: '', effectiveDate: '',
 };
 
 export default function Certificates() {
@@ -143,7 +143,7 @@ export default function Certificates() {
       quantity: String(i.quantity), pricePerShare: String(i.pricePerShare / 1e6), issueDate: i.issueDate,
       vestingScheduleId: i.vestingScheduleId ?? '', vestingStartDate: i.vestingStartDate ?? '',
       earlyExercised: !!i.earlyExercised, election83bFiledOn: i.election83bFiledOn ?? '',
-      boardApprovalDate: i.boardApprovalDate ?? '', notes: i.notes ?? '',
+      boardApprovalDate: i.boardApprovalDate ?? '', notes: i.notes ?? '', effectiveDate: i.issueDate,
     });
     setEditing(i);
   };
@@ -184,7 +184,8 @@ export default function Certificates() {
       return;
     }
     const ok = editing?.id
-      ? await crud.update(editing.id, payload, 'Certificate updated')
+      // A changed share count is a correction, dated in the ledger (docs/design/dated-ledger.md).
+      ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate }, 'Certificate updated')
       : await crud.create(payload, 'Shares issued');
     if (ok) setEditing(null);
   };
@@ -459,6 +460,11 @@ export default function Certificates() {
           <Field label="Number of shares" required>
             <Input value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="1,000,000" required />
           </Field>
+          {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
+            <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count was always wrong.">
+              <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            </Field>
+          )}
           <Field label="Price per share">
             <Input value={form.pricePerShare} onChange={(e) => setForm({ ...form, pricePerShare: e.target.value })} placeholder={PAR} />
           </Field>

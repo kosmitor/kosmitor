@@ -1,7 +1,8 @@
 /**
  * Model-based test of the write paths (math audit §4 and §5; CAP-1, CAP-2, CAP-9).
  * Random sequences of issues, grants, SAFEs, stock splits, transfers, repurchases,
- * exercises, cancellations and conversions go through the real routes. After every
+ * exercises, cancellations, conversions and corrected counts (PATCH with an effective
+ * date) go through the real routes. After every
  * step the cap table route, as of each date so far, must equal a plain replay of the
  * events dated on or before it. The replay knows nothing of the engine or the ledger:
  * it keeps share counts in the shares of the day, multiplies them by a split's ratio
@@ -62,7 +63,9 @@ type Fact =
   | { kind: 'repurchase'; date: string; source: string; shares: number }
   | { kind: 'exercise'; date: string; grant: string; id: string; shares: number; price: number }
   | { kind: 'cancel'; date: string; grant: string; shares: number }
-  | { kind: 'convert'; date: string; safe: string; id: string; shares: number; price: number };
+  | { kind: 'convert'; date: string; safe: string; id: string; shares: number; price: number }
+  // An edit of a count from `date` on: a certificate's shares or a grant's size, by `shares` of the day.
+  | { kind: 'correct'; date: string; target: 'cert' | 'grant'; id: string; shares: number };
 
 /** The plan every history starts with, approved on 2020-01-01. */
 const PLAN = 3_000_000;
@@ -101,6 +104,10 @@ function replay(facts: Fact[], asOf: string) {
         break;
       }
       case 'cancel': grants.get(f.grant)!.cancelled += f.shares; break;
+      case 'correct':
+        if (f.target === 'cert') certs.get(f.id)!.shares += f.shares;
+        else grants.get(f.id)!.granted += f.shares;
+        break;
       case 'convert': {
         const s = safes.get(f.safe)!;
         s.live = false;
@@ -170,7 +177,8 @@ async function runHistory(seed: number, steps: number): Promise<void> {
     const grants = ((await send('GET', '/awards')) as any[]).filter((a) => a.status === 'OUTSTANDING' && roundShares(a.quantity - a.exercisedQuantity - a.cancelledQuantity) >= 1);
     const safes = ((await send('GET', '/convertibles')) as any[]).filter((c) => c.status === 'OUTSTANDING');
     let fact: Fact;
-    let what = pick(['issue', 'grant', 'safe', 'split', 'transfer', 'transfer', 'repurchase', 'exercise', 'cancel', 'convert']);
+    let what = pick(['issue', 'grant', 'safe', 'split', 'transfer', 'transfer', 'repurchase', 'exercise', 'cancel', 'convert', 'correct']);
+    if (what === 'correct' && !certs.length && !grants.length) what = 'issue';
     if ((what === 'transfer' || what === 'repurchase') && !certs.length) what = 'issue';
     if ((what === 'exercise' || what === 'cancel') && !grants.length) what = 'grant';
     if (what === 'convert' && !safes.length) what = 'safe';
@@ -237,6 +245,17 @@ async function runHistory(seed: number, steps: number): Promise<void> {
           await send('POST', `/awards/${g.id}/cancel`, { quantity, date });
           fact = { kind: 'cancel', date, grant: g.id, shares };
         }
+        break;
+      }
+      case 'correct': {
+        // A count edited from today on, typed in the row's own units: lowered while some stays, or raised.
+        const onCert = certs.length > 0 && (!grants.length || rnd() < 0.5);
+        const row = onCert ? pick(certs) : pick(grants);
+        const room = onCert ? Math.floor(Number(row.quantity)) - 1 : Math.floor(roundShares(row.quantity - row.exercisedQuantity - row.cancelledQuantity)) - 1;
+        const delta = room > 0 && rnd() < 0.5 ? -(1 + Math.floor(rnd() * room)) : 1 + Math.floor(rnd() * 1_000);
+        await send('PATCH', `/${onCert ? 'issuances' : 'awards'}/${row.id}`, { quantity: roundShares(Number(row.quantity) + delta), effectiveDate: date });
+        const shares = roundShares(delta * splitsBetween(facts, onCert ? row.issueDate : row.grantDate, date));
+        fact = { kind: 'correct', date, target: onCert ? 'cert' : 'grant', id: row.id, shares };
         break;
       }
       default: {

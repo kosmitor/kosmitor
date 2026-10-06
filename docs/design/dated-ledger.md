@@ -1,26 +1,29 @@
 # As-of cap tables: a dated ledger or effective-dated rows
 
-Status: Option A accepted and partly built. Math audit 2026-10-05, bug CAP-1. See [Where this stands](#where-this-stands) for what the code does today; the sections after it are the original proposal.
+Status: Option A accepted and built, except for the items listed under "Not built". Math audit 2026-10-05, bug CAP-1. See [Where this stands](#where-this-stands) for what the code does today; the sections after it are the original proposal.
 
 ## Where this stands
 
 ### Built
 
 - **Store.** `loadCompanyData` reads `transactions` rows that have a `security_id` into `CompanyData.ledger` (`apps/server/src/store.ts:38`, `:180`).
-- **Engine.** `rewindToDate` (`packages/core/src/ledger.ts`) undoes transfers, repurchases, exercises, cancellations (including an import's `FORFEITURE` and `EXPIRATION`) and conversions dated after `asOf`.
+- **Engine.** `rewindToDate` (`packages/core/src/ledger.ts`) undoes transfers, repurchases, exercises (of grants and warrants), cancellations (including an import's `FORFEITURE` and `EXPIRATION`), conversions and corrections dated after `asOf`.
 - **Order.** `normalizeSplits` calls `rewindToDate` first, before it applies splits (`packages/core/src/splits.ts`), not after it as proposed below. The ledger converts units itself with `splitsBetween`, a copy of `splitFactor` that avoids an import cycle.
 - **Partial fix.** A convertible counts as outstanding before `convertedOn`. If `convertedOn` is not set, the date of its `CONVERSION` entry is used.
 - **Fallback.** When the ledger cannot rebuild a row's history, the row keeps today's state, the same as before the ledger existed. This covers rows older than the ledger, imports, rows edited by hand, and entries without a quantity.
 - **Tests.** Unit tests per entry type are in `packages/core/test/ledger.test.ts`. The model-based route test is `apps/server/test/ledger-replay.test.ts`.
 - **MFN elections.** `POST /api/c/:cid/convertibles/:id/mfn-election` writes an `MFN_ELECTION` entry naming the adopted instrument (`adopted_security_id`) and leaves the convertible row as issued. From the entry's date every view converts the MFN instrument on the adopted terms (`electedTerms`, `packages/core/src/convertibles.ts`); before it, on its own.
 - **Delete guard.** A security that has ledger history cannot be deleted (`apps/server/src/routes/entities.ts`).
+- **`PATCH` guard.** `PATCH /api/c/:cid/{issuances,awards,warrants,convertibles}/:id` refuses a change that an event route makes, and names the route: a transfer, repurchase, exercise, cancellation or conversion status, a raised `exercisedQuantity` or `cancelledQuantity`, or a changed `convertedOn`. It also refuses to close or reopen a security in a way that has no route, such as a cancelled certificate or a repaid note.
+- **`CORRECTION` entries.** A changed `quantity`, or a lowered `exercisedQuantity` or `cancelledQuantity`, is a correction. The request must give an `effectiveDate`, on or after the security's own date and not in the future. The route writes one `CORRECTION` entry per count, with the signed change in the shares of that date and the count's name in `transactions.field`. A correction dated the security's own date holds for every date. Only an outstanding certificate's count can be corrected. The web forms ask for the date when the share count changes.
+- **Warrant exercise.** `POST /api/c/:cid/warrants/:id/exercise` issues the shares and writes a dated `EXERCISE` entry, as the grant exercise route does.
+- **Manual ledger route.** `POST /api/c/:cid/transactions` checks `type` against `TRANSACTION_TYPES`, refuses `CORRECTION`, requires a positive integer `quantity` for an entry against a security, checks that the security belongs to the company, and calls `invalidate()`.
+- **Event dates.** A transfer, repurchase or cancellation cannot be dated before the security's issue or grant date. Only an outstanding certificate can be repurchased.
 
 ### Not built: what the code does instead
 
-- **`PATCH` guard and `CORRECTION` entries.** `PATCH /api/c/:cid/<entity>/:id` still changes `quantity`, `status`, `exercisedQuantity` and `cancelledQuantity` without writing a ledger entry (`apps/server/src/routes/entities.ts`). `CORRECTION` is not a `TransactionType`. The rewind detects such an edit only when the counts no longer agree with the ledger, and then it falls back to today's state.
-- **`resultingSecurityIds`.** `LedgerEntry` is `{ id, type, date, securityId, quantity }`. A transfer entry does not record which certificate it created.
+- **`resultingSecurityIds`.** `LedgerEntry` is `{ id, type, date, securityId, quantity, field }`. A transfer entry does not record which certificate it created.
 - **Backfill and migration report.** No script exists for steps 2 and 3 of [Migration](#migration). Entries written before the CAP-2 fix have not been restated.
-- **Manual ledger route.** `POST /api/c/:cid/transactions` was not in this proposal. The rewind reads its entries. It does not validate `type` or `quantity`, does not check that `securityId` belongs to the company, and does not call `invalidate()`.
 
 ## The problem
 

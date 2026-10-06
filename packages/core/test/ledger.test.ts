@@ -12,7 +12,7 @@ import { normalizeSplits, splitFactor } from '../src/splits.ts';
 import { computeCapTable, dilutionHistory } from '../src/captable.ts';
 import { roundShares, addDays, dollarsToPPS as $$ } from '../src/util.ts';
 import type { CompanyData, LedgerEntry } from '../src/types.ts';
-import { company, holder, issuance, award, pool, convertible, preferred, fullyVested, entry } from './builders.ts';
+import { company, holder, issuance, award, pool, convertible, preferred, fullyVested, entry, warrant } from './builders.ts';
 
 /** Founder 4,500,000 (CS-1) and cofounder 3,500,000 common from 2020; 200,000 vested options; a 2,000,000 plan. */
 function base(): CompanyData {
@@ -371,4 +371,58 @@ test('today\'s view is the same with the ledger as without it', () => {
     assert.deepEqual(computeCapTable(d, { asOf: '2026-01-01', includeConvertibles: true }), computeCapTable(bare, { asOf: '2026-01-01', includeConvertibles: true }), `seed ${seed}`);
     assert.equal(rewindToDate(d, '2026-01-01'), d);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Corrections (PATCH) and warrant exercises
+// ---------------------------------------------------------------------------
+
+test('a CORRECTION of a certificate\'s quantity is undone before its date; one dated the issue date holds for every date', () => {
+  const d = base();
+  // The edit raised CS-1 from 4,500,000 to 4,600,000 effective 2024-01-01, and lowered CS-2 to 3,400,000 as always wrong.
+  Object.assign(cert(d, 'cs1'), { quantity: 4_600_000 });
+  Object.assign(cert(d, 'cs2'), { quantity: 3_400_000 });
+  d.ledger = [entry('CORRECTION', '2024-01-01', 'cs1', 100_000, 'quantity'), entry('CORRECTION', '2020-01-15', 'cs2', -100_000, 'quantity')];
+  assert.equal(cert(rewindToDate(d, '2023-12-31'), 'cs1').quantity, 4_500_000);
+  assert.equal(cert(rewindToDate(d, '2024-01-01'), 'cs1').quantity, 4_600_000);
+  assert.equal(cert(rewindToDate(d, '2021-01-01'), 'cs2').quantity, 3_400_000);
+});
+
+test('a certificate corrected, then transferred in full: before either it held what it held before the correction', () => {
+  const d = base();
+  Object.assign(cert(d, 'cs1'), { quantity: 4_000_000, status: 'TRANSFERRED' });
+  d.ledger = [entry('CORRECTION', '2023-01-01', 'cs1', -500_000, 'quantity'), entry('TRANSFER', '2024-01-01', 'cs1', 4_000_000)];
+  const at = (asOf: string) => [cert(rewindToDate(d, asOf), 'cs1').quantity, cert(rewindToDate(d, asOf), 'cs1').status];
+  assert.deepEqual(at('2023-06-01'), [4_000_000, 'OUTSTANDING']);
+  assert.deepEqual(at('2022-06-01'), [4_500_000, 'OUTSTANDING']);
+});
+
+test('CORRECTION entries on a grant: quantity and exercised count are undone with the exercises, across a split', () => {
+  const d = base();
+  d.stockSplits = [{ id: 'sp', date: '2023-01-01', ratio: 2 }];
+  // A grant of 200,000 options in its own units. 50,000 exercised on 2024-01-01 (100,000 shares of the day);
+  // then an edit on 2024-06-01 lowered the exercised count by 10,000 options (20,000 shares of the day)
+  // and raised the grant by 5,000 options (10,000 shares of the day).
+  Object.assign(grant(d, 'opt'), { quantity: 205_000, exercisedQuantity: 40_000 });
+  d.ledger = [
+    entry('EXERCISE', '2024-01-01', 'opt', 100_000),
+    entry('CORRECTION', '2024-06-01', 'opt', -20_000, 'exercisedQuantity'),
+    entry('CORRECTION', '2024-06-01', 'opt', 10_000, 'quantity'),
+  ];
+  const mid = grant(rewindToDate(d, '2024-03-01'), 'opt');
+  assert.deepEqual([mid.quantity, mid.exercisedQuantity], [200_000, 50_000]);
+  const before = grant(rewindToDate(d, '2023-06-01'), 'opt');
+  assert.deepEqual([before.quantity, before.exercisedQuantity], [200_000, 0]);
+  assert.equal(computeCapTable(d, { asOf: '2024-03-01' }).totals.optionsOutstanding, 300_000);
+});
+
+test('a warrant exercised after the as-of date is outstanding again then, with what it held', () => {
+  const d = base();
+  d.warrants = [warrant('b', 'common', 100_000, { id: 'w1', issueDate: '2021-01-01', exercisedQuantity: 100_000, status: 'EXERCISED' })];
+  d.ledger = [entry('EXERCISE', '2023-01-01', 'w1', 40_000), entry('EXERCISE', '2024-01-01', 'w1', 60_000)];
+  const w = (asOf: string) => rewindToDate(d, asOf).warrants.find((x) => x.id === 'w1')!;
+  assert.deepEqual([w('2023-06-01').exercisedQuantity, w('2023-06-01').status], [40_000, 'OUTSTANDING']);
+  assert.deepEqual([w('2022-06-01').exercisedQuantity, w('2022-06-01').status], [0, 'OUTSTANDING']);
+  assert.equal(w('2024-01-01').status, 'EXERCISED');
+  assert.equal(computeCapTable(d, { asOf: '2023-06-01' }).totals.warrantsOutstanding, 60_000);
 });

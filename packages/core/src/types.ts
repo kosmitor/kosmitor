@@ -280,14 +280,21 @@ export interface Valuation {
 // Transactions (the immutable ledger)
 // ---------------------------------------------------------------------------
 
-export type TransactionType =
-  | 'ISSUANCE' | 'TRANSFER' | 'REPURCHASE' | 'CANCELLATION' | 'EXERCISE'
-  | 'CONVERSION' | 'STOCK_SPLIT' | 'GRANT' | 'VESTING_ACCELERATION'
-  | 'POOL_INCREASE' | 'SECONDARY_SALE' | 'RETIREMENT' | 'DIVIDEND'
+export const TRANSACTION_TYPES = [
+  'ISSUANCE', 'TRANSFER', 'REPURCHASE', 'CANCELLATION', 'EXERCISE',
+  'CONVERSION', 'STOCK_SPLIT', 'GRANT', 'VESTING_ACCELERATION',
+  'POOL_INCREASE', 'SECONDARY_SALE', 'RETIREMENT', 'DIVIDEND',
   // An import dates a leaver's cancelled options to the termination when the file names no date.
-  | 'FORFEITURE' | 'EXPIRATION'
+  'FORFEITURE', 'EXPIRATION',
+  // An edit that says the record was wrong from `date` on (PATCH on a security): `quantity` is the signed change to `field`.
+  'CORRECTION',
   // An MFN holder's election of a later convertible's terms (LedgerEntry.adoptedId).
-  | 'MFN_ELECTION';
+  'MFN_ELECTION',
+] as const;
+export type TransactionType = typeof TRANSACTION_TYPES[number];
+
+/** The counts a CORRECTION entry can change. */
+export type CorrectedField = 'quantity' | 'exercisedQuantity' | 'cancelledQuantity';
 
 export interface Transaction {
   id: string;
@@ -320,6 +327,8 @@ export interface LedgerEntry {
   quantity: number | null;
   /** MFN_ELECTION: the later convertible whose terms the MFN instrument `securityId` adopts from `date` (mfnElections). */
   adoptedId?: string | null;
+  /** For a CORRECTION: the count it changed, by `quantity` (signed). */
+  field?: CorrectedField | null;
 }
 
 // ---------------------------------------------------------------------------

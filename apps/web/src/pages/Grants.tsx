@@ -40,7 +40,7 @@ const blank = {
   label: '', stakeholderId: '', poolId: '', type: DEFAULT_AWARD, quantity: '',
   strikePrice: '', grantDate: today(), vestingStartDate: '', vestingScheduleId: '',
   expirationDate: '', ptepMonths: String(config.equity.postTerminationExerciseMonths), earlyExerciseAllowed: false,
-  boardApprovalDate: today(), fmvAtGrant: '', notes: '',
+  boardApprovalDate: today(), fmvAtGrant: '', notes: '', effectiveDate: '',
 };
 const blankIssue = {
   approval: 'APPROVED' as Approval, directorIds: [] as string[], forSignature: true,
@@ -177,7 +177,7 @@ export default function Grants() {
       vestingStartDate: a.vestingStartDate, vestingScheduleId: a.vestingScheduleId,
       expirationDate: a.expirationDate ?? '', ptepMonths: String(a.ptepMonths),
       earlyExerciseAllowed: !!a.earlyExerciseAllowed, boardApprovalDate: a.boardApprovalDate ?? '',
-      fmvAtGrant: String(a.fmvAtGrant / 1e6), notes: a.notes ?? '',
+      fmvAtGrant: String(a.fmvAtGrant / 1e6), notes: a.notes ?? '', effectiveDate: a.grantDate,
     });
     setEditing(a);
   };
@@ -194,7 +194,8 @@ export default function Grants() {
       fmvAtGrant: parsePPS(form.fmvAtGrant || form.strikePrice), notes: form.notes || null,
     };
     if (editing?.id) {
-      const ok = await crud.update(editing.id, { ...payload, boardApprovalDate: form.boardApprovalDate || null, status: editing.status ?? 'OUTSTANDING' }, 'Grant updated');
+      // A changed share count is a correction, dated in the ledger (docs/design/dated-ledger.md).
+      const ok = await crud.update(editing.id, { ...payload, boardApprovalDate: form.boardApprovalDate || null, status: editing.status ?? 'OUTSTANDING', effectiveDate: form.effectiveDate || form.grantDate }, 'Grant updated');
       if (ok) { setEditing(null); reloadPools(); }
       return;
     }
@@ -509,6 +510,11 @@ export default function Grants() {
           <Field label="Number of shares" required>
             <Input value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="50,000" required />
           </Field>
+          {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
+            <Field label="Correct from" hint="The ledger dates the change. Keep the grant date if the old count was always wrong.">
+              <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            </Field>
+          )}
           {!settlesForFree && (
             <Field label="Strike price" required
               hint={currentFmv ? `Current 409A fair market value is ${pps(currentFmv)}.` : 'No 409A valuation on file.'}

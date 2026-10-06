@@ -886,6 +886,9 @@ ALTER TABLE investor_updates ADD COLUMN IF NOT EXISTS recipient_ids TEXT;
 ALTER TABLE investor_updates ADD COLUMN IF NOT EXISTS sent_by TEXT;
 ALTER TABLE investor_updates ADD COLUMN IF NOT EXISTS created_by TEXT;
 ALTER TABLE investor_updates ADD COLUMN IF NOT EXISTS updated_at TEXT;
+-- The count a CORRECTION entry changes (PATCH on a security), and the SHA-256 of the body each signer signed.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS field TEXT;
+ALTER TABLE signatures ADD COLUMN IF NOT EXISTS body_sha256 TEXT;
 
 -- Who each update went to, whether they were emailed, and when they opened it in their portal.
 CREATE TABLE IF NOT EXISTS update_recipients (
