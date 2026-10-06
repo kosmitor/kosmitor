@@ -50,7 +50,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import { crc32 } from 'node:zlib';
-import { route, badRequest, notFound, forbidden, newId, nowISO, audit, str, date as isoDate, HttpError, type Ctx } from '../http.ts';
+import { route, assertFullView, badRequest, notFound, forbidden, newId, nowISO, audit, str, date as isoDate, HttpError, type Ctx } from '../http.ts';
 import { all, one, insert, update, run, transaction, afterCommit } from '../db.ts';
 import { getCompanyData } from '../store.ts';
 import { sendMail, mailConfigured, SINGLE_ADDRESS, type Message } from '../mail.ts';
@@ -61,22 +61,15 @@ import { readFile, storeFile, maxUploadBytes } from './files.ts';
 import { readReport, ReaderBusy } from '../report-reader.ts';
 import type { ReportDetection } from '../report-detect.ts';
 import { renderDocumentPdf, type Doc } from './certificates.ts';
+import { isEditor, seesWholeCompany, seesWholeVault, FULL_VIEW_ROLES } from '../auth.ts';
 import {
   valuationRefresh, describeRefreshTrigger, computeCapTable, computePoolSummaries, awardPosition, awardIsLive,
   normalizeSplits, longDate, isTransferIssuance, formatMoney, formatPPS, formatShares, today, daysBetween, fiscalYear,
   type Choice, type CompanyData, type RefreshTrigger, type ValuationRefresh,
 } from '@kosmitor/core';
 
-/** The roles that see the whole company. Everyone else sees only their own holdings. */
-const FULL_VIEW = ['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'];
-/** The roles that make and change requests, and so may see who to contact about one. */
-const EDITORS = ['ADMIN', 'LEGAL'];
-
-function assertFullView(ctx: Ctx): void {
-  if (!FULL_VIEW.includes(ctx.membership?.role ?? '')) {
-    throw forbidden('A 409A request reads the whole cap table, which your role cannot see.');
-  }
-}
+/** What a member who sees only their own holdings is told about a 409A request. */
+const REQUEST_NEEDS_FULL_VIEW = 'A 409A request reads the whole cap table, which your role cannot see.';
 
 /** A request is open until it completes or is cancelled. One list, used everywhere, so no copy of it drifts. */
 export const OPEN_STATUSES = ['REQUESTED', 'IN_PROGRESS', 'DELIVERED'] as const;
@@ -1177,9 +1170,6 @@ interface LinkRow {
   size_bytes: number | null; has_body: boolean; created_at: string;
 }
 
-/** The roles that see every document in the vault. The others see only the ones shown to everyone. */
-const seesWholeVault = (role: string): boolean => ['ADMIN', 'LEGAL', 'BOARD'].includes(role);
-
 /**
  * The documents each request of a company hands over, by request, in the
  * checklist's order and then by name. The link and the document are matched on
@@ -1298,7 +1288,7 @@ function present(
   row: RequestRow, events: EventRow[], documents: RequestDocument[], documentsHidden: number, role: string, userId: string | null,
   readers: Set<string>, report: UploadedReport<UploadedReportDocument> | null,
 ) {
-  const editor = EDITORS.includes(role);
+  const editor = isEditor(role);
   const intake = intakeOf(row);
   return {
     id: row.id, status: row.status, provider: row.provider,
@@ -1340,7 +1330,7 @@ async function ownRequest(ctx: Ctx): Promise<RequestRow> {
 /** The members whose role reads a company's 409A page, and so are emailed about a request they made. */
 async function readersOf(companyId: string): Promise<Set<string>> {
   const rows = await all<{ user_id: string }>(
-    `SELECT user_id FROM memberships WHERE company_id = ? AND role IN (${FULL_VIEW.map(() => '?').join(', ')})`, companyId, ...FULL_VIEW);
+    `SELECT user_id FROM memberships WHERE company_id = ? AND role IN (${FULL_VIEW_ROLES.map(() => '?').join(', ')})`, companyId, ...FULL_VIEW_ROLES);
   return new Set(rows.map((r) => r.user_id));
 }
 
@@ -1607,7 +1597,7 @@ async function tellRequester(ctx: Ctx, row: RequestRow, change: StatusChange, me
     if (!row.requested_by_id) return skip('since the request does not record who asked');
     const requester = await one<{ email: string; name: string; role: string }>(
       `SELECT u.email, u.name, m.role FROM users u JOIN memberships m ON m.user_id = u.id AND m.company_id = ?
-        WHERE u.id = ? AND m.role IN (${FULL_VIEW.map(() => '?').join(', ')})`, row.company_id, row.requested_by_id, ...FULL_VIEW);
+        WHERE u.id = ? AND m.role IN (${FULL_VIEW_ROLES.map(() => '?').join(', ')})`, row.company_id, row.requested_by_id, ...FULL_VIEW_ROLES);
     if (!requester) return skip('since they no longer have access to the company’s 409A page');
     // An attempt still being sent counts as much as one that went or failed.
     if (await countSince(`entity_id = ? AND action IN ('NOTIFY_REQUESTER', 'NOTIFY_REQUESTER_FAILED', 'NOTIFY_REQUESTER_PENDING')`, DAY, row.id) >= limit) {
@@ -1615,7 +1605,7 @@ async function tellRequester(ctx: Ctx, row: RequestRow, change: StatusChange, me
     }
     const email = composeStatusEmail({
       companyName: await companyName(row.company_id), to: requester.email, toName: requester.name, change, message, replyTo: deskAddress(),
-      canRecord: EDITORS.includes(requester.role),
+      canRecord: isEditor(requester.role),
     });
     const attempt = await audit(ctx, 'NOTIFY_REQUESTER_PENDING', 'valuation_requests', row.id, `409A request ${word}: emailing the person who asked`, actor);
     return async () => {
@@ -1643,13 +1633,13 @@ async function tellRequester(ctx: Ctx, row: RequestRow, change: StatusChange, me
 // --- The company's routes --------------------------------------------------------
 
 route.get('/api/c/:cid/valuation-refresh', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, REQUEST_NEEDS_FULL_VIEW);
   const asOf = ctx.query.get('asOf') ? isoDate(ctx.query.get('asOf'), 'As-of date') : today();
   return refreshWithText(await getCompanyData(ctx.companyId!), asOf);
 });
 
 route.get('/api/c/:cid/valuation-requests', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, REQUEST_NEEDS_FULL_VIEW);
   const rows = await all<RequestRow>('SELECT * FROM valuation_requests WHERE company_id = ? ORDER BY created_at DESC', ctx.companyId);
   const events = await all<EventRow>('SELECT * FROM valuation_request_events WHERE company_id = ? ORDER BY created_at, id', ctx.companyId);
   const byRequest = new Map<string, EventRow[]>();
@@ -1749,7 +1739,7 @@ interface VaultRow {
  * made. Only documents with something to open are offered, newest first.
  */
 route.get('/api/c/:cid/valuation-requests/checklist', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, REQUEST_NEEDS_FULL_VIEW);
   const companyId = ctx.companyId!;
   const asOf = today();
   const data = await getCompanyData(companyId);
@@ -2064,7 +2054,7 @@ function sendWorkbook(ctx: Ctx, workbook: Buffer, asOf: string): void {
 }
 
 route.get('/api/c/:cid/valuation-requests/package.xlsx', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, REQUEST_NEEDS_FULL_VIEW);
   const { workbook, asOf } = await dataWorkbook(ctx.companyId!);
   await audit(ctx, 'EXPORT', 'valuation_requests', null, '409A data workbook downloaded');
   sendWorkbook(ctx, workbook, asOf);

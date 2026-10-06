@@ -10,6 +10,15 @@ export type Role = 'ADMIN' | 'LEGAL' | 'BOARD' | 'EMPLOYEE' | 'INVESTOR' | 'VIEW
 export const EDITOR_ROLES: Role[] = ['ADMIN', 'LEGAL'];
 /** Roles that may see the whole cap table rather than only their own position. */
 export const FULL_VIEW_ROLES: Role[] = ['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'];
+/** Roles that read every document in the vault; everyone else sees what is shared with everyone, or their own. */
+export const VAULT_ROLES: Role[] = ['ADMIN', 'LEGAL', 'BOARD'];
+/** Every role a membership can hold. */
+export const ROLES: Role[] = ['ADMIN', 'LEGAL', 'BOARD', 'EMPLOYEE', 'INVESTOR', 'VIEWER'];
+
+const oneOf = (roles: Role[]) => (role: string): boolean => (roles as string[]).includes(role);
+export const isEditor = oneOf(EDITOR_ROLES);
+export const seesWholeCompany = oneOf(FULL_VIEW_ROLES);
+export const seesWholeVault = oneOf(VAULT_ROLES);
 
 export interface AuthUser {
   id: string;

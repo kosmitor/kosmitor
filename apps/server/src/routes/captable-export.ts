@@ -11,6 +11,7 @@ import { computeCapTable, today, type CapTable, type CapTableRow } from '@kosmit
 import { xlsx, type Cell } from '../xlsx-writer.ts';
 import { tablePdf, type PdfRow } from '../pdf-writer.ts';
 import { config } from '../config.ts';
+import { seesWholeCompany } from '../auth.ts';
 
 type View = 'FULLY_DILUTED' | 'OUTSTANDING' | 'AS_CONVERTED' | 'VOTING';
 const VIEW_LABELS: Record<View, string> = { FULLY_DILUTED: 'Fully diluted', OUTSTANDING: 'Outstanding', AS_CONVERTED: 'As converted', VOTING: 'Voting' };
@@ -27,7 +28,7 @@ const flag = (ctx: { query: URLSearchParams }, key: string, dflt: boolean): bool
 };
 
 function optionsOf(ctx: { query: URLSearchParams; membership: { role: string } | null }): ExportOptions {
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership?.role ?? '')) {
+  if (!seesWholeCompany(ctx.membership?.role ?? '')) {
     throw badRequest('Your role can only view your own holdings.');
   }
   const view = (ctx.query.get('view') ?? 'FULLY_DILUTED') as View;

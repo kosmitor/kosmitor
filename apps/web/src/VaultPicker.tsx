@@ -13,16 +13,13 @@ import { useSession } from './session.tsx';
 import { useQuery } from './api.ts';
 import { Button, EmptyState, ErrorNote, Loading, Modal, SearchInput, cx } from './ui.tsx';
 import { Icon } from './icons.tsx';
-import { dateTime } from './format.ts';
+import { dateTime, fileSize } from './format.ts';
 import { categoryLabel } from './documents.ts';
 
 export interface VaultDocument {
   id: string; name: string; category: string; folder: string | null; fileName: string | null; mimeType: string | null;
   body: string | null; sizeBytes: number | null; createdAt: string;
 }
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 const describe = (d: VaultDocument): string => [
   categoryLabel(d.category), d.folder, d.sizeBytes ? fileSize(Number(d.sizeBytes)) : null, `added ${dateTime(d.createdAt)}`,

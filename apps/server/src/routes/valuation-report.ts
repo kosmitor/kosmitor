@@ -11,10 +11,7 @@
  */
 import { route, badRequest, notFound, audit, str, type Ctx } from '../http.ts';
 import { one, update, toCamel } from '../db.ts';
-
-const FULL_VIEW = ['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'];
-/** The roles that read every document in the vault; everyone else reads only what is shared with them. */
-const WIDE = ['ADMIN', 'LEGAL', 'BOARD'];
+import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 
 /** The document fields the page needs to name the report and decide how it opens. */
 export interface ReportDocument {
@@ -39,7 +36,7 @@ export async function reportDocumentOf(companyId: string, documentId: string | n
             (body IS NOT NULL AND body <> '') AS has_body
      FROM documents WHERE id = ? AND company_id = ?`, documentId, companyId);
   if (!d) return null;
-  const shared = role === undefined || WIDE.includes(role) || d.visibility === 'ALL' || (stakeholderId != null && d.stakeholder_id === stakeholderId);
+  const shared = role === undefined || seesWholeVault(role) || d.visibility === 'ALL' || (stakeholderId != null && d.stakeholder_id === stakeholderId);
   if (!shared) {
     return { id: d.id, name: '', category: d.category, folder: null, status: d.status, fileName: null, mimeType: null,
       sizeBytes: null, visibility: d.visibility, hasBody: false, createdAt: d.created_at, restricted: true };
@@ -72,7 +69,7 @@ async function ownValuation(ctx: Ctx): Promise<{ id: string; report_document_id:
 
 /** Where the report is, for the valuations table: a document to open, a link, or nothing. */
 route.get('/api/c/:cid/valuations/:id/report', 'read', async (ctx) => {
-  if (!FULL_VIEW.includes(ctx.membership?.role ?? '')) throw notFound('Valuation not found.');
+  if (!seesWholeCompany(ctx.membership?.role ?? '')) throw notFound('Valuation not found.');
   const v = await ownValuation(ctx);
   return {
     document: await reportDocumentOf(ctx.companyId!, v.report_document_id, ctx.membership!.role, ctx.membership!.stakeholderId),

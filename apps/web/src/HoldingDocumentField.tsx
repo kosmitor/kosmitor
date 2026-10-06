@@ -24,7 +24,7 @@ import {
 } from './ui.tsx';
 import { Icon } from './icons.tsx';
 import { PdfViewer } from './PdfViewer.tsx';
-import { dateTime } from './format.ts';
+import { dateTime, fileSize } from './format.ts';
 import { config } from './config.ts';
 import { categoryLabel, readableDocumentPath, documentFilename, downloadDocumentPath } from './documents.ts';
 
@@ -76,9 +76,6 @@ export const AWARD_AGREEMENT: HoldingDocumentKind = {
   title: 'Award agreement', noun: 'award agreement', holding: 'this award',
   description: 'Upload the signed award agreement, or file one the company already holds against this award.',
 };
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 const describe = (d: HoldingDocument): string => [
   categoryLabel(d.category),

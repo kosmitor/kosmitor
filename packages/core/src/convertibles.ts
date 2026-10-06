@@ -1,6 +1,11 @@
-import type { Convertible, ISODate, Cents, PricePerShare } from './types.ts';
+import type { Convertible, ISODate, Cents, PricePerShare, ConvertibleInstrument } from './types.ts';
 import { daysBetween, monthsBetween, addMonths, sharesForAmount, roundShares } from './util.ts';
 import { MICRO, CENTS } from './types.ts';
+
+/** What each instrument is called, as a title or at the start of a sentence. */
+export const INSTRUMENT_NAMES: Readonly<Record<string, string>> = {
+  SAFE_POST: 'Post-money SAFE', SAFE_PRE: 'Pre-money SAFE', NOTE: 'Convertible note', KISS: 'KISS',
+} satisfies Record<ConvertibleInstrument, string>;
 
 const CENTS_TO_PPS = MICRO / CENTS; // 10_000
 

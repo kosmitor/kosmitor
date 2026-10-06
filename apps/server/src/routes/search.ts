@@ -12,8 +12,9 @@
 import { route } from '../http.ts';
 import { all } from '../db.ts';
 import { linkedStakeholderId } from './workflows.ts';
-import { INSTRUMENT_NAMES } from './fundraising.ts';
 import { config } from '../config.ts';
+import { seesWholeCompany } from '../auth.ts';
+import { INSTRUMENT_NAMES } from '@kosmitor/core';
 
 export type SearchKind =
   | 'stakeholder' | 'award' | 'certificate' | 'convertible' | 'offer' | 'document'
@@ -30,7 +31,6 @@ export interface SearchHit {
 }
 
 const PER_KIND = 6;
-const FULL_ACCESS = ['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'];
 
 /** `%term%`, with LIKE wildcards inside the term itself escaped (the default escape character is a backslash). */
 const likePattern = (term: string): string => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -55,7 +55,7 @@ route.get('/api/c/:cid/search', 'read', async (ctx) => {
   const documentHit = (d: { id: string; name: string; category: string | null; status: string | null; folder: string | null }): SearchHit =>
     ({ kind: 'document', id: d.id, title: d.name, subtitle: join(pretty(d.category), d.folder, pretty(d.status)), label: d.name });
 
-  if (!FULL_ACCESS.includes(ctx.membership!.role)) {
+  if (!seesWholeCompany(ctx.membership!.role)) {
     const mine = await linkedStakeholderId(ctx);
     const docs = await all<{ id: string; name: string; category: string | null; status: string | null; folder: string | null }>(
       `SELECT id, name, category, status, folder FROM documents

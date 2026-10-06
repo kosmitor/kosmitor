@@ -9,7 +9,9 @@ import { route, audit, notFound, forbidden, badRequest } from '../http.ts';
 import { all, one } from '../db.ts';
 import { getCompanyData, cancellationDates } from '../store.ts';
 import { election83bRows, form3921Rows, activeValuation, today } from '@kosmitor/core';
-import { esc, page, sendHtml } from './certificates.ts';
+import { page, sendHtml } from './certificates.ts';
+import { esc } from '../email.ts';
+import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 
 const usd = (cents: number): string => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const perShare = (micro: number): string => `$${(micro / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
@@ -32,7 +34,7 @@ route.get('/api/c/:cid/compliance/83b/:issuanceId/print', 'read', async (ctx) =>
   const iss = data.issuances.find((i) => i.id === ctx.params.issuanceId);
   if (!iss) throw notFound('Certificate not found.');
   const role = ctx.membership!.role;
-  if (!['ADMIN', 'LEGAL', 'BOARD'].includes(role) && iss.stakeholderId !== ctx.membership!.stakeholderId) throw forbidden('You can only print your own election.');
+  if (!seesWholeVault(role) && iss.stakeholderId !== ctx.membership!.stakeholderId) throw forbidden('You can only print your own election.');
   const row = election83bRows(data, today()).find((r) => r.issuanceId === iss.id);
   if (!row) throw badRequest('This certificate is not restricted stock; no 83(b) election applies.');
   const company = (await one<{ name: string; legal_name: string | null; address: string | null; ein: string | null; jurisdiction: string | null }>('SELECT * FROM companies WHERE id = ?', ctx.companyId))!;
@@ -79,7 +81,7 @@ ${holder.email ? '' : ''}</section>`;
 
 /** One information statement per ISO exercise in a year, for the employees. */
 route.get('/api/c/:cid/compliance/form-3921/:year/statements', 'read', async (ctx) => {
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership!.role)) throw forbidden('Only company users can print employee statements.');
+  if (!seesWholeCompany(ctx.membership!.role)) throw forbidden('Only company users can print employee statements.');
   const year = Number(ctx.params.year);
   if (!Number.isInteger(year) || year < 1990) throw badRequest('Choose a tax year.');
   const data = await getCompanyData(ctx.companyId!);

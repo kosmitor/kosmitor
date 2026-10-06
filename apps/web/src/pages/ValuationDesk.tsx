@@ -32,7 +32,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Field, Input, Textarea, Loading, ErrorNote, Banner, Spinner, StatusBadge, useToast, cx } from '../ui.tsx';
 import { Icon, Logo } from '../icons.tsx';
-import { date, dateTime, today, pps, parsePPS } from '../format.ts';
+import { date, dateTime, today, pps, parsePPS, fileSize } from '../format.ts';
 import { RequestTracker, RequestHistory, stepsOf, type RequestEvent } from '../ValuationRequests.tsx';
 import { AnswerTables, RequestDocumentList, type AnswerTable, type RequestDocument } from '../ValuationChecklist.tsx';
 import { documentFilename } from '../documents.ts';
@@ -148,9 +148,6 @@ function priceProblem(typed: string): string | null {
   const micro = parsePPS(typed);
   return micro > 0 && micro <= MAX_PRICE ? null : 'Enter the price for one common share, such as 0.42.';
 }
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 /** The most the server takes, limits.uploadMb, checked here first so a large file is not sent only to be refused. */
 const MAX_UPLOAD = Math.round(config.limits.uploadMb * 1024 * 1024);

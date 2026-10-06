@@ -11,6 +11,7 @@ import { getCompanyData, invalidate } from '../store.ts';
 import { sendMail, mailConfigured, type Message } from '../mail.ts';
 import { config } from '../config.ts';
 import { renderEmail } from '../email.ts';
+import { longDate } from '../certificate-face.ts';
 import { templateFor, renderTemplate, AWARD_TYPE_NAMES, ENTITY_WORDS, usd, perShare, integer, type MergeContext } from '../templates.ts';
 import { today } from '@kosmitor/core';
 
@@ -133,10 +134,6 @@ route.patch('/api/c/:cid/offers/:id', 'write', async (ctx) => {
 
 // --- The email -------------------------------------------------------------------
 
-/** A date the way a letter writes it: December 31, 2026. */
-const longDate = (iso: string): string =>
-  new Intl.DateTimeFormat(config().locale.locale, { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })
-    .format(new Date(`${iso.slice(0, 10)}T00:00:00Z`));
 /** Cuts a company name for a subject line, which mail apps show only the start of. */
 const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 3).trimEnd()}...` : s);
 

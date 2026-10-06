@@ -10,9 +10,8 @@
 import type { Ctx } from '../http.ts';
 import { all, toCamelAll } from '../db.ts';
 import type { CompanyData } from '@kosmitor/core';
+import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 
-/** The roles that read the whole vault; everyone else sees what is published or theirs. */
-const WIDE = ['ADMIN', 'LEGAL', 'BOARD'];
 
 export interface TimelineEvent {
   id: string;
@@ -31,7 +30,7 @@ export interface TimelineEvent {
  */
 export async function documentsFor(ctx: Ctx, securityId: string): Promise<Record<string, any>[]> {
   const mine = ctx.membership!.stakeholderId;
-  const rows = toCamelAll<Record<string, any>>(WIDE.includes(ctx.membership!.role)
+  const rows = toCamelAll<Record<string, any>>(seesWholeVault(ctx.membership!.role)
     ? await all('SELECT * FROM documents WHERE company_id = ? AND security_id = ? ORDER BY created_at DESC', ctx.companyId, securityId)
     : await all(`SELECT * FROM documents WHERE company_id = ? AND security_id = ?
                  AND (visibility = 'ALL' OR stakeholder_id = ?) ORDER BY created_at DESC`, ctx.companyId, securityId, mine));
@@ -86,6 +85,6 @@ export function holderOf(data: CompanyData, stakeholderId: string) {
  * Returns true when the caller must be refused.
  */
 export function hiddenFrom(ctx: Ctx, stakeholderId: string): boolean {
-  if (['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership!.role)) return false;
+  if (seesWholeCompany(ctx.membership!.role)) return false;
   return ctx.membership!.stakeholderId !== stakeholderId;
 }

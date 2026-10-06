@@ -10,11 +10,12 @@ import { config, mailSignature } from '../config.ts';
 import { listTemplates, templateFor, templateById, renderTemplate, TEMPLATE_KINDS, MERGE_FIELDS, SAMPLE_CONTEXT, AWARD_TYPE_NAMES, ENTITY_WORDS as ENTITY_NAMES, usd as fmtUsd, perShare as fmtPerShare, integer as fmtInt, type TemplateKind, type MergeContext } from '../templates.ts';
 import { removeStoredFile, securityKind, isSubjectKind, isDocumentCategory } from './files.ts';
 import { documentFolder } from '../folders.ts';
-import { startConvertibleSigning, activateConvertible, detachFromPendingConsents, INSTRUMENT_NAMES } from './fundraising.ts';
+import { startConvertibleSigning, activateConvertible, detachFromPendingConsents } from './fundraising.ts';
 import { updatesFor, markUpdateRead } from './communications.ts';
+import { isEditor, seesWholeCompany, seesWholeVault } from '../auth.ts';
 import {
   computeCapTable, activeValuation, summarizeVesting, vestingCurve, portfolioValue, modelExercise,
-  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor,
+  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES,
 } from '@kosmitor/core';
 
 // A certificate or grant keeps the share count and price of the day it was
@@ -420,7 +421,7 @@ async function loadRequest(ctx: Ctx) {
 
 route.get('/api/c/:cid/exercise-requests', 'read', async (ctx) => {
   const role = ctx.membership!.role;
-  const mine = ['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(role) ? null : (ctx.membership!.stakeholderId ?? '__none__');
+  const mine = seesWholeCompany(role) ? null : (ctx.membership!.stakeholderId ?? '__none__');
   const rows = toCamelAll<Record<string, unknown>>(await all(
     `SELECT r.*, a.label AS award_label, a.type AS award_type, s.name AS stakeholder_name
      FROM exercise_requests r JOIN awards a ON a.id = r.award_id JOIN stakeholders s ON s.id = r.stakeholder_id
@@ -441,7 +442,7 @@ route.post('/api/c/:cid/exercise-requests', 'read', async (ctx) => {
   const method = str(ctx.body.method ?? 'CASH', 'Method');
   if (!REQUEST_METHODS.includes(method)) throw badRequest('Choose a valid exercise method.');
   const { data, award, exercisable, fmv } = await exercisableOn(ctx.companyId!, awardId, today());
-  const editor = ['ADMIN', 'LEGAL'].includes(ctx.membership!.role);
+  const editor = isEditor(ctx.membership!.role);
   if (!editor && award.stakeholderId !== ctx.membership!.stakeholderId) throw forbidden('You can only request exercises of your own grants.');
   const pending = await one<{ n: number }>("SELECT COALESCE(SUM(quantity), 0) AS n FROM exercise_requests WHERE award_id = ? AND status IN ('REQUESTED', 'APPROVED', 'PAID')", awardId);
   const available = Math.max(0, roundShares(exercisable - Number(pending?.n ?? 0)));
@@ -492,7 +493,7 @@ route.post('/api/c/:cid/exercise-requests/:id/complete', 'write', async (ctx) =>
 /** The holder changes their mind before anything is recorded. */
 route.post('/api/c/:cid/exercise-requests/:id/withdraw', 'read', async (ctx) => {
   const req = await loadRequest(ctx);
-  const editor = ['ADMIN', 'LEGAL'].includes(ctx.membership!.role);
+  const editor = isEditor(ctx.membership!.role);
   if (!editor && req.stakeholderId !== ctx.membership!.stakeholderId) throw forbidden('This request belongs to someone else.');
   if (!['REQUESTED', 'APPROVED'].includes(req.status)) throw badRequest(`This request is ${req.status.toLowerCase()} and cannot be withdrawn.`);
   await update('exercise_requests', req.id, { status: 'WITHDRAWN', reviewedAt: nowISO() });
@@ -671,7 +672,7 @@ export async function linkedStakeholderId(ctx: { membership: { id: string; stake
 route.get('/api/c/:cid/documents', 'read', async (ctx) => {
   const role = ctx.membership!.role;
   const mine = await linkedStakeholderId(ctx);
-  const rows = ['ADMIN', 'LEGAL', 'BOARD'].includes(role)
+  const rows = seesWholeVault(role)
     ? await all('SELECT * FROM documents WHERE company_id = ? ORDER BY created_at DESC', ctx.companyId)
     : await all(`SELECT * FROM documents WHERE company_id = ?
            AND (visibility = 'ALL' OR stakeholder_id = ?) ORDER BY created_at DESC`, ctx.companyId, mine);
@@ -916,7 +917,7 @@ route.post('/api/c/:cid/signatures/:id/sign', 'read', async (ctx) => {
   // the company. Comparing the two directly let anyone whose membership has no
   // linked stakeholder match it, null against null, and countersign: that
   // completes the document, makes the shares outstanding and writes the ledger.
-  const officer = ['ADMIN', 'LEGAL'].includes(role);
+  const officer = isEditor(role);
   if (!officer && (sig.stakeholderId == null || sig.stakeholderId !== mine)) {
     throw forbidden('This signature block is assigned to someone else.');
   }
@@ -1464,7 +1465,7 @@ route.post('/api/c/:cid/consents/:id/vote', 'read', async (ctx) => {
   if (!['APPROVE', 'REJECT', 'ABSTAIN'].includes(vote)) throw badRequest('Choose approve, reject or abstain.');
 
   const mine = ctx.membership!.stakeholderId;
-  const target = ['ADMIN', 'LEGAL'].includes(ctx.membership!.role) && ctx.body.stakeholderId
+  const target = isEditor(ctx.membership!.role) && ctx.body.stakeholderId
     ? String(ctx.body.stakeholderId) : mine;
   if (!target) throw badRequest('Your account is not linked to a board member.');
 
@@ -1554,7 +1555,7 @@ route.post('/api/c/:cid/transactions', 'write', async (ctx) => {
 });
 
 route.get('/api/c/:cid/audit', 'read', async (ctx) => {
-  if (!['ADMIN', 'LEGAL', 'BOARD'].includes(ctx.membership!.role)) {
+  if (!seesWholeVault(ctx.membership!.role)) {
     throw forbidden('Only administrators can review the audit log.');
   }
   const limit = pageSize(ctx);

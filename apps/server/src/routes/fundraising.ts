@@ -14,10 +14,9 @@ import { sendMail, mailConfigured, type Message } from '../mail.ts';
 import { renderEmail, type EmailContent } from '../email.ts';
 import { config, mailSignature } from '../config.ts';
 import { templateFor, renderTemplate, ENTITY_WORDS, usd, type MergeContext } from '../templates.ts';
-import { convertibleFace } from '../certificate-face.ts';
-import { today } from '@kosmitor/core';
+import { convertibleFace, longDate } from '../certificate-face.ts';
+import { today, INSTRUMENT_NAMES } from '@kosmitor/core';
 
-export const INSTRUMENT_NAMES: Record<string, string> = { SAFE_POST: 'Post-money SAFE', SAFE_PRE: 'Pre-money SAFE', NOTE: 'Convertible note', KISS: 'KISS' };
 const COMPOUNDING_WORDS: Record<string, string> = { SIMPLE: 'simple interest', ANNUAL: 'compounded annually', MONTHLY: 'compounded monthly', DAILY: 'compounded daily' };
 const pct = (x: number): string => `${(x * 100).toLocaleString(config().locale.locale, { maximumFractionDigits: 2 })}%`;
 /** An amount in cents, in the param file's locale and currency, for emails: "$250,000", or "$1,234.50" when there are cents. */
@@ -26,10 +25,6 @@ const money = (cents: number): string => {
   const whole = Number.isInteger(cents / 100) ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {};
   return new Intl.NumberFormat(locale, { style: 'currency', currency, ...whole }).format(cents / 100);
 };
-/** A date written out, "March 3, 2026", in the param file's locale. */
-const writtenDate = (iso: string): string => (/^\d{4}-\d{2}-\d{2}/.test(iso)
-  ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString(config().locale.locale, { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })
-  : iso);
 
 interface SigningConfig { signerName: string; signerTitle: string; templateId: string | null; message: string | null }
 interface ConvertibleRow {
@@ -129,7 +124,7 @@ export function composeInvestorSigningEmail(e: InvestorSigningEmail): Message {
       { label: 'Agreement', value: e.instrument },
       { label: 'Amount', value: amount },
       ...(e.reference ? [{ label: 'Reference', value: e.reference }] : []),
-      ...(e.date ? [{ label: 'Issue date', value: writtenDate(e.date) }] : []),
+      ...(e.date ? [{ label: 'Issue date', value: longDate(e.date) }] : []),
       { label: 'Status', value: 'Waiting for your signature' },
     ],
     action: { label: 'Review and sign', url: e.link },

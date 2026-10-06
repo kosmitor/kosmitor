@@ -16,7 +16,7 @@ import {
 } from './ui.tsx';
 import { Icon } from './icons.tsx';
 import { PdfViewer } from './PdfViewer.tsx';
-import { dateTime } from './format.ts';
+import { dateTime, fileSize } from './format.ts';
 import { config } from './config.ts';
 import { categoryLabel, readableDocumentPath, documentFilename, downloadDocumentPath, documentAccess } from './documents.ts';
 
@@ -43,9 +43,6 @@ interface VaultDocument {
   id: string; name: string; category: string; folder: string | null; fileName: string | null; mimeType: string | null;
   body: string | null; sizeBytes: number | null; createdAt: string;
 }
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 const describe = (d: { category: string; folder: string | null; sizeBytes: number | string | null; createdAt: string }): string => [
   categoryLabel(d.category), d.folder, d.sizeBytes ? fileSize(Number(d.sizeBytes)) : null, `added ${dateTime(d.createdAt)}`,

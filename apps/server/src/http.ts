@@ -2,7 +2,7 @@ import { UNSHOWABLE, HEADER_SYNTAX, HAS_SUBSTANCE, NAME_MAX } from './names.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { serveStatic } from './static.ts';
 import { randomUUID } from 'node:crypto';
-import { userForToken, membershipFor, type AuthUser, type Membership, type Role } from './auth.ts';
+import { isEditor, seesWholeCompany, userForToken, membershipFor, type AuthUser, type Membership, type Role } from './auth.ts';
 import { insert, one, transaction } from './db.ts';
 import { invalidate } from './store.ts';
 import { config, megabytes } from './config.ts';
@@ -36,6 +36,11 @@ export const badRequest = (m: string, d?: unknown) => new HttpError(400, m, d);
 export const unauthorized = (m = 'Sign in to continue.') => new HttpError(401, m);
 export const forbidden = (m = 'You do not have access to this.') => new HttpError(403, m);
 export const notFound = (m = 'Not found.') => new HttpError(404, m);
+
+/** Refuses a member whose role sees only their own holdings, not the whole company. */
+export function assertFullView(ctx: { membership: { role: string } | null }, message: string): void {
+  if (!seesWholeCompany(ctx.membership?.role ?? '')) throw forbidden(message);
+}
 
 type Handler = (ctx: Ctx) => unknown | Promise<unknown>;
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -251,7 +256,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
         if (!m) throw forbidden('You are not a member of this company.');
         ctx.membership = m;
         const role = m.role as Role;
-        if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(role) && access === 'read') {
+        if (!seesWholeCompany(role) && access === 'read') {
           const suffix = url.pathname.split('/').slice(4).join('/');
           const permitted = suffix === '' || suffix === 'portal' || suffix === 'documents' || suffix === 'search'
             || /^documents\/[^/]+\/download$/.test(suffix) || /^documents\/[^/]+\/print$/.test(suffix) || /^documents\/[^/]+\/pdf$/.test(suffix)
@@ -268,7 +273,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             || ['model/exercise', 'model/exit-curve'].includes(suffix);
           if (!permitted) throw forbidden('Your role can only view your own portfolio.');
         }
-        if (access === 'write' && !['ADMIN', 'LEGAL'].includes(role)) {
+        if (access === 'write' && !isEditor(role)) {
           throw forbidden('Your role is read-only for cap table changes.');
         }
         if (access === 'admin' && role !== 'ADMIN') {

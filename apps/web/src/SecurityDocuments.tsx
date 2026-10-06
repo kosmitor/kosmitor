@@ -25,7 +25,7 @@ import {
 } from './ui.tsx';
 import { Icon } from './icons.tsx';
 import { PdfViewer } from './PdfViewer.tsx';
-import { dateTime } from './format.ts';
+import { dateTime, fileSize } from './format.ts';
 import { config } from './config.ts';
 import { DOCUMENT_CATEGORIES, categoryLabel, readableDocumentPath, documentFilename, downloadDocumentPath } from './documents.ts';
 
@@ -60,9 +60,6 @@ export interface DocumentSubject {
 type Anchor =
   | { securityId: string; subject?: never }
   | { securityId?: never; subject: DocumentSubject };
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 /** Who each stored visibility lets in, in the words the upload form uses. */
 const VISIBILITY: Record<string, { label: string; tone: 'neutral' | 'info' | 'brand' }> = {

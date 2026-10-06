@@ -9,6 +9,7 @@ import { getCompanyData } from '../store.ts';
 import { computeCapTable, summarizeVesting, activeValuation, today, type CompanyData } from '@kosmitor/core';
 import { xlsx } from '../xlsx-writer.ts';
 import { config } from '../config.ts';
+import { seesWholeCompany } from '../auth.ts';
 
 type ColumnType = 'text' | 'number' | 'money' | 'pps' | 'date' | 'percent' | 'boolean';
 export interface Column { key: string; label: string; type: ColumnType }
@@ -188,7 +189,7 @@ const csvText = (rows: (string | number | null)[][]): string => rows.map((r) => 
 }).join(',')).join('\n');
 
 function assertCompanyUser(ctx: Ctx): void {
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership!.role)) throw forbidden('Reports are for company users.');
+  if (!seesWholeCompany(ctx.membership!.role)) throw forbidden('Reports are for company users.');
 }
 
 route.get('/api/c/:cid/report-builder', 'read', async (ctx) => {

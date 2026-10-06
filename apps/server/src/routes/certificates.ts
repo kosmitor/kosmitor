@@ -6,12 +6,12 @@
 import { route, audit, notFound, forbidden, badRequest, type Ctx } from '../http.ts';
 import { all, one, toCamel, toCamelAll } from '../db.ts';
 import { sendMail, mailConfigured, type Message } from '../mail.ts';
-import { renderEmail } from '../email.ts';
+import { renderEmail, esc } from '../email.ts';
 import { documentPdf, certificatePdf, certificateBookPdf, type CertificatePdfInput } from '../pdf-writer.ts';
 import { parseFace } from '../certificate-face.ts';
 import { config, iconLinks } from '../config.ts';
+import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 
-export const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
 export interface Doc { id: string; company_id: string; name: string; category: string; body: string | null; face: string | null; status: string; stakeholder_id: string | null; security_id: string | null; visibility: string; requires_signature: number; created_at: string }
 interface Sig { signer_name: string; status: string; typed_signature: string | null; signed_at: string | null; ip_address: string | null; stakeholder_id: string | null }
@@ -100,7 +100,7 @@ route.get('/api/c/:cid/documents/:id/print', 'read', async (ctx) => {
   const doc = await one<Doc>('SELECT * FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   if (!doc) throw notFound('Document not found.');
   const role = ctx.membership!.role;
-  if (!['ADMIN', 'LEGAL', 'BOARD'].includes(role) && doc.visibility !== 'ALL' && doc.stakeholder_id !== ctx.membership!.stakeholderId) throw forbidden('You do not have access to this document.');
+  if (!seesWholeVault(role) && doc.visibility !== 'ALL' && doc.stakeholder_id !== ctx.membership!.stakeholderId) throw forbidden('You do not have access to this document.');
   if (!doc.body) throw badRequest('This document has no text to print; download the file instead.');
   const sigs = await all<Sig>('SELECT * FROM signatures WHERE document_id = ? ORDER BY created_at', doc.id);
   await audit(ctx, 'PRINT', 'documents', doc.id, `Printed "${doc.name}"`);
@@ -143,7 +143,7 @@ route.get('/api/c/:cid/documents/:id/pdf', 'read', async (ctx) => {
   const doc = await one<Doc>('SELECT * FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   if (!doc) throw notFound('Document not found.');
   const role = ctx.membership!.role;
-  if (!['ADMIN', 'LEGAL', 'BOARD'].includes(role) && doc.visibility !== 'ALL' && doc.stakeholder_id !== ctx.membership!.stakeholderId) throw forbidden('You do not have access to this document.');
+  if (!seesWholeVault(role) && doc.visibility !== 'ALL' && doc.stakeholder_id !== ctx.membership!.stakeholderId) throw forbidden('You do not have access to this document.');
   if (!doc.body) throw badRequest('This document has no text to render; download the file instead.');
   const inline = ctx.query.get('inline') === '1';
   const pdf = await renderDocumentPdf(doc);
@@ -156,7 +156,7 @@ route.get('/api/c/:cid/documents/:id/pdf', 'read', async (ctx) => {
  * the certificates in their certificate layout; otherwise the plain HTML book.
  */
 route.get('/api/c/:cid/certificates/print', 'read', async (ctx) => {
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership!.role)) throw forbidden('Only company users can print the certificate book.');
+  if (!seesWholeCompany(ctx.membership!.role)) throw forbidden('Only company users can print the certificate book.');
   const docs = await all<Doc>("SELECT * FROM documents WHERE company_id = ? AND category = 'CERTIFICATE' AND body IS NOT NULL AND status = 'EXECUTED' ORDER BY created_at", ctx.companyId);
   if (docs.length === 0) throw notFound('No executed certificates yet.');
   const sigs = await all<Sig & { document_id: string }>(`SELECT * FROM signatures WHERE document_id IN (${docs.map(() => '?').join(',')}) ORDER BY created_at`, ...docs.map((d) => d.id));

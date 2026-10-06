@@ -11,7 +11,7 @@ import { takeImportFile, IMPORT_ACCEPT } from '../importHandoff.ts';
 import { DOCUMENT_CATEGORIES } from '../documents.ts';
 import { config } from '../config.ts';
 import {
-  date, dateTime, shares as fmtShares, money as fmtMoney, pps as fmtPPS, AWARD_LABELS, INSTRUMENT_LABELS,
+  date, dateTime, shares as fmtShares, money as fmtMoney, pps as fmtPPS, AWARD_LABELS, INSTRUMENT_LABELS, fileSize,
 } from '../format.ts';
 
 type Cell = string | number | boolean | null;
@@ -62,8 +62,6 @@ const withConstants = (s: Suggestion): Record<string, MappingValue> => ({
 const cellText = (c: Cell): string => (c === null || c === undefined ? '' : typeof c === 'boolean' ? (c ? 'Yes' : 'No') : String(c));
 const isMapped = (m: MappingValue): boolean => m != null && (typeof m === 'number' || m.value.trim() !== '');
 const plural = (n: number, word: string, pluralWord = `${word}s`): string => `${n.toLocaleString()} ${n === 1 ? word : pluralWord}`;
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 const BLANK_DOCUMENT = { title: '', category: 'AGREEMENT', folder: 'General', stakeholderId: '', securityId: '', visibility: 'ADMIN' };
 
 export default function ImportData() {

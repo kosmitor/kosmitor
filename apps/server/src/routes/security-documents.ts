@@ -10,9 +10,8 @@
 import { route, notFound, badRequest, str } from '../http.ts';
 import { all, toCamelAll } from '../db.ts';
 import { securityKind, isSubjectKind } from './files.ts';
+import { seesWholeVault } from '../auth.ts';
 
-/** Reading the whole vault is for the roles that may see the whole company. */
-const WIDE = ['ADMIN', 'LEGAL', 'BOARD'];
 
 route.get('/api/c/:cid/securities/:id/documents', 'read', async (ctx) => {
   const kind = await securityKind(ctx.companyId!, ctx.params.id);
@@ -21,7 +20,7 @@ route.get('/api/c/:cid/securities/:id/documents', 'read', async (ctx) => {
   // Same rule as the documents page: anyone else sees what is published to
   // everyone, plus what is filed against them.
   const mine = ctx.membership!.stakeholderId;
-  const documents = toCamelAll<Record<string, unknown>>(WIDE.includes(ctx.membership!.role)
+  const documents = toCamelAll<Record<string, unknown>>(seesWholeVault(ctx.membership!.role)
     ? await all('SELECT * FROM documents WHERE company_id = ? AND security_id = ? ORDER BY created_at DESC', ctx.companyId, ctx.params.id)
     : await all(`SELECT * FROM documents WHERE company_id = ? AND security_id = ?
                  AND (visibility = 'ALL' OR stakeholder_id = ?) ORDER BY created_at DESC`, ctx.companyId, ctx.params.id, mine));
@@ -49,7 +48,7 @@ route.get('/api/c/:cid/compliance-documents', 'read', async (ctx) => {
   const ref = str(ctx.query.get('ref'), 'Reference', { max: 120 });
 
   const mine = ctx.membership!.stakeholderId;
-  const documents = toCamelAll<Record<string, unknown>>(WIDE.includes(ctx.membership!.role)
+  const documents = toCamelAll<Record<string, unknown>>(seesWholeVault(ctx.membership!.role)
     ? await all(`SELECT * FROM documents WHERE company_id = ? AND subject_kind = ? AND subject_ref = ?
                  ORDER BY created_at DESC`, ctx.companyId, kind, ref)
     : await all(`SELECT * FROM documents WHERE company_id = ? AND subject_kind = ? AND subject_ref = ?

@@ -61,8 +61,8 @@ const PANEL = '#f6f7f9';
 const PAGE = '#f3f5f8';
 const FONT = `-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`;
 
-const esc = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+/** Text made safe for HTML, quotes included; null and undefined become empty. */
+export const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
 /** A paragraph of plain text as HTML: escaped, with its own line breaks kept. */
 const prose = (s: string): string => esc(s).replace(/\r?\n/g, '<br>');

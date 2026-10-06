@@ -1,8 +1,9 @@
-import { route, badRequest, notFound, newId, nowISO, audit } from '../http.ts';
+import { route, assertFullView, badRequest, notFound, newId, nowISO, audit } from '../http.ts';
 import { all, one, insert, update, run, toCamel, toCamelAll } from '../db.ts';
 import { getCompanyData, invalidate, cancellationDates, cancellationsOf } from '../store.ts';
 import { toCsv } from '../import/csv.ts';
 import { config } from '../config.ts';
+import { seesWholeCompany } from '../auth.ts';
 import {
   computeCapTable, ownershipByGroup, dilutionHistory, stakeholderPosition, computePoolSummaries,
   modelRound, computeAntiDilution, modelConvertibleStack,
@@ -22,18 +23,13 @@ const flag = (ctx: { query: URLSearchParams }, key: string, dflt: boolean): bool
   return v == null ? dflt : v === 'true' || v === '1';
 };
 
-/** Restricts a non-privileged member to their own position. */
-function assertFullView(ctx: { membership: { role: string } | null }): void {
-  const role = ctx.membership?.role ?? 'VIEWER';
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(role)) {
-    throw badRequest('Your role can only view your own holdings. Open the Portfolio tab instead.');
-  }
-}
+/** What a member who sees only their own position is told. */
+const OWN_POSITION_ONLY = 'Your role can only view your own holdings. Open the Portfolio tab instead.';
 
 // --- Cap table -------------------------------------------------------------
 
 route.get('/api/c/:cid/captable', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const table = computeCapTable(data, {
     asOf: asOfOf(ctx),
@@ -97,7 +93,7 @@ route.get('/api/c/:cid/dashboard', 'read', async (ctx) => {
 });
 
 route.get('/api/c/:cid/captable/history', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   return dilutionHistory(await getCompanyData(ctx.companyId!));
 });
 
@@ -111,7 +107,7 @@ route.get('/api/c/:cid/stakeholders/:id/position', 'read', async (ctx) => {
   const asOf = asOfOf(ctx);
   const role = ctx.membership!.role;
   const own = ctx.membership!.stakeholderId;
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(role) && own !== ctx.params.id) {
+  if (!seesWholeCompany(role) && own !== ctx.params.id) {
     throw badRequest('You can only view your own position.');
   }
   const position = stakeholderPosition(data, ctx.params.id, asOf);
@@ -156,7 +152,7 @@ const curvePoints = (raw: unknown, fallback: number): number => {
 };
 
 route.post('/api/c/:cid/model/round', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const b = ctx.body ?? {};
   if (!Array.isArray(b.investors) || b.investors.length === 0) {
@@ -194,7 +190,7 @@ route.post('/api/c/:cid/model/round', 'read', async (ctx) => {
 });
 
 route.post('/api/c/:cid/model/waterfall', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const b = ctx.body ?? {};
   const exitValue = Number(b.exitValue ?? 0);
@@ -218,7 +214,7 @@ route.post('/api/c/:cid/model/exit-curve', 'read', async (ctx) => {
   const stakeholderId = String(ctx.body.stakeholderId ?? ctx.membership!.stakeholderId ?? '');
   if (!stakeholderId) throw badRequest('Choose a stakeholder.');
   const role = ctx.membership!.role;
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(role) && ctx.membership!.stakeholderId !== stakeholderId) {
+  if (!seesWholeCompany(role) && ctx.membership!.stakeholderId !== stakeholderId) {
     throw badRequest('You can only model your own outcome.');
   }
   // modeling.portalMaxExit is in dollars; the engine works in cents.
@@ -229,7 +225,7 @@ route.post('/api/c/:cid/model/exit-curve', 'read', async (ctx) => {
 });
 
 route.get('/api/c/:cid/model/convertibles', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   return modelConvertibleStack(await getCompanyData(ctx.companyId!), asOfOf(ctx));
 });
 
@@ -303,7 +299,7 @@ export async function complianceOptionsFor(companyId: string, asOf: string) {
 }
 
 route.get('/api/c/:cid/compliance', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const asOf = asOfOf(ctx);
   const options = await complianceOptionsFor(ctx.companyId!, asOf);
@@ -323,7 +319,7 @@ route.get('/api/c/:cid/compliance', 'read', async (ctx) => {
 // --- Compliance sections ---------------------------------------------------
 
 route.get('/api/c/:cid/compliance/83b', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const asOf = asOfOf(ctx);
   const rows = election83bRows(data, asOf).map((r) => ({
@@ -347,7 +343,7 @@ function form3921Payload(data: Awaited<ReturnType<typeof getCompanyData>>, asOf:
 }
 
 route.get('/api/c/:cid/compliance/form-3921', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const asOf = asOfOf(ctx);
   const { year, statuses, status, rows } = form3921Payload(data, asOf, ctx.query.get('year'), await cancellationDates(ctx.companyId!));
@@ -361,7 +357,7 @@ route.get('/api/c/:cid/compliance/form-3921', 'read', async (ctx) => {
 
 /** The boxes of Form 3921 for every ISO exercise of a year, one row per form, for a filing service or the IRS FIRE/IRIS upload. */
 route.get('/api/c/:cid/compliance/form-3921.csv', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const { year, rows } = form3921Payload(data, asOfOf(ctx), ctx.query.get('year'), await cancellationDates(ctx.companyId!));
   const company = await one<{ legal_name: string | null; name: string; ein: string | null; address: string | null }>('SELECT * FROM companies WHERE id = ?', ctx.companyId);
@@ -386,7 +382,7 @@ route.get('/api/c/:cid/compliance/form-3921.csv', 'read', async (ctx) => {
 });
 
 route.get('/api/c/:cid/compliance/boi', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data = await getCompanyData(ctx.companyId!);
   const asOf = asOfOf(ctx);
   const company = await one<{ boi_status: string | null; jurisdiction: string | null; entity_type: string | null; incorporation_date: string | null }>('SELECT * FROM companies WHERE id = ?', ctx.companyId);
@@ -442,7 +438,7 @@ route.post('/api/c/:cid/model/exercise', 'read', async (ctx) => {
   const award = data.awards.find((a) => a.id === ctx.body.awardId);
   if (!award) throw notFound('Grant not found.');
   const role = ctx.membership!.role;
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(role) && award.stakeholderId !== ctx.membership!.stakeholderId) {
+  if (!seesWholeCompany(role) && award.stakeholderId !== ctx.membership!.stakeholderId) {
     throw badRequest('You can only model your own grants.');
   }
   const asOf = ctx.body.asOf ?? today();
@@ -531,13 +527,13 @@ async function buildStockComp(ctx: Parameters<typeof asOfOf>[0] & { companyId: s
 }
 
 route.get('/api/c/:cid/reports/stock-comp', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   return buildStockComp(ctx);
 });
 
 /** The expense schedule by award, for the auditor's workpapers. */
 route.get('/api/c/:cid/reports/stock-comp.csv', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const { report } = await buildStockComp(ctx);
   const dollars = (cents: number) => (cents / 100).toFixed(2);
   const perShare = (micro: number) => (micro / 1e6).toFixed(4);
@@ -559,7 +555,7 @@ route.get('/api/c/:cid/reports/stock-comp.csv', 'read', async (ctx) => {
 });
 
 route.get('/api/c/:cid/reports/:report', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertFullView(ctx, OWN_POSITION_ONLY);
   const data: CompanyData = await getCompanyData(ctx.companyId!);
   const asOf = asOfOf(ctx);
   const report = ctx.params.report;

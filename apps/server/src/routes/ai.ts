@@ -9,7 +9,7 @@
  * assistant is closed to the roles that are not allowed to see the whole cap
  * table, and the exact text is available for inspection at any time.
  */
-import { route, badRequest, notFound, forbidden, HttpError, newId, nowISO, str } from '../http.ts';
+import { route, assertFullView, badRequest, notFound, forbidden, HttpError, newId, nowISO, str } from '../http.ts';
 import { all, one, insert, run, toCamel } from '../db.ts';
 import { getCompanyData } from '../store.ts';
 import { seal, open, hint } from '../secrets.ts';
@@ -18,6 +18,7 @@ import { captableSnapshot, SYSTEM_PROMPT } from '../ai/context.ts';
 import { complianceOptionsFor } from './analytics.ts';
 import { config } from '../config.ts';
 import { today } from '@kosmitor/core';
+import { seesWholeCompany } from '../auth.ts';
 
 // How much of the conversation travels with each question (ai.historyTurns; older
 // turns fall away) and how long a question may be (ai.maxQuestionChars) are settings.
@@ -104,11 +105,9 @@ route.del('/api/ai/settings', 'user', async (ctx) => {
 // --- Conversations, per company and private to their author ------------------
 
 /** The assistant is handed the whole cap table, so it is closed to anyone who may not see it. */
-function assertFullView(ctx: { membership: { role: string } | null }): void {
+function assertAssistantAccess(ctx: { membership: { role: string } | null }): void {
   assertEnabled();
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership!.role)) {
-    throw forbidden('The assistant reads the whole cap table, which your role cannot see.');
-  }
+  assertFullView(ctx, 'The assistant reads the whole cap table, which your role cannot see.');
 }
 
 async function ownedChat(ctx: { params: Record<string, string>; companyId: string | null; user: { id: string } | null }) {
@@ -127,7 +126,7 @@ const shape = (chat: { id: string; title: string; created_at: string; updated_at
   ({ id: chat.id, title: chat.title, createdAt: chat.created_at, updatedAt: chat.updated_at });
 
 route.get('/api/c/:cid/ai/chats', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertAssistantAccess(ctx);
   const rows = await all<{ id: string; title: string; created_at: string; updated_at: string; message_count: string }>(
     `SELECT c.*, (SELECT COUNT(*) FROM ai_messages m WHERE m.chat_id = c.id) AS message_count
      FROM ai_chats c WHERE c.company_id = ? AND c.user_id = ? ORDER BY c.updated_at DESC`,
@@ -136,7 +135,7 @@ route.get('/api/c/:cid/ai/chats', 'read', async (ctx) => {
 });
 
 route.post('/api/c/:cid/ai/chats', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertAssistantAccess(ctx);
   const id = newId('chat');
   const at = nowISO();
   await insert('ai_chats', { id, companyId: ctx.companyId, userId: ctx.user!.id, title: 'New conversation', createdAt: at, updatedAt: at });
@@ -144,14 +143,14 @@ route.post('/api/c/:cid/ai/chats', 'read', async (ctx) => {
 });
 
 route.get('/api/c/:cid/ai/chats/:id', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertAssistantAccess(ctx);
   const chat = await ownedChat(ctx);
   const messages = await messagesOf(chat.id);
   return { ...shape(chat), messages: messages.map((m) => ({ id: m.id, role: m.role, content: m.content, createdAt: m.created_at })) };
 });
 
 route.del('/api/c/:cid/ai/chats/:id', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertAssistantAccess(ctx);
   const chat = await ownedChat(ctx);
   await run('DELETE FROM ai_chats WHERE id = ?', chat.id);
   return { ok: true };
@@ -165,14 +164,14 @@ async function snapshotOf(companyId: string, company: Record<string, unknown> | 
 
 /** The snapshot itself, so nobody has to take on trust what leaves the building. */
 route.get('/api/c/:cid/ai/context', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertAssistantAccess(ctx);
   const company = toCamel<Record<string, unknown>>(await one('SELECT * FROM companies WHERE id = ?', ctx.companyId));
   const snapshot = await snapshotOf(ctx.companyId!, company);
   return snapshot;
 });
 
 route.post('/api/c/:cid/ai/chats/:id/messages', 'read', async (ctx) => {
-  assertFullView(ctx);
+  assertAssistantAccess(ctx);
   const chat = await ownedChat(ctx);
   const question = str(ctx.body.message, 'Message', { max: config().ai.maxQuestionChars });
 

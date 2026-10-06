@@ -12,16 +12,13 @@ import type { ActionItem } from '../pickers.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
 import { DocumentPreview } from '../PdfFrame.tsx';
-import { date, dateTime } from '../format.ts';
+import { date, dateTime, fileSize } from '../format.ts';
 import { config } from '../config.ts';
 import { DOCUMENT_CATEGORIES, categoryLabel, readableDocumentPath, isPdfDocument, downloadDocumentPath, documentFilename } from '../documents.ts';
 import {
   DocumentTree, MoveToFolderDialog, NewFolderDialog, SelectionBar, useFolderExpansion, buildFolderTree, listFolders,
   folderPath, folderProblem, folderLabel, DEFAULT_FOLDER, NO_SELECTION, type TreeColumn,
 } from '../DocumentTree.tsx';
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 const blank = {
   name: '', category: 'AGREEMENT', folder: DEFAULT_FOLDER, body: '',

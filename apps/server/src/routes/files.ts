@@ -16,6 +16,7 @@ import { one, all, insert, run, toCamel, transaction } from '../db.ts';
 import { SERVER_DIR } from '../env.ts';
 import { config, megabytes } from '../config.ts';
 import { documentFolder } from '../folders.ts';
+import { seesWholeVault } from '../auth.ts';
 
 /** The largest document upload, limits.uploadMb. */
 export const maxUploadBytes = (): number => megabytes(config().limits.uploadMb);
@@ -169,7 +170,7 @@ route.get('/api/c/:cid/documents/:id/download', 'read', async (ctx) => {
   if (!doc) throw notFound('Document not found.');
   const role = ctx.membership!.role;
   const mine = ctx.membership!.stakeholderId;
-  if (!['ADMIN', 'LEGAL', 'BOARD'].includes(role) && doc.visibility !== 'ALL' && doc.stakeholderId !== mine) {
+  if (!seesWholeVault(role) && doc.visibility !== 'ALL' && doc.stakeholderId !== mine) {
     throw forbidden('You do not have access to this document.');
   }
   if (!doc.storageKey) throw notFound('This document has no file attached.');

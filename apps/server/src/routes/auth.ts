@@ -5,7 +5,7 @@ import { deleteCompany } from '../company-admin.ts';
 import {
   createUser, findUserByEmail, upsertGoogleAccount, verifyPassword, createSession, destroySession, publicUser,
   issuePasswordReset, readPasswordReset, consumePasswordReset, markPasswordResetHandedOut, setPassword, generateTemporaryPassword,
-  neverSignedIn, FULL_VIEW_ROLES, type AuthUser, type Role, type UserRow,
+  neverSignedIn, ROLES, seesWholeCompany, type AuthUser, type Role, type UserRow,
 } from '../auth.ts';
 import { verifyGoogleIdToken, GoogleAuthError } from '../google.ts';
 import { issueNonce, consumeNonce } from '../nonces.ts';
@@ -730,7 +730,7 @@ export function composeInviteEmail({ to, inviter, company, role, kind, link, exp
     { label: 'Company', value: company },
     { label: kind === 'existing' ? 'Added by' : 'Invited by', value: inviter },
     { label: 'Role', value: words.label },
-    { label: 'What you see', value: FULL_VIEW_ROLES.includes(role) ? 'The whole company' : 'Your own equity' },
+    { label: 'What you see', value: seesWholeCompany(role) ? 'The whole company' : 'Your own equity' },
     { label: 'Sign in as', value: to.email },
   ];
   const app = appUrl();
@@ -915,8 +915,7 @@ route.post('/api/c/:cid/members', 'admin', async (ctx) => {
   const email = str(ctx.body.email, 'Email', { max: 200 }).toLowerCase().trim();
   if (!SINGLE_ADDRESS.test(email)) throw badRequest('That email address does not look right.');
   const role = str(ctx.body.role, 'Role') as Role;
-  const validRoles: Role[] = ['ADMIN', 'LEGAL', 'BOARD', 'EMPLOYEE', 'INVESTOR', 'VIEWER'];
-  if (!validRoles.includes(role)) throw badRequest('Choose a valid role.');
+  if (!ROLES.includes(role)) throw badRequest('Choose a valid role.');
 
   // Invited users get a placeholder account they claim by setting a password
   // or by signing in with Google using the invited address.
@@ -966,13 +965,12 @@ route.patch('/api/c/:cid/members/:id', 'admin', async (ctx) => {
   const member = await one<{ user_id: string; role: string }>('SELECT * FROM memberships WHERE id = ? AND company_id = ?',
     ctx.params.id, ctx.companyId);
   if (!member) throw notFound('Member not found.');
-  const validRoles: Role[] = ['ADMIN', 'LEGAL', 'BOARD', 'EMPLOYEE', 'INVESTOR', 'VIEWER'];
   const changes: string[] = [];
 
   const values: Record<string, unknown> = {};
   if (ctx.body.role !== undefined) {
     const role = str(ctx.body.role, 'Role') as Role;
-    if (!validRoles.includes(role)) throw badRequest('Choose a valid role.');
+    if (!ROLES.includes(role)) throw badRequest('Choose a valid role.');
     if (member.role === 'ADMIN' && role !== 'ADMIN') {
       const admins = await one<{ n: number | string }>(
         "SELECT COUNT(*) AS n FROM memberships WHERE company_id = ? AND role = 'ADMIN'", ctx.companyId);

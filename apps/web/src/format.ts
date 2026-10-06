@@ -93,6 +93,10 @@ export function duration(minutes: number): string {
   return minutes === 1 ? 'a minute' : `${minutes} minutes`;
 }
 
+/** A file size as a list shows it: "820 B", "14 KB", "2.3 MB". */
+export const fileSize = (bytes: number): string =>
+  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
+
 export const today = (): string => new Date().toISOString().slice(0, 10);
 
 /** Takes the currency sign out of typed money, whichever currency the app shows. */

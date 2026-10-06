@@ -31,7 +31,7 @@ import { FormGrid } from './crud.tsx';
 import { Button, Checkbox, Field, Input, Select, Spinner, Textarea, cx } from './ui.tsx';
 import { Icon, type IconName } from './icons.tsx';
 import {
-  amountHint, currencySymbol, date, fieldNumber, money, parseMoney, parsePPS, parseShares, pps, shares, today,
+  amountHint, currencySymbol, date, fieldNumber, money, parseMoney, parsePPS, parseShares, pps, shares, today, fileSize,
 } from './format.ts';
 import { config, type PublicConfig } from './config.ts';
 import { categoryLabel } from './documents.ts';
@@ -898,9 +898,6 @@ function rowsOf<K extends keyof Lists>(update: Update, list: K, blank: () => Lis
     remove: (key: string) => update((f) => map(f, (rows) => rows.filter((r) => r.key !== key))),
   };
 }
-
-const fileSize = (bytes: number): string =>
-  bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 
 /**
  * One document the appraiser asks for: what it is, what to send, what is

@@ -15,6 +15,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { config, deskName } from './config.ts';
+import { esc } from './email.ts';
 import type { Message } from './mail.ts';
 import type { Situation } from './routes/valuation-requests.ts';
 
@@ -112,8 +113,6 @@ const samples: { title: string; who: string; message: Message }[] = [
   { title: '409A request completed by a colleague', who: 'The person who asked for a 409A', message: composeStatusEmail({ ...asker, change: { kind: 'COMPLETED', by: 'Hana Ito', valuationDate: '2026-01-31' }, message: null, replyTo: null }) },
   { title: '409A request cancelled by a colleague', who: 'The person who asked for a 409A', message: composeStatusEmail({ ...asker, change: { kind: 'CANCELLED', by: 'Hana Ito' }, message: null, replyTo: null }) },
 ];
-
-const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 const page = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

@@ -13,6 +13,7 @@ import { getCompanyData, cancellationDates } from '../store.ts';
 import { documentsFor, timelineFor, holderOf, hiddenFrom } from './detail-shared.ts';
 import { reportDocumentOf } from './valuation-report.ts';
 import { config } from '../config.ts';
+import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 import {
   computeCapTable, computePoolSummaries, summarizeVesting, vestingCurve, awardPosition, awardIsLive,
   isoHundredKTest, modelConvertibleStack, activeValuation, today, shareValue, addMonths, splitFactor,
@@ -183,7 +184,7 @@ route.get('/api/c/:cid/valuations/:id/detail', 'read', async (ctx) => {
   const row = toCamel<Record<string, any>>(
     await one('SELECT * FROM valuations WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId));
   if (!row) throw notFound('Valuation not found.');
-  if (!['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'].includes(ctx.membership!.role)) throw notFound('Valuation not found.');
+  if (!seesWholeCompany(ctx.membership!.role)) throw notFound('Valuation not found.');
 
   const data = await getCompanyData(ctx.companyId!);
   const effective = String(row.effectiveDate);
@@ -208,7 +209,7 @@ route.get('/api/c/:cid/valuations/:id/detail', 'read', async (ctx) => {
 
   // The company's valuation paperwork, as the vault would show it to this reader,
   // and without the bodies: the page only needs to know whether one can be read.
-  const wide = ['ADMIN', 'LEGAL', 'BOARD'].includes(ctx.membership!.role);
+  const wide = seesWholeVault(ctx.membership!.role);
   const documents = toCamelAll<Record<string, any>>(await all(
     `SELECT id, name, category, folder, status, file_name, mime_type, size_bytes, visibility, created_by, created_at,
             (body IS NOT NULL AND body <> '') AS has_body

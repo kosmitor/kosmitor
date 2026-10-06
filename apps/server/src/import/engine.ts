@@ -16,7 +16,7 @@ import {
   type Cell, type ImportKind, type DateOrder, type FieldSpec,
 } from './values.ts';
 import { config } from '../config.ts';
-import { roundShares, today } from '@kosmitor/core';
+import { roundShares, today, INSTRUMENT_NAMES } from '@kosmitor/core';
 
 export interface ImportOptions {
   dateOrder?: DateOrder;
@@ -751,7 +751,7 @@ export async function prepareImport(companyId: string, req: ImportRequest, known
       } else if (holder && instrument && principal != null && issueDate) {
         // No reference to go by: the same holder, instrument, amount and date is taken to be the same instrument.
         const fingerprint = convertibleFingerprint(holder.id, instrument, principal, issueDate);
-        const kindName = { SAFE_POST: 'post-money SAFE', SAFE_PRE: 'pre-money SAFE', NOTE: 'convertible note', KISS: 'KISS' }[instrument] ?? 'instrument';
+        const kindName = INSTRUMENT_NAMES[instrument]?.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase()) ?? 'instrument';
         if (company.convertibleFingerprints.has(fingerprint)) ctx.error(`An identical ${kindName} for this holder (same amount and date) already exists — importing it again would duplicate it`);
         else if (seenFingerprints.has(fingerprint)) ctx.error('The same instrument appears more than once in the file');
         seenFingerprints.add(fingerprint);
