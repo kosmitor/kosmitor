@@ -9,13 +9,14 @@ import { stockFace, awardFace, faceText, stockLegends, isNonUsHolder, type Certi
 import { config, mailSignature } from '../config.ts';
 import { listTemplates, templateFor, templateById, renderTemplate, TEMPLATE_KINDS, MERGE_FIELDS, SAMPLE_CONTEXT, AWARD_TYPE_NAMES, ENTITY_WORDS as ENTITY_NAMES, usd as fmtUsd, perShare as fmtPerShare, integer as fmtInt, type TemplateKind, type MergeContext } from '../templates.ts';
 import { removeStoredFile, securityKind, isSubjectKind, isDocumentCategory } from './files.ts';
+import { changedSinceSigned } from './certificates.ts';
 import { documentFolder } from '../folders.ts';
 import { startConvertibleSigning, activateConvertible, detachFromPendingConsents } from './fundraising.ts';
 import { updatesFor, markUpdateRead } from './communications.ts';
 import { isEditor, seesWholeCompany, seesWholeVault } from '../auth.ts';
 import {
   computeCapTable, activeValuation, summarizeVesting, vestingCurve, portfolioValue, modelExercise,
-  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES, TRANSACTION_TYPES, mfnCandidates,
+  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES, TRANSACTION_TYPES, REWOUND_TYPES, formatMoney, mfnCandidates,
 } from '@kosmitor/core';
 
 // A certificate or grant keeps the share count and price of the day it was
@@ -741,6 +742,77 @@ route.post('/api/c/:cid/convertibles/:id/mfn-election', 'write', async (ctx) => 
   await audit(ctx, 'MFN_ELECTION', 'convertibles', mfn.id, memo);
   return { ok: true };
 });
+/** Cancels part or all of an outstanding certificate, as a repurchase does with nothing paid. */
+route.post('/api/c/:cid/issuances/:id/cancel', 'write', async (ctx) => {
+  const data = await getCompanyData(ctx.companyId!);
+  const source = data.issuances.find((i) => i.id === ctx.params.id);
+  if (!source) throw notFound('Certificate not found.');
+  if (source.status !== 'OUTSTANDING') throw badRequest('Only outstanding certificates can be cancelled.');
+  const quantity = ctx.body.quantity != null ? num(ctx.body.quantity, 'Quantity', { min: 1 }) : source.quantity;
+  if (quantity > source.quantity) throw badRequest(`That certificate only holds ${formatShares(source.quantity)} shares.`);
+  const cancelDate = date(ctx.body.date ?? today(), 'Cancellation date');
+  if (cancelDate < source.issueDate) throw badRequest(`The cancellation cannot be dated before the certificate was issued, ${source.issueDate}.`);
+  const k = splitFactor(data, source.issueDate, cancelDate);
+  // A cancellation of everything closes the certificate and keeps what it held, as a transfer does.
+  if (quantity >= source.quantity) await update('issuances', source.id, { status: 'CANCELLED' });
+  else await update('issuances', source.id, { quantity: roundShares(source.quantity - quantity) });
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: 'CANCELLATION', date: cancelDate,
+    stakeholderId: source.stakeholderId, counterpartyId: null, securityId: source.id, shareClassId: source.shareClassId,
+    quantity: roundShares(quantity * k), pricePerShare: null, amount: null,
+    memo: ctx.body.reason ? String(ctx.body.reason).slice(0, 500) : 'Certificate cancelled', createdAt: nowISO(), createdBy: ctx.user!.name,
+  });
+  invalidate(ctx.companyId!);
+  await audit(ctx, 'CANCEL', 'issuances', source.id, `${formatShares(quantity)} shares cancelled`);
+  return toCamel(await one('SELECT * FROM issuances WHERE id = ?', source.id));
+});
+
+/** Ends what is left of an outstanding warrant: expired (reason EXPIRED) or cancelled. */
+route.post('/api/c/:cid/warrants/:id/cancel', 'write', async (ctx) => {
+  const data = await getCompanyData(ctx.companyId!);
+  const warrant = data.warrants.find((w) => w.id === ctx.params.id);
+  if (!warrant) throw notFound('Warrant not found.');
+  if (warrant.status !== 'OUTSTANDING') throw badRequest('Only outstanding warrants can be cancelled or expire.');
+  const on = date(ctx.body.date ?? today(), 'Date');
+  if (on < warrant.issueDate) throw badRequest(`The warrant was issued on ${warrant.issueDate}.`);
+  const expired = ctx.body.reason === 'EXPIRED';
+  const left = roundShares(warrant.quantity - warrant.exercisedQuantity);
+  await update('warrants', warrant.id, { status: expired ? 'EXPIRED' : 'CANCELLED' });
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: expired ? 'EXPIRATION' : 'CANCELLATION', date: on,
+    stakeholderId: warrant.stakeholderId, counterpartyId: null, securityId: warrant.id, shareClassId: warrant.shareClassId,
+    quantity: roundShares(left * splitFactor(data, warrant.issueDate, on)), pricePerShare: null, amount: null,
+    memo: expired ? 'Warrant expired' : (ctx.body.reason ? String(ctx.body.reason).slice(0, 500) : 'Warrant cancelled'),
+    createdAt: nowISO(), createdBy: ctx.user!.name,
+  });
+  invalidate(ctx.companyId!);
+  await audit(ctx, expired ? 'EXPIRE' : 'CANCEL', 'warrants', warrant.id, `${formatShares(left)} warrant shares ${expired ? 'expired' : 'cancelled'}`);
+  return toCamel(await one('SELECT * FROM warrants WHERE id = ?', warrant.id));
+});
+
+/** Settles an outstanding SAFE or note without shares: repaid in cash, or cancelled. */
+async function settleConvertible(ctx: Ctx, repaid: boolean) {
+  const data = await getCompanyData(ctx.companyId!);
+  const convertible = data.convertibles.find((c) => c.id === ctx.params.id);
+  if (!convertible) throw notFound('Instrument not found.');
+  if (convertible.status !== 'OUTSTANDING') throw badRequest('Only an outstanding instrument can be settled; this one already has been.');
+  const on = date(ctx.body.date ?? today(), repaid ? 'Repayment date' : 'Cancellation date');
+  if (on < convertible.issueDate) throw badRequest(`The instrument was issued on ${convertible.issueDate}, so it cannot be settled before.`);
+  const amount = repaid ? (ctx.body.amount != null ? num(ctx.body.amount, 'Amount', { min: 0, integer: true }) : convertible.principal) : null;
+  await update('convertibles', convertible.id, { status: repaid ? 'REPAID' : 'CANCELLED' });
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: repaid ? 'REPAYMENT' : 'CANCELLATION', date: on,
+    stakeholderId: convertible.stakeholderId, counterpartyId: null, securityId: convertible.id, shareClassId: null,
+    quantity: null, pricePerShare: null, amount,
+    memo: ctx.body.reason ? String(ctx.body.reason).slice(0, 500) : `${INSTRUMENT_NAMES[convertible.instrument]} ${repaid ? 'repaid' : 'cancelled'}`,
+    createdAt: nowISO(), createdBy: ctx.user!.name,
+  });
+  invalidate(ctx.companyId!);
+  await audit(ctx, repaid ? 'REPAY' : 'CANCEL', 'convertibles', convertible.id, repaid ? `Repaid ${formatMoney(amount!)}` : 'Instrument cancelled');
+  return toCamel(await one('SELECT * FROM convertibles WHERE id = ?', convertible.id));
+}
+route.post('/api/c/:cid/convertibles/:id/repay', 'write', async (ctx) => settleConvertible(ctx, true));
+route.post('/api/c/:cid/convertibles/:id/cancel', 'write', async (ctx) => settleConvertible(ctx, false));
 
 // ---------------------------------------------------------------------------
 // Documents and e-signature
@@ -777,7 +849,10 @@ route.get('/api/c/:cid/documents', 'read', async (ctx) => {
   const sigs = toCamelAll<Record<string, unknown>>(
     await all('SELECT * FROM signatures WHERE company_id = ?', ctx.companyId));
   // The stored front page is only drawn by the PDF route; the list says whether there is one.
-  return docs.map(({ face, ...d }) => ({ ...d, hasFace: !!face, signatures: sigs.filter((s) => s.documentId === d.id) }));
+  return docs.map(({ face, ...d }) => {
+    const own = sigs.filter((s) => s.documentId === d.id);
+    return { ...d, hasFace: !!face, signatures: own, tampered: changedSinceSigned(d.body as string | null, own) };
+  });
 });
 
 /** One list, so a category the app writes is also a category it will accept back. */
@@ -1003,6 +1078,10 @@ route.del('/api/c/:cid/documents/:id', 'write', async (ctx) => {
   const doc = await one<{ storage_key: string | null }>(
     'SELECT storage_key FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   if (!doc) throw notFound('Document not found.');
+  // A signature is a record of what was agreed; deleting the document would take it with it.
+  const signed = await one<{ signer_name: string }>(
+    "SELECT signer_name FROM signatures WHERE document_id = ? AND company_id = ? AND status = 'SIGNED' LIMIT 1", ctx.params.id, ctx.companyId);
+  if (signed) throw badRequest(`${signed.signer_name.split(' — ')[0]} has signed this document, so it cannot be deleted.`);
   await run('DELETE FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   await removeStoredFile(doc.storage_key);
   await audit(ctx, 'DELETE', 'documents', ctx.params.id, 'Document deleted');
@@ -1654,6 +1733,10 @@ route.post('/api/c/:cid/transactions', 'write', async (ctx) => {
   if (type === 'CORRECTION') throw badRequest('A correction is recorded by editing the security, with an effective date.');
   const securityId = ctx.body.securityId ? String(ctx.body.securityId) : null;
   if (securityId && !(await securityKind(ctx.companyId!, securityId))) throw badRequest('That security does not belong to this company.');
+  // The engine undoes these against the row's state of today, so one the row never had would corrupt every past view.
+  if (securityId && REWOUND_TYPES.includes(type as never)) {
+    throw badRequest(`A ${type} against a security is recorded with its action route (transfer, repurchase, exercise, cancel, convert or repay), which changes the security and dates the entry together.`);
+  }
   // The rewind reads an entry against a security by its quantity (rewindToDate), so one there must have it.
   const quantity = ctx.body.quantity != null || securityId ? num(ctx.body.quantity, 'Quantity', { min: 1, integer: true }) : null;
   const id = newId('tx');

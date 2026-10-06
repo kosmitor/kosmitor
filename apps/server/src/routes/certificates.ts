@@ -3,6 +3,7 @@
  * holders. Print views are self-contained HTML pages the browser can save as
  * PDF; the signature record travels with the document.
  */
+import { createHash } from 'node:crypto';
 import { route, audit, notFound, forbidden, badRequest, type Ctx } from '../http.ts';
 import { all, one, toCamel, toCamelAll } from '../db.ts';
 import { sendMail, mailConfigured, type Message } from '../mail.ts';
@@ -14,7 +15,20 @@ import { seesWholeCompany, seesWholeVault } from '../auth.ts';
 
 
 export interface Doc { id: string; company_id: string; name: string; category: string; body: string | null; face: string | null; status: string; stakeholder_id: string | null; security_id: string | null; visibility: string; requires_signature: number; created_at: string }
-interface Sig { signer_name: string; status: string; typed_signature: string | null; signed_at: string | null; ip_address: string | null; stakeholder_id: string | null }
+interface Sig { signer_name: string; status: string; typed_signature: string | null; signed_at: string | null; ip_address: string | null; stakeholder_id: string | null; body_sha256?: string | null }
+
+/**
+ * Whether the text is no longer what someone signed: a signature's stored hash of the
+ * body differs from the body now. The routes refuse that edit, so it means the row was
+ * changed past them. Signatures from before hashes were kept are not checked.
+ */
+export function changedSinceSigned(body: string | null, sigs: { status?: unknown; bodySha256?: unknown; body_sha256?: unknown }[]): boolean {
+  const hash = createHash('sha256').update(body ?? '').digest('hex');
+  return sigs.some((s) => s.status === 'SIGNED' && (s.bodySha256 ?? s.body_sha256) != null && (s.bodySha256 ?? s.body_sha256) !== hash);
+}
+/** The warning printed on a document whose text changed after it was signed. */
+const TAMPERED = 'WARNING: this text has changed since it was signed';
+const warnIfChanged = (doc: Doc, sigs: Sig[]): string => (changedSinceSigned(doc.body, sigs) ? `${TAMPERED} \u00b7 ` : '');
 
 const STYLE = `
   @page { margin: 22mm 20mm; }
@@ -41,7 +55,7 @@ function sheet(company: { name: string; legal_name: string | null }, doc: Doc, s
     s.status === 'SIGNED'
       ? `<span><span class="cursive">${esc(s.typed_signature)}</span> <span class="meta">· signed ${esc(String(s.signed_at).replace('T', ' ').slice(0, 16))} UTC${s.ip_address ? ` · ${esc(s.ip_address)}` : ''}</span></span>`
       : '<span class="meta">Not yet signed</span>'}</div>`).join('')}</div>` : '';
-  return `<section class="sheet"><div class="company">${esc(company.legal_name ?? company.name)}</div><h1>${esc(doc.name)}</h1><pre>${esc(doc.body ?? '')}</pre>${signatureRows}<div class="foot">${
+  return `<section class="sheet"><div class="company">${esc(company.legal_name ?? company.name)}</div><h1>${esc(doc.name)}</h1><pre>${esc(doc.body ?? '')}</pre>${signatureRows}<div class="foot">${esc(warnIfChanged(doc, sigs))}${
     doc.status === 'EXECUTED' ? `${esc(executedNote())}. ` : doc.requires_signature ? 'Signatures pending. ' : ''}Document ${esc(doc.id)} · generated ${new Date().toISOString().slice(0, 10)}</div></section>`;
 }
 
@@ -75,7 +89,7 @@ function certificateInput(doc: Doc, sigs: Sig[]): CertificatePdfInput | null {
       when: s.signed_at ? String(s.signed_at).replace('T', ' ').slice(0, 16) : null, ip: s.ip_address,
     })),
     executed: doc.status === 'EXECUTED',
-    footer: `${doc.requires_signature && doc.status !== 'EXECUTED' ? 'Signatures pending \u00b7 ' : ''}Document ${doc.id} \u00b7 generated ${new Date().toISOString().slice(0, 10)}`,
+    footer: `${warnIfChanged(doc, sigs)}${doc.requires_signature && doc.status !== 'EXECUTED' ? 'Signatures pending \u00b7 ' : ''}Document ${doc.id} \u00b7 generated ${new Date().toISOString().slice(0, 10)}`,
     frameColor: config().brand.colors.certificateFrame,
   };
 }
@@ -129,7 +143,7 @@ export async function renderDocumentPdf(doc: Doc): Promise<Buffer> {
       name: s.signer_name, signed: s.status === 'SIGNED', typed: s.typed_signature,
       when: s.signed_at ? `${String(s.signed_at).replace('T', ' ').slice(0, 16)} UTC` : null, ip: s.ip_address,
     })),
-    footer: `${doc.status === 'EXECUTED' ? `${executedNote()} \u00b7 ` : doc.requires_signature ? 'Signatures pending \u00b7 ' : ''}Document ${doc.id} \u00b7 generated ${new Date().toISOString().slice(0, 10)}`,
+    footer: `${warnIfChanged(doc, sigs)}${doc.status === 'EXECUTED' ? `${executedNote()} \u00b7 ` : doc.requires_signature ? 'Signatures pending \u00b7 ' : ''}Document ${doc.id} \u00b7 generated ${new Date().toISOString().slice(0, 10)}`,
   });
 }
 

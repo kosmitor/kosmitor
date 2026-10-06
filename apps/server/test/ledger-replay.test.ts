@@ -1,8 +1,9 @@
 /**
  * Model-based test of the write paths (math audit §4 and §5; CAP-1, CAP-2, CAP-9).
- * Random sequences of issues, grants, SAFEs, stock splits, transfers, repurchases,
- * exercises, cancellations, conversions and corrected counts (PATCH with an effective
- * date) go through the real routes. After every
+ * Random sequences of issues, grants, SAFEs, warrants, stock splits, transfers,
+ * repurchases, certificate cancellations, exercises of grants and warrants, grant
+ * cancellations, warrant expiries, conversions, repayments and cancellations of
+ * SAFEs, and corrected counts (PATCH with an effective date) go through the real routes. After every
  * step the cap table route, as of each date so far, must equal a plain replay of the
  * events dated on or before it. The replay knows nothing of the engine or the ledger:
  * it keeps share counts in the shares of the day, multiplies them by a split's ratio
@@ -64,6 +65,11 @@ type Fact =
   | { kind: 'exercise'; date: string; grant: string; id: string; shares: number; price: number }
   | { kind: 'cancel'; date: string; grant: string; shares: number }
   | { kind: 'convert'; date: string; safe: string; id: string; shares: number; price: number }
+  | { kind: 'certcancel'; date: string; source: string; shares: number }
+  | { kind: 'warrant'; date: string; id: string; holder: string; shares: number }
+  | { kind: 'wexercise'; date: string; warrant: string; id: string; shares: number; price: number }
+  | { kind: 'wend'; date: string; warrant: string }
+  | { kind: 'settle'; date: string; safe: string }
   // An edit of a count from `date` on: a certificate's shares or a grant's size, by `shares` of the day.
   | { kind: 'correct'; date: string; target: 'cert' | 'grant'; id: string; shares: number };
 
@@ -71,12 +77,13 @@ type Fact =
 const PLAN = 3_000_000;
 const PLAN_APPROVED = '2020-01-01';
 
-interface Position { outstanding: number; options: number; principal: number }
+interface Position { outstanding: number; options: number; warrants: number; principal: number }
 
 function replay(facts: Fact[], asOf: string) {
   const certs = new Map<string, { holder: string; shares: number; paid: number }>();
   const grants = new Map<string, { holder: string; granted: number; exercised: number; cancelled: number }>();
   const safes = new Map<string, { holder: string; principal: number; live: boolean }>();
+  const warrants = new Map<string, { holder: string; size: number; exercised: number; live: boolean }>();
   let plan = asOf >= PLAN_APPROVED ? PLAN : 0;
   for (const f of facts) {
     if (f.date > asOf) continue;
@@ -87,6 +94,7 @@ function replay(facts: Fact[], asOf: string) {
       case 'split':
         for (const c of certs.values()) { c.shares *= f.ratio; c.paid /= f.ratio; }
         for (const g of grants.values()) { g.granted *= f.ratio; g.exercised *= f.ratio; g.cancelled *= f.ratio; }
+        for (const w of warrants.values()) { w.size *= f.ratio; w.exercised *= f.ratio; }
         plan *= f.ratio;
         break;
       case 'transfer': {
@@ -96,7 +104,16 @@ function replay(facts: Fact[], asOf: string) {
         certs.set(f.id, { holder: f.to, shares: f.shares, paid: src.paid });
         break;
       }
-      case 'repurchase': certs.get(f.source)!.shares -= f.shares; break;
+      case 'repurchase': case 'certcancel': certs.get(f.source)!.shares -= f.shares; break;
+      case 'warrant': warrants.set(f.id, { holder: f.holder, size: f.shares, exercised: 0, live: true }); break;
+      case 'wexercise': {
+        const w = warrants.get(f.warrant)!;
+        w.exercised += f.shares;
+        certs.set(f.id, { holder: w.holder, shares: f.shares, paid: f.price });
+        break;
+      }
+      case 'wend': warrants.get(f.warrant)!.live = false; break;
+      case 'settle': safes.get(f.safe)!.live = false; break;
       case 'exercise': {
         const g = grants.get(f.grant)!;
         g.exercised += f.shares;
@@ -117,7 +134,7 @@ function replay(facts: Fact[], asOf: string) {
     }
   }
   const holders = new Map<string, Position>();
-  const at = (id: string) => holders.get(id) ?? holders.set(id, { outstanding: 0, options: 0, principal: 0 }).get(id)!;
+  const at = (id: string) => holders.get(id) ?? holders.set(id, { outstanding: 0, options: 0, warrants: 0, principal: 0 }).get(id)!;
   let invested = 0, held = 0;
   for (const c of certs.values()) {
     if (c.shares <= 1e-9) continue;
@@ -132,9 +149,15 @@ function replay(facts: Fact[], asOf: string) {
     options += left; granted += g.granted; returned += g.cancelled;
   }
   for (const s of safes.values()) if (s.live) at(s.holder).principal += s.principal;
+  let warranted = 0;
+  for (const w of warrants.values()) {
+    if (!w.live) continue;
+    at(w.holder).warrants += w.size - w.exercised;
+    warranted += w.size - w.exercised;
+  }
   const outstanding = [...holders.values()].reduce((n, h) => n + h.outstanding, 0);
   const pool = plan - granted + returned;
-  return { holders, outstanding, options, pool, fullyDiluted: outstanding + options + pool, invested, certificates: held };
+  return { holders, outstanding, options, warrants: warranted, pool, fullyDiluted: outstanding + options + warranted + pool, invested, certificates: held };
 }
 
 /** The splits after `on` and on or before `to`, from the facts: what the routes multiply a recorded quantity by. */
@@ -176,10 +199,14 @@ async function runHistory(seed: number, steps: number): Promise<void> {
     const certs = ((await send('GET', '/issuances')) as any[]).filter((i) => i.status === 'OUTSTANDING' && i.issueDate <= date && Number(i.quantity) >= 1);
     const grants = ((await send('GET', '/awards')) as any[]).filter((a) => a.status === 'OUTSTANDING' && roundShares(a.quantity - a.exercisedQuantity - a.cancelledQuantity) >= 1);
     const safes = ((await send('GET', '/convertibles')) as any[]).filter((c) => c.status === 'OUTSTANDING');
+    const live = ((await send('GET', '/warrants')) as any[]).filter((w) => w.status === 'OUTSTANDING' && roundShares(w.quantity - w.exercisedQuantity) >= 1);
     let fact: Fact;
-    let what = pick(['issue', 'grant', 'safe', 'split', 'transfer', 'transfer', 'repurchase', 'exercise', 'cancel', 'convert', 'correct']);
+    let what = pick(['issue', 'grant', 'safe', 'split', 'transfer', 'transfer', 'repurchase', 'certcancel', 'exercise', 'cancel', 'convert', 'settle', 'correct',
+      'warrant', 'wexercise', 'wend']);
     if (what === 'correct' && !certs.length && !grants.length) what = 'issue';
-    if ((what === 'transfer' || what === 'repurchase') && !certs.length) what = 'issue';
+    if ((what === 'transfer' || what === 'repurchase' || what === 'certcancel') && !certs.length) what = 'issue';
+    if ((what === 'wexercise' || what === 'wend') && !live.length) what = 'warrant';
+    if (what === 'settle' && !safes.length) what = 'safe';
     if ((what === 'exercise' || what === 'cancel') && !grants.length) what = 'grant';
     if (what === 'convert' && !safes.length) what = 'safe';
 
@@ -214,6 +241,39 @@ async function runHistory(seed: number, steps: number): Promise<void> {
         fact = { kind: 'split', date, ratio };
         break;
       }
+      case 'warrant': {
+        const shares = 1_000 * (1 + Math.floor(rnd() * 100));
+        const w = await send('POST', '/warrants', { stakeholderId: who, shareClassId: common, quantity: shares, strikePrice: 50_000, issueDate: date, expirationDate: '2040-01-01', netExercise: 0 });
+        fact = { kind: 'warrant', date, id: w.id, holder: who, shares };
+        break;
+      }
+      case 'wexercise': {
+        const w = pick(live);
+        const quantity = some(Math.floor(roundShares(w.quantity - w.exercisedQuantity)));
+        const k = splitsBetween(facts, w.issueDate, date);
+        const r = await send('POST', `/warrants/${w.id}/exercise`, { quantity, exerciseDate: date, method: 'CASH' });
+        fact = { kind: 'wexercise', date, warrant: w.id, id: r.issuance.id, shares: roundShares(quantity * k), price: k === 1 ? 50_000 : Math.round(50_000 / k) };
+        break;
+      }
+      case 'wend': {
+        const w = pick(live);
+        await send('POST', `/warrants/${w.id}/cancel`, { date, reason: rnd() < 0.5 ? 'EXPIRED' : 'Holder waived' });
+        fact = { kind: 'wend', date, warrant: w.id };
+        break;
+      }
+      case 'settle': {
+        const c = pick(safes);
+        await send('POST', `/convertibles/${c.id}/${rnd() < 0.5 ? 'repay' : 'cancel'}`, { date });
+        fact = { kind: 'settle', date, safe: c.id };
+        break;
+      }
+      case 'certcancel': {
+        const src = pick(certs);
+        const quantity = some(Math.floor(Number(src.quantity)));
+        await send('POST', `/issuances/${src.id}/cancel`, { quantity, date });
+        fact = { kind: 'certcancel', date, source: src.id, shares: roundShares(quantity * splitsBetween(facts, src.issueDate, date)) };
+        break;
+      }
       case 'transfer':
       case 'repurchase': {
         // Quantities are typed as the certificate records them; the ledger and the new certificate are in the shares of the day.
@@ -240,7 +300,8 @@ async function runHistory(seed: number, steps: number): Promise<void> {
         if (what === 'exercise') {
           const r = await send('POST', `/awards/${g.id}/exercise`, { quantity, exerciseDate: date, method: 'CASH' });
           assert.equal(Number(r.issuance.quantity), shares, `seed ${seed}: the shares issued are in the shares of the day (CAP-2)`);
-          fact = { kind: 'exercise', date, grant: g.id, id: r.issuance.id, shares, price: k === 1 ? 100_000 : Math.round(100_000 / k) };
+          // The capital paid is the grant's strike in the shares of the day, unrounded (paidInPrice in captable.ts).
+          fact = { kind: 'exercise', date, grant: g.id, id: r.issuance.id, shares, price: 100_000 / k };
         } else {
           await send('POST', `/awards/${g.id}/cancel`, { quantity, date });
           fact = { kind: 'cancel', date, grant: g.id, shares };
@@ -274,13 +335,13 @@ async function runHistory(seed: number, steps: number): Promise<void> {
       const want = replay(facts, asOf);
       const where = `seed ${seed}, step ${n + 1} (${fact.kind} on ${fact.date}), as of ${asOf}`;
       assert.deepEqual(
-        [t.totals.outstanding, t.totals.optionsOutstanding, t.totals.poolAvailable, t.totals.fullyDiluted].map(roundShares),
-        [want.outstanding, want.options, want.pool, want.fullyDiluted].map(roundShares), where);
+        [t.totals.outstanding, t.totals.optionsOutstanding, t.totals.warrantsOutstanding, t.totals.poolAvailable, t.totals.fullyDiluted].map(roundShares),
+        [want.outstanding, want.options, want.warrants, want.pool, want.fullyDiluted].map(roundShares), where);
       for (const h of holders) {
         const r = t.rows.find((x: any) => x.stakeholderId === h);
-        const m = want.holders.get(h) ?? { outstanding: 0, options: 0, principal: 0 };
-        assert.deepEqual([roundShares(r?.outstanding ?? 0), roundShares(r?.optionsOutstanding ?? 0), r?.convertiblePrincipal ?? 0],
-          [roundShares(m.outstanding), roundShares(m.options), m.principal], `${where}, holder ${h}`);
+        const m = want.holders.get(h) ?? { outstanding: 0, options: 0, warrants: 0, principal: 0 };
+        assert.deepEqual([roundShares(r?.outstanding ?? 0), roundShares(r?.optionsOutstanding ?? 0), roundShares(r?.warrantsOutstanding ?? 0), r?.convertiblePrincipal ?? 0],
+          [roundShares(m.outstanding), roundShares(m.options), roundShares(m.warrants), m.principal], `${where}, holder ${h}`);
       }
       // A cent per certificate for the rounding of split-adjusted prices.
       assert.ok(Math.abs(t.totals.investedAmount - want.invested) <= want.certificates, `${where}: invested ${t.totals.investedAmount} vs ${want.invested} (CAP-9)`);
@@ -299,7 +360,7 @@ async function runHistory(seed: number, steps: number): Promise<void> {
   assert.deepEqual([now.totals.outstanding, now.totals.fullyDiluted].map(roundShares), [all.outstanding, all.fullyDiluted].map(roundShares), `seed ${seed}: today`);
 }
 
-for (const seed of [11, 23, 37, 41]) {
+for (const seed of [11, 23, 37, 41, 53, 67]) {
   test(`random history ${seed}: every view of an earlier date equals the replay of the events up to it`, async () => {
     await runHistory(seed, 22);
   });

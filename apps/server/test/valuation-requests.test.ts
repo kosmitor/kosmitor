@@ -1384,7 +1384,8 @@ test('the checklist counts the outstanding SAFEs and notes and offers the charte
   const company = await newCompany('Suggesting Harbor', { incorporationDate: '2023-04-12' });
   const investor = (await call('POST', `/api/c/${company}/stakeholders`, { name: 'Halcyon Ventures', type: 'FUND', relation: 'INVESTOR' }, admin)).json;
   const safe = (await call('POST', `/api/c/${company}/convertibles`, { stakeholderId: investor.id, instrument: 'SAFE_POST', principal: 25_000_000, issueDate: '2025-02-01' }, admin)).json;
-  const repaid = (await call('POST', `/api/c/${company}/convertibles`, { stakeholderId: investor.id, instrument: 'NOTE', principal: 5_000_000, issueDate: '2024-06-01', interestRate: 0.05, status: 'CANCELLED' }, admin)).json;
+  const repaid = (await call('POST', `/api/c/${company}/convertibles`, { stakeholderId: investor.id, instrument: 'NOTE', principal: 5_000_000, issueDate: '2024-06-01', interestRate: 0.05 }, admin)).json;
+  assert.equal((await call('POST', `/api/c/${company}/convertibles/${repaid.id}/cancel`, { date: '2024-12-01' }, admin)).status, 200);
   assert.ok(safe.id && repaid.id, JSON.stringify([safe, repaid]));
   const charter = await upload(company, 'Restated certificate of incorporation.pdf', '%PDF-1.4 charter', { category: 'CHARTER' });
   await written(company, 'Charter, to be scanned', '', 'CHARTER');

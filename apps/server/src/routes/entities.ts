@@ -2,7 +2,7 @@ import { route, newId, nowISO, audit, badRequest, notFound, date, type Ctx } fro
 import { all, one, run, insert, update, toCamel, toCamelAll, snake } from '../db.ts';
 import { validateEntity } from '../validation.ts';
 import { getCompanyData, invalidate } from '../store.ts';
-import { roundShares, splitFactor, today, type CorrectedField } from '@kosmitor/core';
+import { roundShares, splitFactor, today, type CompanyData, type CorrectedField } from '@kosmitor/core';
 import { reportLink } from './valuation-report.ts';
 import { config } from '../config.ts';
 
@@ -244,13 +244,33 @@ const RESOURCES: Resource[] = [
  */
 const EVENTS: Record<string, { ownDate: string; closed: string[]; routes: Record<string, string> }> = {
   issuances: { ownDate: 'issueDate', closed: ['TRANSFERRED', 'REPURCHASED', 'CANCELLED', 'CONVERTED'],
-    routes: { TRANSFERRED: 'transfer', REPURCHASED: 'repurchase' } },
+    routes: { TRANSFERRED: 'transfer', REPURCHASED: 'repurchase', CANCELLED: 'cancel' } },
   awards: { ownDate: 'grantDate', closed: ['EXERCISED', 'CANCELLED', 'EXPIRED', 'FORFEITED'],
     routes: { EXERCISED: 'exercise', CANCELLED: 'cancel', EXPIRED: 'cancel', FORFEITED: 'cancel', exercisedQuantity: 'exercise', cancelledQuantity: 'cancel' } },
-  warrants: { ownDate: 'issueDate', closed: ['EXERCISED', 'EXPIRED', 'CANCELLED'], routes: { EXERCISED: 'exercise', exercisedQuantity: 'exercise' } },
+  warrants: { ownDate: 'issueDate', closed: ['EXERCISED', 'EXPIRED', 'CANCELLED'],
+    routes: { EXERCISED: 'exercise', EXPIRED: 'cancel', CANCELLED: 'cancel', exercisedQuantity: 'exercise' } },
   convertibles: { ownDate: 'issueDate', closed: ['CONVERTED', 'REPAID', 'CANCELLED'],
-    routes: { CONVERTED: 'convert', convertedOn: 'convert', convertedIntoShareClassId: 'convert' } },
+    routes: { CONVERTED: 'convert', REPAID: 'repay', CANCELLED: 'cancel', convertedOn: 'convert', convertedIntoShareClassId: 'convert' } },
 };
+/** Fields an edit cannot change once a security has ledger history: its entries are dated, held and counted by them. */
+const FIXED_BY_HISTORY = ['stakeholderId', 'shareClassId'];
+
+/**
+ * A security starts outstanding with nothing exercised, cancelled or converted. A
+ * later state comes from its event route, which dates it in the ledger, or from the
+ * import, which writes the entries it can date.
+ */
+function initialState(r: Resource, values: Record<string, unknown>): void {
+  const ev = EVENTS[r.table];
+  if (!ev) return;
+  if (ev.closed.includes(String(values.status))) {
+    throw badRequest(`A new ${r.label.toLowerCase()} starts outstanding. Record what happened since with its action, or bring in a closed one with the import.`);
+  }
+  for (const key of ['exercisedQuantity', 'cancelledQuantity']) {
+    if (Number(values[key] ?? 0) !== 0) throw badRequest(`A new ${r.label.toLowerCase()} starts with nothing ${key === 'exercisedQuantity' ? 'exercised' : 'cancelled'}. Record the ${key === 'exercisedQuantity' ? 'exercise' : 'cancellation'} with its action, or use the import.`);
+  }
+  if (values.convertedOn || values.convertedIntoShareClassId) throw badRequest('A new instrument starts outstanding. Record the conversion with its action, or use the import.');
+}
 const COUNTS: CorrectedField[] = ['quantity', 'exercisedQuantity', 'cancelledQuantity'];
 const same = (a: unknown, b: unknown): boolean => String(a ?? '') === String(b ?? '');
 
@@ -285,6 +305,25 @@ function corrections(r: Resource, id: string, before: Record<string, unknown>, a
   return out;
 }
 
+/**
+ * Checks a corrected grant or warrant against what was issued on its exercises, and
+ * sets its status from the corrected counts as the exercise and cancel routes would.
+ */
+function usedUp(r: Resource, id: string, values: Record<string, unknown>, data: CompanyData): void {
+  const ownDate = String(values[EVENTS[r.table].ownDate]);
+  const quantity = Number(values.quantity), exercised = Number(values.exercisedQuantity ?? 0), cancelled = Number(values.cancelledQuantity ?? 0);
+  // The shares issued on each exercise are a certificate of their own; the count cannot fall below them.
+  const issued = roundShares((data.ledger ?? []).filter((e) => e.securityId === id && e.type === 'EXERCISE')
+    .reduce((s, e) => s + (e.quantity ?? 0) / splitFactor(data, ownDate, e.date), 0));
+  if (exercised < issued) throw badRequest(`Shares were issued on exercise of ${issued} of these, so the exercised count cannot be lower. Cancel or repurchase the shares issued instead.`);
+  const left = roundShares(quantity - exercised - cancelled);
+  if (left < 0) throw badRequest(`The quantity cannot be less than what was exercised and cancelled (${roundShares(exercised + cancelled)}).`);
+  const status = String(values.status);
+  const byCounts = r.table === 'warrants' ? ['EXERCISED'] : ['EXERCISED', 'CANCELLED', 'EXPIRED', 'FORFEITED'];
+  if (left > 0 && byCounts.includes(status)) values.status = 'OUTSTANDING';
+  if (left <= 0 && status === 'OUTSTANDING') values.status = exercised > 0 ? 'EXERCISED' : 'CANCELLED';
+}
+
 function clean(resource: Resource, body: Record<string, unknown>, ctx: Ctx, partial: boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of resource.fields) if (body[f] !== undefined) out[f] = body[f];
@@ -312,6 +351,7 @@ for (const r of RESOURCES) {
 
   route.post(base, 'write', async (ctx) => {
     const values = clean(r, ctx.body ?? {}, ctx, false);
+    initialState(r, values);
     await validateEntity(r.table, values, ctx.companyId!);
     const id = newId(r.path.slice(0, 3));
     await insert(r.table, { id, companyId: ctx.companyId, ...values, ...(r.table === 'share_classes' ? {} : { createdAt: nowISO() }) });
@@ -328,15 +368,30 @@ for (const r of RESOURCES) {
     const values = clean(r, { ...before, ...ctx.body }, ctx, false);
     await validateEntity(r.table, values, ctx.companyId!);
     const fixes = corrections(r, ctx.params.id, before, values);
+    const ev = EVENTS[r.table];
+    if (ev && await one('SELECT 1 FROM transactions WHERE security_id = ? AND company_id = ? LIMIT 1', ctx.params.id, ctx.companyId)) {
+      // Entries are dated in the shares of their day against this holder and class:
+      // moving the security's own date would restate them across a split or put it
+      // after its own events, and a new holder or class would be an unrecorded transfer.
+      for (const key of [ev.ownDate, ...FIXED_BY_HISTORY]) {
+        if (key in values && !same(before[key], values[key])) {
+          throw badRequest(`This ${r.label.toLowerCase()} has ledger history, so its ${key} cannot be edited.` +
+            (key === 'stakeholderId' && r.table === 'issuances' ? ` Record a transfer (POST /api/c/:cid/issuances/${ctx.params.id}/transfer).` : ''));
+        }
+      }
+    }
     if (fixes.length > 0) {
       // A correction says the record was wrong from a date on: the security's own date
       // if it always was, or a later one. Its entry is in the shares of that date.
       if (r.table === 'issuances' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding certificate\'s share count can be corrected.');
+      if (r.table === 'warrants' && ['CANCELLED', 'EXPIRED'].includes(String(before.status))) throw badRequest('A cancelled or expired warrant\'s counts cannot be corrected.');
       const ownDate = String(values[EVENTS[r.table].ownDate]);
       const effective = date(ctx.body.effectiveDate, 'Effective date');
       if (effective < ownDate) throw badRequest(`The effective date cannot be before the ${r.label.toLowerCase()}'s own date, ${ownDate}.`);
       if (effective > today()) throw badRequest('The effective date cannot be in the future.');
-      const k = splitFactor(await getCompanyData(ctx.companyId!), ownDate, effective);
+      const data = await getCompanyData(ctx.companyId!);
+      const k = splitFactor(data, ownDate, effective);
+      if (r.table === 'awards' || r.table === 'warrants') usedUp(r, ctx.params.id, values, data);
       for (const { field, delta } of fixes) {
         await insert('transactions', {
           id: newId('tx'), companyId: ctx.companyId, type: 'CORRECTION', date: effective,
