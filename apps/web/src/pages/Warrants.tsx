@@ -15,7 +15,7 @@ import { shares, pps, money, date, dateTime, today, parseShares, parsePPS } from
 
 const blank = {
   stakeholderId: '', shareClassId: '', quantity: '', strikePrice: '',
-  issueDate: today(), expirationDate: '', netExercise: true, notes: '',
+  issueDate: today(), expirationDate: '', netExercise: true, notes: '', effectiveDate: '',
 };
 
 export default function Warrants() {
@@ -67,7 +67,7 @@ export default function Warrants() {
     setForm({
       stakeholderId: w.stakeholderId, shareClassId: w.shareClassId, quantity: String(w.quantity),
       strikePrice: String(w.strikePrice / 1e6), issueDate: w.issueDate,
-      expirationDate: w.expirationDate ?? '', netExercise: !!w.netExercise, notes: w.notes ?? '',
+      expirationDate: w.expirationDate ?? '', netExercise: !!w.netExercise, notes: w.notes ?? '', effectiveDate: w.issueDate,
     });
     setEditing(w);
   };
@@ -80,7 +80,8 @@ export default function Warrants() {
       netExercise: form.netExercise, notes: form.notes || null,
     };
     const ok = editing?.id
-      ? await crud.update(editing.id, payload, 'Warrant updated')
+      // A changed share count is a correction, dated in the ledger (docs/design/dated-ledger.md).
+      ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate }, 'Warrant updated')
       : await crud.create(payload, 'Warrant issued');
     if (ok) setEditing(null);
   };
@@ -198,6 +199,11 @@ export default function Warrants() {
           <Field label="Number of shares" required>
             <Input value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="50,000" required />
           </Field>
+          {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
+            <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count was always wrong.">
+              <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            </Field>
+          )}
           <Field label="Strike price" required>
             <Input value={form.strikePrice} onChange={(e) => setForm({ ...form, strikePrice: e.target.value })} placeholder="3.2145" required />
           </Field>

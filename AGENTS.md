@@ -19,6 +19,6 @@ Read README.md for the layout and setup. This file only holds rules that the cod
   - web: `fileSize` and the other formatters (`apps/web/src/format.ts`).
 
   `apps/web` does not import `@kosmitor/core`, so the web keeps its own label maps, such as `INSTRUMENT_LABELS`.
-- **Ledger.** A route that changes a security's `quantity`, `status`, `exercisedQuantity`, `cancelledQuantity` or `convertedOn` must also write a dated `transactions` entry in the shares of the event's date. If it does not, past-date views show today's state. See `docs/design/dated-ledger.md`. The `PATCH` route does not follow this rule yet.
+- **Ledger.** A route that changes a security's `quantity`, `status`, `exercisedQuantity`, `cancelledQuantity` or `convertedOn` must also write a dated `transactions` entry in the shares of the event's date. If it does not, past-date views show today's state. See `docs/design/dated-ledger.md`. `PATCH` refuses a change that an event route makes, and writes a dated `CORRECTION` entry for a corrected count.
 - **Cache.** Call `invalidate(companyId)` after any write that the engine reads.
 - **Dependencies.** The server's only runtime dependency is `pg`. Import parsers, PDF and XLSX writers are written by hand. Do not add a package for something the code already does.

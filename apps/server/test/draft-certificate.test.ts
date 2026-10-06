@@ -99,8 +99,8 @@ test('a certificate that is already outstanding is not a draft', async () => {
   assert.equal(r.status, 400);
   assert.match(r.json.error, /still out for signature/);
 
-  // It is editable the ordinary way, which is what that route is for.
-  const ordinary = await call('PATCH', `/api/c/${cid}/issuances/${plain.json.id}`, { quantity: 600 }, admin);
+  // It is editable the ordinary way, which is what that route is for, as a correction dated in the ledger.
+  const ordinary = await call('PATCH', `/api/c/${cid}/issuances/${plain.json.id}`, { quantity: 600, effectiveDate: '2024-02-01' }, admin);
   assert.equal(ordinary.status, 200, JSON.stringify(ordinary.json));
   assert.equal(ordinary.json.quantity, 600);
 });

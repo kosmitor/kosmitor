@@ -1,7 +1,8 @@
-import { route, newId, nowISO, audit, badRequest, notFound, type Ctx } from '../http.ts';
+import { route, newId, nowISO, audit, badRequest, notFound, date, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll, snake } from '../db.ts';
 import { validateEntity } from '../validation.ts';
-import { invalidate } from '../store.ts';
+import { getCompanyData, invalidate } from '../store.ts';
+import { roundShares, splitFactor, today, type CorrectedField } from '@kosmitor/core';
 import { reportLink } from './valuation-report.ts';
 import { config } from '../config.ts';
 
@@ -235,6 +236,55 @@ const RESOURCES: Resource[] = [
   },
 ];
 
+/**
+ * The dated state of a security (docs/design/dated-ledger.md). An edit cannot set it
+ * the way an event does: a status or count an event route sets is refused with that
+ * route, which dates the change in the ledger. Closing or reopening a security with
+ * no such route is refused too, as nothing would say when it happened.
+ */
+const EVENTS: Record<string, { ownDate: string; closed: string[]; routes: Record<string, string> }> = {
+  issuances: { ownDate: 'issueDate', closed: ['TRANSFERRED', 'REPURCHASED', 'CANCELLED', 'CONVERTED'],
+    routes: { TRANSFERRED: 'transfer', REPURCHASED: 'repurchase' } },
+  awards: { ownDate: 'grantDate', closed: ['EXERCISED', 'CANCELLED', 'EXPIRED', 'FORFEITED'],
+    routes: { EXERCISED: 'exercise', CANCELLED: 'cancel', EXPIRED: 'cancel', FORFEITED: 'cancel', exercisedQuantity: 'exercise', cancelledQuantity: 'cancel' } },
+  warrants: { ownDate: 'issueDate', closed: ['EXERCISED', 'EXPIRED', 'CANCELLED'], routes: { EXERCISED: 'exercise', exercisedQuantity: 'exercise' } },
+  convertibles: { ownDate: 'issueDate', closed: ['CONVERTED', 'REPAID', 'CANCELLED'],
+    routes: { CONVERTED: 'convert', convertedOn: 'convert', convertedIntoShareClassId: 'convert' } },
+};
+const COUNTS: CorrectedField[] = ['quantity', 'exercisedQuantity', 'cancelledQuantity'];
+const same = (a: unknown, b: unknown): boolean => String(a ?? '') === String(b ?? '');
+
+/**
+ * What an edit changes in a security's dated state. Events are refused with their
+ * route; what is left are corrections, each a signed change to a count in the row's
+ * own units. They are written as dated CORRECTION entries by the caller.
+ */
+function corrections(r: Resource, id: string, before: Record<string, unknown>, after: Record<string, unknown>): { field: CorrectedField; delta: number }[] {
+  const ev = EVENTS[r.table];
+  if (!ev) return [];
+  const useRoute = (action: string) => badRequest(
+    `Record this with the ${action} action (POST /api/c/:cid/${r.path}/${id}/${action}), which dates it in the ledger. An edit cannot.`);
+  if (!same(before.status, after.status)) {
+    const from = String(before.status), to = String(after.status);
+    if (ev.routes[to]) throw useRoute(ev.routes[to]);
+    if (ev.closed.includes(to) || ev.closed.includes(from)) {
+      throw badRequest(`A ${r.label.toLowerCase()} cannot go from ${from} to ${to} by an edit: the ledger would not know when it happened.`);
+    }
+  }
+  for (const key of ['convertedOn', 'convertedIntoShareClassId']) {
+    if (key in after && !same(before[key], after[key])) throw useRoute(ev.routes[key]);
+  }
+  const out: { field: CorrectedField; delta: number }[] = [];
+  for (const field of COUNTS) {
+    if (!(field in after)) continue;
+    const delta = roundShares(Number(after[field] ?? 0) - Number(before[field] ?? 0));
+    if (delta === 0) continue;
+    if (delta > 0 && ev.routes[field]) throw useRoute(ev.routes[field]);
+    out.push({ field, delta });
+  }
+  return out;
+}
+
 function clean(resource: Resource, body: Record<string, unknown>, ctx: Ctx, partial: boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of resource.fields) if (body[f] !== undefined) out[f] = body[f];
@@ -274,11 +324,35 @@ for (const r of RESOURCES) {
     const existing = await one(`SELECT * FROM ${r.table} WHERE id = ? AND company_id = ?`, ctx.params.id, ctx.companyId);
     if (!existing) throw notFound(`${r.label} not found.`);
     // Validate the resulting record so partial updates preserve existing terms.
-    const values = clean(r, { ...toCamel(existing), ...ctx.body }, ctx, false);
+    const before = toCamel<Record<string, unknown>>(existing)!;
+    const values = clean(r, { ...before, ...ctx.body }, ctx, false);
     await validateEntity(r.table, values, ctx.companyId!);
+    const fixes = corrections(r, ctx.params.id, before, values);
+    if (fixes.length > 0) {
+      // A correction says the record was wrong from a date on: the security's own date
+      // if it always was, or a later one. Its entry is in the shares of that date.
+      if (r.table === 'issuances' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding certificate\'s share count can be corrected.');
+      const ownDate = String(values[EVENTS[r.table].ownDate]);
+      const effective = date(ctx.body.effectiveDate, 'Effective date');
+      if (effective < ownDate) throw badRequest(`The effective date cannot be before the ${r.label.toLowerCase()}'s own date, ${ownDate}.`);
+      if (effective > today()) throw badRequest('The effective date cannot be in the future.');
+      const k = splitFactor(await getCompanyData(ctx.companyId!), ownDate, effective);
+      for (const { field, delta } of fixes) {
+        await insert('transactions', {
+          id: newId('tx'), companyId: ctx.companyId, type: 'CORRECTION', date: effective,
+          stakeholderId: values.stakeholderId ?? null, counterpartyId: null, securityId: ctx.params.id,
+          shareClassId: values.shareClassId ?? null, quantity: roundShares(delta * k), pricePerShare: null, amount: null, field,
+          memo: `${field} corrected from ${before[field]} to ${values[field]}`, createdAt: nowISO(), createdBy: ctx.user!.name,
+        });
+      }
+    }
     await update(r.table, ctx.params.id, values);
     invalidate(ctx.companyId!);
-    await audit(ctx, 'UPDATE', r.table, ctx.params.id, `${r.label} updated: ${Object.keys(values).join(', ')}`);
+    // Only what moved, with its value before and after.
+    const show = (v: unknown) => JSON.stringify(v ?? null).slice(0, 120);
+    const changed = Object.keys(values).filter((k) => !same(before[k], values[k]));
+    await audit(ctx, 'UPDATE', r.table, ctx.params.id, changed.length === 0 ? `${r.label} saved with no changes`
+      : `${r.label} updated: ${changed.map((k) => `${k}: ${show(before[k])} → ${show(values[k])}`).join(', ')}`);
     return toCamel(await one(`SELECT * FROM ${r.table} WHERE id = ?`, ctx.params.id));
   });
 

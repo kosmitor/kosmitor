@@ -87,8 +87,8 @@ export function warrant(stakeholderId: string, shareClassId: string, quantity: n
 }
 
 /** A ledger entry for a security, its quantity in the shares of its own date, as the routes write it. */
-export function entry(type: LedgerEntry['type'], date: string, securityId: string, quantity: number | null): LedgerEntry {
-  return { id: nextId('tx'), type, date, securityId, quantity };
+export function entry(type: LedgerEntry['type'], date: string, securityId: string, quantity: number | null, field?: LedgerEntry['field']): LedgerEntry {
+  return { id: nextId('tx'), type, date, securityId, quantity, ...(field ? { field } : {}) };
 }
 
 /** The MFN holder of `mfnId` elects, on `date`, the terms of `adoptedId`, as POST /convertibles/:id/mfn-election writes it. */

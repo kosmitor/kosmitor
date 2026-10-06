@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { route, newId, nowISO, audit, badRequest, notFound, forbidden, str, num, date, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
 import { getCompanyData, invalidate } from '../store.ts';
@@ -15,7 +15,7 @@ import { updatesFor, markUpdateRead } from './communications.ts';
 import { isEditor, seesWholeCompany, seesWholeVault } from '../auth.ts';
 import {
   computeCapTable, activeValuation, summarizeVesting, vestingCurve, portfolioValue, modelExercise,
-  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES, mfnCandidates,
+  shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES, TRANSACTION_TYPES, mfnCandidates,
 } from '@kosmitor/core';
 
 // A certificate or grant keeps the share count and price of the day it was
@@ -397,6 +397,63 @@ async function performExercise(ctx: Ctx, awardId: string, body: { quantity: unkn
 
 route.post('/api/c/:cid/awards/:id/exercise', 'write', async (ctx) => performExercise(ctx, ctx.params.id, ctx.body));
 
+/**
+ * Exercises a warrant, as a grant is exercised: shares issued, the warrant reduced,
+ * a dated EXERCISE in the ledger in the shares of the exercise date.
+ */
+route.post('/api/c/:cid/warrants/:id/exercise', 'write', async (ctx) => {
+  const data = await getCompanyData(ctx.companyId!);
+  const warrant = data.warrants.find((w) => w.id === ctx.params.id);
+  if (!warrant) throw notFound('Warrant not found.');
+  if (warrant.status !== 'OUTSTANDING') throw badRequest('Only outstanding warrants can be exercised.');
+  const quantity = num(ctx.body.quantity, 'Quantity', { min: 1 });
+  const exerciseDate = date(ctx.body.exerciseDate ?? today(), 'Exercise date');
+  const method = str(ctx.body.method ?? 'CASH', 'Method');
+  if (!['CASH', 'NET_EXERCISE'].includes(method)) throw badRequest('Choose a cash or net exercise.');
+  if (method === 'NET_EXERCISE' && !warrant.netExercise) throw badRequest('This warrant does not allow a net exercise.');
+  if (exerciseDate < warrant.issueDate) throw badRequest(`The warrant was issued on ${warrant.issueDate}.`);
+  if (warrant.expirationDate && exerciseDate > warrant.expirationDate) throw badRequest(`This warrant expired on ${warrant.expirationDate}.`);
+  const outstanding = roundShares(warrant.quantity - warrant.exercisedQuantity);
+  if (quantity > outstanding + 1e-9) throw badRequest(`Only ${formatShares(outstanding)} shares remain under this warrant.`);
+
+  const k = splitFactor(data, warrant.issueDate, exerciseDate);
+  const shares = roundShares(quantity * k);
+  const strike = k === 1 ? warrant.strikePrice : Math.round(warrant.strikePrice / k);
+  const totalCost = shareValue(quantity, warrant.strikePrice);
+  let sharesIssued = shares;
+  if (method === 'NET_EXERCISE') {
+    const fmv = activeValuation(data, exerciseDate);
+    sharesIssued = fmv > 0 ? Math.floor(shares - (quantity * warrant.strikePrice) / fmv) : 0;
+    if (sharesIssued <= 0) throw badRequest('A net exercise yields no shares at the current fair market value.');
+  }
+
+  const issuanceId = newId('iss');
+  const certNo = `WX-${String((await all('SELECT id FROM issuances WHERE company_id = ?', ctx.companyId)).length + 1).padStart(4, '0')}`;
+  await insert('issuances', {
+    id: issuanceId, companyId: ctx.companyId, certificateNo: certNo, stakeholderId: warrant.stakeholderId,
+    shareClassId: warrant.shareClassId, quantity: sharesIssued, pricePerShare: strike, issueDate: exerciseDate,
+    status: 'OUTSTANDING', vestingScheduleId: null, vestingStartDate: null, earlyExercised: 0,
+    election83bFiledOn: null, sourceAwardId: null, boardApprovalDate: null,
+    notes: `Issued on exercise of warrant ${warrant.id}`, createdAt: nowISO(),
+  });
+  const exercised = roundShares(warrant.exercisedQuantity + quantity);
+  await update('warrants', warrant.id, { exercisedQuantity: exercised, status: exercised >= warrant.quantity ? 'EXERCISED' : 'OUTSTANDING' });
+  await insert('transactions', {
+    id: newId('tx'), companyId: ctx.companyId, type: 'EXERCISE', date: exerciseDate,
+    stakeholderId: warrant.stakeholderId, counterpartyId: null, securityId: warrant.id,
+    shareClassId: warrant.shareClassId, quantity: shares, pricePerShare: strike, amount: method === 'CASH' ? totalCost : 0,
+    memo: `${method} exercise of warrant (${formatShares(sharesIssued)} shares issued)`, createdAt: nowISO(), createdBy: ctx.user!.name,
+  });
+  invalidate(ctx.companyId!);
+  await audit(ctx, 'EXERCISE', 'warrants', warrant.id,
+    `${formatShares(quantity)} warrant shares exercised at ${formatPPS(warrant.strikePrice)} (${method})` +
+    (k === 1 ? '' : `, ${formatShares(shares)} shares at ${formatPPS(strike)} after the stock split`));
+  return {
+    warrant: toCamel(await one('SELECT * FROM warrants WHERE id = ?', warrant.id)),
+    issuance: toCamel(await one('SELECT * FROM issuances WHERE id = ?', issuanceId)),
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Exercise requests: holder asks → company reviews → payment → exercise recorded
 // ---------------------------------------------------------------------------
@@ -512,6 +569,7 @@ route.post('/api/c/:cid/awards/:id/cancel', 'write', async (ctx) => {
     throw badRequest(`Only ${formatShares(outstanding)} shares are outstanding under this grant.`);
   }
   const cancelDate = date(ctx.body.date ?? today(), 'Cancellation date');
+  if (cancelDate < award.grantDate) throw badRequest(`The cancellation cannot be dated before the grant, ${award.grantDate}.`);
   const newCancelled = roundShares(award.cancelledQuantity + quantity);
   const fullyGone = newCancelled >= roundShares(award.quantity - award.exercisedQuantity);
 
@@ -545,6 +603,7 @@ route.post('/api/c/:cid/issuances/:id/transfer', 'write', async (ctx) => {
   const quantity = ctx.body.quantity != null ? num(ctx.body.quantity, 'Quantity', { min: 1 }) : available;
   if (quantity > available) throw badRequest(`That certificate only holds ${formatShares(available)} shares.`);
   const transferDate = date(ctx.body.date ?? today(), 'Transfer date');
+  if (transferDate < String(source.issueDate)) throw badRequest(`The transfer cannot be dated before the certificate was issued, ${source.issueDate}.`);
   const pricePerShare = ctx.body.pricePerShare != null ? num(ctx.body.pricePerShare, 'Price') : Number(source.pricePerShare);
   // Quantity and price are per share as the certificate records them; the new
   // certificate is dated the transfer and holds that day's shares.
@@ -587,10 +646,12 @@ route.post('/api/c/:cid/issuances/:id/repurchase', 'write', async (ctx) => {
   const source = toCamel<Record<string, unknown>>(
     await one('SELECT * FROM issuances WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId));
   if (!source) throw notFound('Certificate not found.');
+  if (source.status !== 'OUTSTANDING') throw badRequest('Only outstanding certificates can be repurchased.');
   const available = Number(source.quantity);
   const quantity = ctx.body.quantity != null ? num(ctx.body.quantity, 'Quantity', { min: 1 }) : available;
   if (quantity > available) throw badRequest(`That certificate only holds ${formatShares(available)} shares.`);
   const repurchaseDate = date(ctx.body.date ?? today(), 'Repurchase date');
+  if (repurchaseDate < String(source.issueDate)) throw badRequest(`The repurchase cannot be dated before the certificate was issued, ${source.issueDate}.`);
   const price = num(ctx.body.pricePerShare ?? source.pricePerShare, 'Repurchase price');
   const k = splitFactor(await getCompanyData(ctx.companyId!), String(source.issueDate), repurchaseDate);
 
@@ -816,6 +877,14 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
     if (pending) throw badRequest('This document is out for signature. It can be moved or reclassified once every party has signed.');
   }
 
+  // What a signer signed cannot change under their signature. Withdraw the document and
+  // send a new one to change it. The name is a label on the page, not signed content.
+  if (ctx.body.body !== undefined || ctx.body.status !== undefined) {
+    const signed = await one<{ signer_name: string }>(
+      "SELECT signer_name FROM signatures WHERE document_id = ? AND company_id = ? AND status = 'SIGNED' LIMIT 1", existing.id, ctx.companyId);
+    if (signed) throw badRequest(`${signed.signer_name.split(' — ')[0]} has signed this document, so its text and status cannot be edited. Send a new document to change it.`);
+  }
+
   const fields = ['name', 'body'];
   const values: Record<string, unknown> = { updatedAt: nowISO() };
   for (const f of fields) if (ctx.body[f] !== undefined) values[f] = ctx.body[f];
@@ -960,8 +1029,11 @@ route.post('/api/c/:cid/signatures/:id/sign', 'read', async (ctx) => {
   const typed = str(ctx.body.typedSignature, 'Signature');
   if (typed.trim().length < 2) throw badRequest('Type your full name to sign.');
 
+  // The hash of the text signed, so a later change to the document shows against it.
+  const doc = await one<{ body: string | null }>('SELECT body FROM documents WHERE id = ?', sig.documentId);
   await update('signatures', ctx.params.id, {
     status: 'SIGNED', typedSignature: typed, signedAt: nowISO(), ipAddress: ctx.ip,
+    bodySha256: createHash('sha256').update(doc?.body ?? '').digest('hex'),
   });
 
   const remaining = await one<{ n: number }>(
@@ -1576,17 +1648,26 @@ route.get('/api/c/:cid/transactions', 'read', async (ctx) => {
 });
 
 route.post('/api/c/:cid/transactions', 'write', async (ctx) => {
+  const type = str(ctx.body.type, 'Type');
+  if (!(TRANSACTION_TYPES as readonly string[]).includes(type)) throw badRequest(`Type must be one of ${TRANSACTION_TYPES.join(', ')}.`);
+  // A correction changes a security's row and its entry together, so it is written by editing the security.
+  if (type === 'CORRECTION') throw badRequest('A correction is recorded by editing the security, with an effective date.');
+  const securityId = ctx.body.securityId ? String(ctx.body.securityId) : null;
+  if (securityId && !(await securityKind(ctx.companyId!, securityId))) throw badRequest('That security does not belong to this company.');
+  // The rewind reads an entry against a security by its quantity (rewindToDate), so one there must have it.
+  const quantity = ctx.body.quantity != null || securityId ? num(ctx.body.quantity, 'Quantity', { min: 1, integer: true }) : null;
   const id = newId('tx');
   await insert('transactions', {
-    id, companyId: ctx.companyId, type: str(ctx.body.type, 'Type'),
+    id, companyId: ctx.companyId, type,
     date: date(ctx.body.date ?? today(), 'Date'),
     stakeholderId: ctx.body.stakeholderId ?? null, counterpartyId: ctx.body.counterpartyId ?? null,
-    securityId: ctx.body.securityId ?? null, shareClassId: ctx.body.shareClassId ?? null,
-    quantity: ctx.body.quantity ?? null, pricePerShare: ctx.body.pricePerShare ?? null,
-    amount: ctx.body.amount ?? null, memo: ctx.body.memo ?? null,
+    securityId, shareClassId: ctx.body.shareClassId ?? null, quantity,
+    pricePerShare: ctx.body.pricePerShare != null ? num(ctx.body.pricePerShare, 'Price per share', { min: 0, integer: true }) : null,
+    amount: ctx.body.amount != null ? num(ctx.body.amount, 'Amount', { integer: true }) : null, memo: ctx.body.memo ?? null,
     createdAt: nowISO(), createdBy: ctx.user!.name,
   });
-  await audit(ctx, 'CREATE', 'transactions', id, 'Manual ledger entry');
+  invalidate(ctx.companyId!);
+  await audit(ctx, 'CREATE', 'transactions', id, `Manual ${type} ledger entry`);
   return toCamel(await one('SELECT * FROM transactions WHERE id = ?', id));
 });
 

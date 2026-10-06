@@ -137,10 +137,11 @@ test('today\'s view is the view of the last event\'s date: nothing dated later i
   assert.deepEqual((await view()).t.totals, (await view('2024-10-15')).t.totals);
 });
 
-test('a certificate closed by an edit, with no ledger entry, reads as it does today at every date', async () => {
-  // The ledger cannot say when it was closed, so nothing is rebuilt for it (it never counted before the fix either).
+test('a certificate cannot be closed by an edit, which the ledger could not date: the transfer route does it', async () => {
   const edited = (await post('/issuances', { stakeholderId: buyer, shareClassId: common, quantity: 10_000, pricePerShare: 100, issueDate: '2021-01-01', certificateNo: 'CS-3' })).id as string;
   assert.equal((await view('2022-01-01')).of(buyer).outstanding, 10_000);
-  assert.equal((await call('PATCH', `/api/c/${cid}/issuances/${edited}`, { status: 'TRANSFERRED' }, admin)).status, 200);
-  assert.equal((await view('2022-01-01')).of(buyer).outstanding, 0);
+  const r = await call('PATCH', `/api/c/${cid}/issuances/${edited}`, { status: 'TRANSFERRED' }, admin);
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /transfer/);
+  assert.equal((await view('2022-01-01')).of(buyer).outstanding, 10_000);
 });
