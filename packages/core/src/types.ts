@@ -290,8 +290,19 @@ export const TRANSACTION_TYPES = [
   'CORRECTION',
   // An MFN holder's election of a later convertible's terms (LedgerEntry.adoptedId).
   'MFN_ELECTION',
+  // A note paid back in cash (the repay route): it leaves the cap table on `date`.
+  'REPAYMENT',
 ] as const;
 export type TransactionType = typeof TRANSACTION_TYPES[number];
+
+/**
+ * Entries rewindToDate undoes. Against a security they come only from the event routes,
+ * which change the row and write the entry together; a manual one would rewind a change
+ * the row never had.
+ */
+export const REWOUND_TYPES: readonly TransactionType[] = [
+  'TRANSFER', 'REPURCHASE', 'EXERCISE', 'CANCELLATION', 'FORFEITURE', 'EXPIRATION', 'CONVERSION', 'CORRECTION', 'REPAYMENT',
+];
 
 /** The counts a CORRECTION entry can change. */
 export type CorrectedField = 'quantity' | 'exercisedQuantity' | 'cancelledQuantity';

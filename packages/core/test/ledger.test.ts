@@ -426,3 +426,44 @@ test('a warrant exercised after the as-of date is outstanding again then, with w
   assert.equal(w('2024-01-01').status, 'EXERCISED');
   assert.equal(computeCapTable(d, { asOf: '2023-06-01' }).totals.warrantsOutstanding, 60_000);
 });
+
+test('a certificate cancelled after the as-of date held its shares then, in part or in full, across a split', () => {
+  // CS-1: 1,000,000 of its 4,500,000 cancelled in 2022, the rest (3,500,000, 7,000,000 shares of the day) after a 2:1 split.
+  const d = base();
+  d.stockSplits.push({ id: 'sp', date: '2023-01-01', ratio: 2 });
+  Object.assign(cert(d, 'cs1'), { quantity: 3_500_000, status: 'CANCELLED' });
+  d.ledger = [entry('CANCELLATION', '2022-01-01', 'cs1', 1_000_000), entry('CANCELLATION', '2024-01-01', 'cs1', 7_000_000)];
+  const at = (asOf: string) => cert(rewindToDate(d, asOf), 'cs1');
+  assert.deepEqual([at('2021-06-01').quantity, at('2021-06-01').status], [4_500_000, 'OUTSTANDING']);
+  assert.deepEqual([at('2023-06-01').quantity, at('2023-06-01').status], [3_500_000, 'OUTSTANDING']);
+  assert.equal(at('2024-01-01').status, 'CANCELLED');
+  assert.deepEqual([computeCapTable(d, { asOf: '2023-06-01' }).totals.outstanding, computeCapTable(d, { asOf: '2024-06-01' }).totals.outstanding], [14_000_000, 7_000_000]);
+});
+
+test('a warrant cancelled or expired after the as-of date was outstanding then, with what was left', () => {
+  const d = base();
+  d.warrants = [
+    warrant('b', 'common', 100_000, { id: 'w1', issueDate: '2021-01-01', exercisedQuantity: 30_000, status: 'EXPIRED', expirationDate: null }),
+    warrant('b', 'common', 50_000, { id: 'w2', issueDate: '2021-01-01', status: 'CANCELLED', expirationDate: null }),
+  ];
+  d.ledger = [entry('EXERCISE', '2022-01-01', 'w1', 30_000), entry('EXPIRATION', '2024-01-01', 'w1', 70_000), entry('CANCELLATION', '2023-01-01', 'w2', 50_000)];
+  const at = (asOf: string) => rewindToDate(d, asOf).warrants.map((w) => [w.status, w.exercisedQuantity]);
+  assert.deepEqual(at('2022-06-01'), [['OUTSTANDING', 30_000], ['OUTSTANDING', 0]]);
+  assert.deepEqual(at('2023-06-01'), [['OUTSTANDING', 30_000], ['CANCELLED', 0]]);
+  assert.deepEqual(at('2024-01-01'), [['EXPIRED', 30_000], ['CANCELLED', 0]]);
+  assert.equal(computeCapTable(d, { asOf: '2022-06-01' }).totals.warrantsOutstanding, 120_000);
+});
+
+test('a note repaid, or a SAFE cancelled, after the as-of date was outstanding then', () => {
+  const d = base();
+  d.convertibles.push(
+    convertible('b', 'NOTE', 250_000, 10_000_000, { id: 'n1', issueDate: '2022-01-01', status: 'REPAID' }),
+    convertible('b', 'SAFE_POST', 250_000, 10_000_000, { id: 's1', issueDate: '2022-01-01', status: 'CANCELLED' }),
+    // Settled with no entry: as today.
+    convertible('b', 'SAFE_POST', 250_000, 10_000_000, { id: 's2', issueDate: '2022-01-01', status: 'CANCELLED' }),
+  );
+  d.ledger = [entry('REPAYMENT', '2024-01-01', 'n1', null), entry('CANCELLATION', '2023-01-01', 's1', null)];
+  assert.deepEqual(rewindToDate(d, '2022-06-01').convertibles.map((c) => c.status), ['OUTSTANDING', 'OUTSTANDING', 'CANCELLED']);
+  assert.deepEqual(rewindToDate(d, '2023-06-01').convertibles.map((c) => c.status), ['OUTSTANDING', 'CANCELLED', 'CANCELLED']);
+  assert.deepEqual(rewindToDate(d, '2024-01-01').convertibles.map((c) => c.status), ['REPAID', 'CANCELLED', 'CANCELLED']);
+});
