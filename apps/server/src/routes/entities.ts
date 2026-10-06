@@ -296,7 +296,7 @@ for (const r of RESOURCES) {
       if (await one(`SELECT 1 FROM ${table} WHERE ${field} = ? AND company_id = ? LIMIT 1`, ctx.params.id, ctx.companyId)) throw badRequest(`${r.label} is still referenced by ${table.replaceAll('_', ' ')}.`);
     }
     if (['issuances', 'awards', 'warrants', 'convertibles'].includes(r.table)
-        && await one('SELECT 1 FROM transactions WHERE security_id = ? AND company_id = ? LIMIT 1', ctx.params.id, ctx.companyId)) throw badRequest('This security has ledger history and cannot be deleted.');
+        && await one('SELECT 1 FROM transactions WHERE (security_id = ? OR adopted_security_id = ?) AND company_id = ? LIMIT 1', ctx.params.id, ctx.params.id, ctx.companyId)) throw badRequest('This security has ledger history and cannot be deleted.');
     const block = await r.guardDelete?.(ctx.params.id, ctx.companyId!);
     if (block) throw badRequest(block);
     await run(`DELETE FROM ${r.table} WHERE id = ? AND company_id = ?`, ctx.params.id, ctx.companyId);
