@@ -1836,6 +1836,8 @@ route.post('/api/c/:cid/transactions', 'write', async (ctx) => {
   if (!(TRANSACTION_TYPES as readonly string[]).includes(type)) throw badRequest(`Type must be one of ${TRANSACTION_TYPES.join(', ')}.`);
   // A correction changes a security's row and its entry together, so it is written by editing the security.
   if (type === 'CORRECTION') throw badRequest('A correction is recorded by editing the security, with an effective date.');
+  // Every view reads an election, so it goes through the route that checks the adopted instrument.
+  if (type === 'MFN_ELECTION') throw badRequest('An MFN election is recorded from the SAFE or note (POST /api/c/:cid/convertibles/:id/mfn-election).');
   const securityId = ctx.body.securityId ? String(ctx.body.securityId) : null;
   if (securityId && !(await securityKind(ctx.companyId!, securityId))) throw badRequest('That security does not belong to this company.');
   // The engine undoes these against the row's state of today, so one the row never had would corrupt every past view.

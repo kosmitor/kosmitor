@@ -291,6 +291,7 @@ test('a manual entry cannot be an event the engine rewinds: those come from thei
   for (const type of ['TRANSFER', 'REPURCHASE', 'EXERCISE', 'CANCELLATION', 'FORFEITURE', 'EXPIRATION', 'CONVERSION', 'REPAYMENT']) {
     await refused('POST', '/transactions', { type, date: '2024-01-01', securityId: cert, quantity: 500 }, /route|action/i);
   }
+  await refused('POST', '/transactions', { type: 'MFN_ELECTION', date: '2024-01-01', securityId: cert, quantity: 1 }, /mfn-election/i);
   // An entry with no security, or one the engine does not rewind, is still a note in the ledger.
   await ok('POST', '/transactions', { type: 'TRANSFER', date: '2024-01-01', quantity: 500, memo: 'Secondary noted' });
   await ok('POST', '/transactions', { type: 'ISSUANCE', date: '2022-01-01', securityId: cert, quantity: 1_000 });
