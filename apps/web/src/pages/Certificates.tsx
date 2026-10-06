@@ -41,6 +41,8 @@ export default function Certificates() {
   const [emailing, setEmailing] = useState(false);
   const [repurchasing, setRepurchasing] = useState<any>(null);
   const [repurchase, setRepurchase] = useState({ quantity: '', date: today(), pricePerShare: '', memo: '' });
+  const [cancelling, setCancelling] = useState<any>(null);
+  const [cancel, setCancel] = useState({ quantity: '', date: today(), reason: '' });
   /** The signing certificate behind a pending issuance, with its signature blocks. */
   const certificateOf = useMemo(() => newestPerHolding((documents ?? []).filter((d) => d.category === 'CERTIFICATE')), [documents]);
   /**
@@ -134,6 +136,17 @@ export default function Certificates() {
       });
       toast('Shares repurchased and returned to the authorized pool');
       setRepurchasing(null);
+      refreshAll();
+    } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
+  };
+  const doCancel = async () => {
+    setBusy(true);
+    try {
+      await api(`/c/${companyId}/issuances/${cancelling.id}/cancel`, {
+        body: { quantity: parseShares(cancel.quantity), date: cancel.date, reason: cancel.reason || null },
+      });
+      toast('Shares cancelled');
+      setCancelling(null);
       refreshAll();
     } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
   };
@@ -399,6 +412,8 @@ export default function Certificates() {
                                     onClick: () => { setTransfer({ toStakeholderId: '', quantity: String(i.quantity), date: today(), pricePerShare: String(i.pricePerShare / 1e6) }); setTransferring(i); } },
                                   { label: 'Repurchase the shares', icon: 'wallet' as const,
                                     onClick: () => { setRepurchase({ quantity: String(i.quantity), date: today(), pricePerShare: String(i.pricePerShare / 1e6), memo: '' }); setRepurchasing(i); } },
+                                  { label: 'Cancel the certificate', icon: 'trash' as const, danger: true,
+                                    onClick: () => { setCancel({ quantity: String(i.quantity), date: today(), reason: '' }); setCancelling(i); } },
                                 ] : []),
                                 { label: 'Delete', icon: 'trash', danger: true, onClick: () => setConfirmDelete(i) },
                               ]} />
@@ -575,6 +590,19 @@ export default function Certificates() {
               <Field label="Memo"><Input value={repurchase.memo} onChange={(e) => setRepurchase({ ...repurchase, memo: e.target.value })} placeholder="Unvested shares on departure" /></Field>
             </FormGrid>
           </>
+        )}
+      </FormModal>
+
+      <FormModal open={!!cancelling} onClose={() => setCancelling(null)} busy={busy} title="Cancel shares" submitLabel="Record cancellation" onSubmit={doCancel}
+        description="Cancels shares on the certificate as of a date. The ledger records the cancellation, so views of earlier dates still show the shares.">
+        {cancelling && (
+          <FormGrid>
+            <Field label="Shares to cancel" required hint={`${shares(cancelling.quantity)} held. Fewer leaves the rest outstanding.`}>
+              <Input value={cancel.quantity} onChange={(e) => setCancel({ ...cancel, quantity: e.target.value })} required />
+            </Field>
+            <Field label="Cancellation date" required><Input type="date" value={cancel.date} onChange={(e) => setCancel({ ...cancel, date: e.target.value })} required /></Field>
+            <Field label="Reason"><Input value={cancel.reason} onChange={(e) => setCancel({ ...cancel, reason: e.target.value })} placeholder="Issued in error" /></Field>
+          </FormGrid>
         )}
       </FormModal>
 
