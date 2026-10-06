@@ -267,7 +267,6 @@ test('a holder or class typo is a correction with a reason that holds on every d
   const a = await person('Nell Quarry');
   const b = await person('Otto Plume');
   const cert = (await ok('POST', '/issuances', { stakeholderId: a, shareClassId: common, quantity: 1_000, pricePerShare: 100, issueDate: '2022-01-01' })).id;
-  await ok('POST', `/issuances/${cert}/repurchase`, { quantity: 10, date: '2022-02-01' });
   await refused('PATCH', `/issuances/${cert}`, { stakeholderId: b }, /reason.*transfer/i);
   await refused('PATCH', `/issuances/${cert}`, { stakeholderId: b, reason: '   ' }, /reason/i);
   await ok('PATCH', `/issuances/${cert}`, { stakeholderId: b, reason: 'Entered against the wrong holder' });
@@ -281,9 +280,13 @@ test('a holder or class typo is a correction with a reason that holds on every d
   await refused('PATCH', `/issuances/${cert}`, { shareClassId: other }, /reason/i);
   await ok('PATCH', `/issuances/${cert}`, { shareClassId: other, reason: 'Class B, as the purchase agreement says' });
   const w = (await ok('POST', '/warrants', { stakeholderId: a, shareClassId: common, quantity: 500, strikePrice: 100, issueDate: '2021-01-01' })).id;
-  await ok('POST', `/warrants/${w}/exercise`, { quantity: 100, exerciseDate: '2022-01-01' });
   await ok('PATCH', `/warrants/${w}`, { stakeholderId: b, reason: 'Wrong holder' });
   assert.equal((await ok('GET', `/issuances/${cert}`)).stakeholderId, b);
+  // Once something has happened to it, a new holder may be a transfer in disguise (ledger-final-review.test.ts).
+  await ok('POST', `/issuances/${cert}/repurchase`, { quantity: 10, date: '2022-02-01' });
+  await refused('PATCH', `/issuances/${cert}`, { stakeholderId: a, reason: 'Typo' }, /history.*transfer/i);
+  await ok('POST', `/warrants/${w}/exercise`, { quantity: 100, exerciseDate: '2022-01-01' });
+  await refused('PATCH', `/warrants/${w}`, { stakeholderId: a, reason: 'Typo' }, /history/i);
 });
 
 test('a manual entry cannot be an event the engine rewinds: those come from their routes', async () => {

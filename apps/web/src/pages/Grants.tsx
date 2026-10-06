@@ -186,6 +186,13 @@ export default function Grants() {
   const retyped = !!editing?.id && !IN_FLIGHT.has(editing.status)
     && (form.stakeholderId !== editing.stakeholderId || form.poolId !== editing.poolId || form.grantDate !== editing.grantDate);
 
+  /** An issued grant whose count or terms (strike, vesting, expiry) change: a correction dated in the ledger. */
+  const redated = !!editing?.id && (parseShares(form.quantity) !== Number(editing.quantity)
+    || form.type !== editing.type || parsePPS(form.strikePrice) !== Number(editing.strikePrice)
+    || (form.vestingStartDate || form.grantDate) !== editing.vestingStartDate || form.vestingScheduleId !== editing.vestingScheduleId
+    || (form.expirationDate || null) !== (editing.expirationDate ?? null) || Number(form.ptepMonths) !== Number(editing.ptepMonths)
+    || parsePPS(form.fmvAtGrant || form.strikePrice) !== Number(editing.fmvAtGrant));
+
   const save = async () => {
     const payload = {
       label: form.label || null, stakeholderId: form.stakeholderId, poolId: form.poolId,
@@ -516,8 +523,8 @@ export default function Grants() {
           <Field label="Number of shares" required>
             <Input value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="50,000" required />
           </Field>
-          {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
-            <Field label="Correct from" hint="The ledger dates the change. Keep the grant date if the old count was always wrong.">
+          {redated && (
+            <Field label="Correct from" hint="The ledger dates the change. Keep the grant date if the old count or terms were always wrong.">
               <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
             </Field>
           )}

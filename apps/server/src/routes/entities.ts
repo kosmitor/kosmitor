@@ -263,6 +263,14 @@ const IDENTITY: Record<string, string[]> = {
 };
 /** Not yet issued: not on the cap table, so not in the ledger either (the trigger in db.ts agrees). */
 const UNISSUED = ['DRAFT', 'PENDING_APPROVAL', 'PENDING_SIGNATURE'];
+/**
+ * Awaiting board approval or signatures. Only those flows move a security into or out of
+ * these: they check the consent or the signatures, and write the creation entry when it
+ * goes live. An edit that did it would issue a security nobody approved or signed.
+ */
+const PENDING = ['PENDING_APPROVAL', 'PENDING_SIGNATURE'];
+const refusePending = (r: Resource): Error => badRequest(
+  `A ${r.label.toLowerCase()} goes into or out of ${PENDING.join(' or ')} only through its signing or approval flow. An edit cannot.`);
 const isIssued = (status: unknown): boolean => !UNISSUED.includes(String(status ?? 'OUTSTANDING'));
 const json = (v: unknown): string => JSON.stringify(v ?? null);
 
@@ -407,6 +415,7 @@ for (const r of RESOURCES) {
 
   route.post(base, 'write', async (ctx) => {
     const values = clean(r, ctx.body ?? {}, ctx, false);
+    if (EVENTS[r.table] && PENDING.includes(String(values.status))) throw refusePending(r);
     initialState(r, values);
     await validateEntity(r.table, values, ctx.companyId!);
     const id = newId(r.path.slice(0, 3));
@@ -424,6 +433,8 @@ for (const r of RESOURCES) {
     if (!existing) throw notFound(`${r.label} not found.`);
     // Validate the resulting record so partial updates preserve existing terms.
     const before = toCamel<Record<string, unknown>>(existing)!;
+    if (EVENTS[r.table] && ctx.body?.status !== undefined && !same(before.status, ctx.body.status)
+        && [before.status, ctx.body.status].some((s) => PENDING.includes(String(s)))) throw refusePending(r);
     const values = clean(r, { ...before, ...ctx.body }, ctx, false);
     await validateEntity(r.table, values, ctx.companyId!);
     const fixes = corrections(r, ctx.params.id, before, values);
@@ -431,7 +442,7 @@ for (const r of RESOURCES) {
     if (ev && isIssued(before.status) && !isIssued(values.status)) throw badRequest(`An issued ${r.label.toLowerCase()} cannot go back to ${values.status}.`);
     if (ev && !isIssued(before.status) && isIssued(values.status)) await recordCreation(ctx, r.table, ctx.params.id, values, `${r.label} recorded as ${values.status}`);
     const identity = ev && isIssued(before.status) ? IDENTITY[r.table].filter((k) => k in values && !same(before[k], values[k])) : [];
-    const terms = r.table === 'convertibles' && isIssued(before.status) ? CORRECTED_TERMS.filter((k) => k in values && !same(before[k], values[k])) : [];
+    const terms: string[] = ev && isIssued(before.status) ? CORRECTED_TERMS[r.table as keyof typeof CORRECTED_TERMS].filter((k) => k in values && !same(before[k], values[k])) : [];
     const reason = typeof ctx.body.reason === 'string' ? ctx.body.reason.trim().slice(0, 500) : '';
     const entry = (o: Record<string, unknown>) => insert('transactions', {
       id: newId('tx'), companyId: ctx.companyId, type: 'CORRECTION', stakeholderId: values.stakeholderId ?? null, securityId: ctx.params.id,
@@ -445,6 +456,22 @@ for (const r of RESOURCES) {
           + (identity.includes('stakeholderId') && r.table === 'issuances' ? ` If the shares changed hands, record a transfer instead (POST /api/c/:cid/issuances/${ctx.params.id}/transfer).` : ''));
       }
       const ownDate = ev.ownDate;
+      // A certificate an event issued (a transfer, an exercise, a conversion) is dated by that event,
+      // written in the same transaction as its ISSUANCE entry. Its holder, class and date are the event's.
+      const source = await one<{ type: string; date: string }>(
+        `SELECT e.type, e.date FROM transactions i JOIN transactions e ON e.xact_id = i.xact_id AND e.id <> i.id
+          WHERE i.security_id = ? AND i.type = 'ISSUANCE' AND e.type IN ('TRANSFER', 'EXERCISE', 'CONVERSION') AND e.date = i.date LIMIT 1`, ctx.params.id);
+      if (source) throw badRequest(`This ${r.label.toLowerCase()} was issued by the ${source.type.toLowerCase()} on ${source.date}, which sets its ${identity.join(', ')}.`);
+      const moved = identity.filter((k) => k !== ownDate);
+      if (moved.length > 0) {
+        // Once anything has happened to it, a new holder or class may be a transfer in disguise.
+        const history = await one<{ type: string; date: string }>(
+          "SELECT type, date FROM transactions WHERE security_id = ? AND type NOT IN ('ISSUANCE', 'GRANT', 'CORRECTION') ORDER BY date LIMIT 1", ctx.params.id);
+        if (history) {
+          throw badRequest(`This ${r.label.toLowerCase()} has ledger history (a ${history.type.toLowerCase()} on ${history.date}), so its ${moved.join(', ')} cannot be corrected as a typo.`
+            + (r.table === 'issuances' ? ` If the shares changed hands, record a transfer (POST /api/c/:cid/issuances/${ctx.params.id}/transfer).` : ' Cancel it and issue a new one instead.'));
+        }
+      }
       if (identity.includes(ownDate)) {
         const [from, to] = [String(before[ownDate]), String(values[ownDate])].sort();
         const split = await one<{ date: string }>('SELECT date FROM stock_splits WHERE company_id = ? AND date > ? AND date <= ? LIMIT 1', ctx.companyId, from, to);
@@ -452,20 +479,21 @@ for (const r of RESOURCES) {
         const event = await one<{ type: string; date: string }>(
           "SELECT type, date FROM transactions WHERE security_id = ? AND type NOT IN ('ISSUANCE', 'GRANT', 'CORRECTION') AND date < ? ORDER BY date LIMIT 1", ctx.params.id, values[ownDate]);
         if (event) throw badRequest(`The ${event.type.toLowerCase()} on ${event.date} comes before ${values[ownDate]}, so the date cannot move past it.`);
-        // A certificate an event issued (a transfer, an exercise, a conversion) is dated by that event,
-        // written in the same transaction as its ISSUANCE entry. Its date is the event's to correct.
-        const source = await one<{ type: string; date: string }>(
-          `SELECT e.type, e.date FROM transactions i JOIN transactions e ON e.xact_id = i.xact_id AND e.id <> i.id
-            WHERE i.security_id = ? AND i.type = 'ISSUANCE' AND e.type IN ('TRANSFER', 'EXERCISE', 'CONVERSION') AND e.date = i.date LIMIT 1`, ctx.params.id);
-        if (source) throw badRequest(`This ${r.label.toLowerCase()} was issued by the ${source.type.toLowerCase()} on ${source.date}, which sets its date.`);
+        // An MFN holder elected this instrument's terms: it had to be issued between the MFN
+        // instrument's date and the election (mfnCandidates), or the election would lapse.
+        const elected = r.table === 'convertibles' ? await one<{ date: string; issue_date: string }>(
+          `SELECT t.date, m.issue_date FROM transactions t JOIN convertibles m ON m.id = t.security_id
+            WHERE t.type = 'MFN_ELECTION' AND t.adopted_security_id = ? AND (t.date < ? OR m.issue_date > ?) ORDER BY t.date LIMIT 1`,
+          ctx.params.id, values[ownDate], values[ownDate]) : null;
+        if (elected) throw badRequest(`An MFN holder elected this instrument's terms on ${elected.date}, so its date must stay between the electing instrument's (${elected.issue_date}) and the election.`);
       }
       for (const field of identity) await entry({ date: values[ownDate], field, beforeValue: json(before[field]), afterValue: json(values[field]), memo: `${field} corrected from ${before[field]} to ${values[field]}: ${reason}` });
     }
     if (fixes.length > 0 || terms.length > 0) {
       // A correction says the record was wrong from a date on: the security's own date
       // if it always was, or a later one. Its entry is in the shares of that date.
-      if (r.table === 'issuances' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding certificate\'s share count can be corrected.');
-      if (r.table === 'warrants' && ['CANCELLED', 'EXPIRED'].includes(String(before.status))) throw badRequest('A cancelled or expired warrant\'s counts cannot be corrected.');
+      if (fixes.length > 0 && r.table === 'issuances' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding certificate\'s share count can be corrected.');
+      if (fixes.length > 0 && r.table === 'warrants' && ['CANCELLED', 'EXPIRED'].includes(String(before.status))) throw badRequest('A cancelled or expired warrant\'s counts cannot be corrected.');
       if (r.table === 'convertibles' && before.status !== 'OUTSTANDING') throw badRequest('Only an outstanding instrument\'s terms can be corrected.');
       const ownDate = String(values[EVENTS[r.table].ownDate]);
       const effective = date(ctx.body.effectiveDate, 'Effective date');
@@ -473,7 +501,7 @@ for (const r of RESOURCES) {
       if (effective > today()) throw badRequest('The effective date cannot be in the future.');
       const data = await getCompanyData(ctx.companyId!);
       const k = splitFactor(data, ownDate, effective);
-      if (r.table === 'awards' || r.table === 'warrants') usedUp(r, ctx.params.id, values, data);
+      if (fixes.length > 0 && (r.table === 'awards' || r.table === 'warrants')) usedUp(r, ctx.params.id, values, data);
       for (const { field, delta } of fixes) {
         await entry({ date: effective, quantity: roundShares(delta * k), field, memo: `${field} corrected from ${before[field]} to ${values[field]}` });
       }

@@ -960,8 +960,8 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
   // update() matches on the id alone, so the document has to be confirmed as this
   // company's before anything is written. Without this an administrator of one
   // company could edit another company's document by knowing its id.
-  const existing = await one<{ id: string; security_id: string | null; category: string; folder: string | null }>(
-    'SELECT id, security_id, category, folder FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
+  const existing = await one<{ id: string; security_id: string | null; stakeholder_id: string | null; name: string; category: string; folder: string | null }>(
+    'SELECT id, security_id, stakeholder_id, name, category, folder FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
   if (!existing) throw notFound('Document not found.');
 
   // A document out for signature stays where it is until every party has signed.
@@ -972,6 +972,7 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
   // Putting it in another folder is different: the folder only says where it is
   // shown on the documents page, and signing never looks at it, so that stays allowed.
   const moves = ctx.body.securityId !== undefined && (ctx.body.securityId || null) !== existing.security_id;
+  const rehomes = ctx.body.stakeholderId !== undefined && (ctx.body.stakeholderId || null) !== existing.stakeholder_id;
   const recategorises = ctx.body.category !== undefined && String(ctx.body.category).toUpperCase() !== existing.category;
   if (moves || recategorises) {
     const pending = await one<{ id: string }>(
@@ -979,11 +980,11 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
       existing.id, ctx.companyId);
     if (pending) throw badRequest('This document is out for signature. It can be moved or reclassified once every party has signed.');
   }
-  // What someone signed is evidence of the holding it names: it cannot be refiled against another.
-  if (moves) {
+  // What someone signed is evidence of the holding and the holder it names: it cannot be refiled against another.
+  if (moves || rehomes) {
     const signed = await one<{ signer_name: string }>(
       "SELECT signer_name FROM signatures WHERE document_id = ? AND company_id = ? AND status = 'SIGNED' LIMIT 1", existing.id, ctx.companyId);
-    if (signed) throw badRequest(`${signed.signer_name.split(' — ')[0]} has signed this document, so it cannot be linked to another holding.`);
+    if (signed) throw badRequest(`${signed.signer_name.split(' — ')[0]} has signed this document, so it cannot be linked to another ${moves ? 'holding' : 'holder'}.`);
   }
 
   // What a signer signed cannot change under their signature. Withdraw the document and
@@ -1035,12 +1036,17 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
 
   await update('documents', ctx.params.id, values);
   // A move is the common edit from the documents page, so the log says where the
-  // document went rather than only that it changed.
+  // document went rather than only that it changed. A renamed or reclassified
+  // document says what it was called before, signed or not.
   const changedOtherwise = Object.keys(ctx.body).some((key) => key !== 'folder' && ctx.body[key] !== undefined);
+  const relabels = [
+    values.name !== undefined && values.name !== existing.name ? `name: "${existing.name}" → "${values.name}"` : '',
+    values.category !== undefined && values.category !== existing.category ? `category: ${existing.category} → ${values.category}` : '',
+  ].filter(Boolean).join(', ');
   await audit(ctx, 'UPDATE', 'documents', ctx.params.id,
-    !refolders ? 'Document updated'
+    (!refolders ? 'Document updated'
       : changedOtherwise ? `Document updated and moved to folder "${folder}"`
-      : `Document moved to folder "${folder}"`);
+      : `Document moved to folder "${folder}"`) + (relabels ? ` (${relabels})` : ''));
   return toCamel(await one('SELECT * FROM documents WHERE id = ?', ctx.params.id));
 });
 

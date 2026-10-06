@@ -4,8 +4,9 @@
  * repurchases, certificate cancellations, exercises of grants and warrants, grant
  * cancellations, warrant expiries, conversions, repayments and cancellations of
  * SAFEs, corrected counts and SAFE principals (PATCH with an effective date), typo corrections of a
- * certificate's holder, class or date (PATCH with a reason), and splits dated behind the ledger
- * (refused) go through the real routes. After every
+ * certificate's holder, class or date (PATCH with a reason; refused for a holder or class once the
+ * certificate has history or an event issued it), warrant expiries brought in (PATCH with an effective
+ * date), and splits dated behind the ledger (refused) go through the real routes. After every
  * step the cap table route, as of each date so far, must equal a plain replay of the
  * events dated on or before it. The replay knows nothing of the engine or the ledger:
  * it keeps share counts in the shares of the day, multiplies them by a split's ratio
@@ -78,12 +79,16 @@ type Fact =
   | { kind: 'reterm'; date: string; safe: string; principal: number }
   // A typo in a certificate's holder or own date: the record always should have said so, on every date.
   | { kind: 'retype'; date: string; id: string; holder?: string; issued?: string }
+  // A warrant's expiry corrected from `date` on: before it, the views read the old expiry.
+  | { kind: 'reexpire'; date: string; warrant: string; expires: string }
   // Something the routes refused (a split dated behind the ledger): nothing changed.
   | { kind: 'none'; date: string };
 
 /** The plan every history starts with, approved on 2020-01-01. */
 const PLAN = 3_000_000;
 const PLAN_APPROVED = '2020-01-01';
+/** The expiry every warrant is issued with. */
+const WARRANT_EXPIRES = '2040-01-01';
 
 interface Position { outstanding: number; options: number; warrants: number; principal: number }
 
@@ -91,7 +96,7 @@ function replay(facts: Fact[], asOf: string) {
   const certs = new Map<string, { holder: string; shares: number; paid: number }>();
   const grants = new Map<string, { holder: string; granted: number; exercised: number; cancelled: number }>();
   const safes = new Map<string, { holder: string; principal: number; live: boolean }>();
-  const warrants = new Map<string, { holder: string; size: number; exercised: number; live: boolean }>();
+  const warrants = new Map<string, { holder: string; size: number; exercised: number; live: boolean; expires: string }>();
   let plan = asOf >= PLAN_APPROVED ? PLAN : 0;
   // A typo fix holds on every date: the certificate always had that holder and date.
   const holderOf = new Map<string, string>(), issuedOn = new Map<string, string>();
@@ -118,7 +123,8 @@ function replay(facts: Fact[], asOf: string) {
         break;
       }
       case 'repurchase': case 'certcancel': certs.get(f.source)!.shares -= f.shares; break;
-      case 'warrant': warrants.set(f.id, { holder: f.holder, size: f.shares, exercised: 0, live: true }); break;
+      case 'warrant': warrants.set(f.id, { holder: f.holder, size: f.shares, exercised: 0, live: true, expires: WARRANT_EXPIRES }); break;
+      case 'reexpire': warrants.get(f.warrant)!.expires = f.expires; break;
       case 'wexercise': {
         const w = warrants.get(f.warrant)!;
         w.exercised += f.shares;
@@ -164,7 +170,8 @@ function replay(facts: Fact[], asOf: string) {
   for (const s of safes.values()) if (s.live) at(s.holder).principal += s.principal;
   let warranted = 0;
   for (const w of warrants.values()) {
-    if (!w.live) continue;
+    // The views drop a warrant the day after it expires.
+    if (!w.live || w.expires < asOf) continue;
     at(w.holder).warrants += w.size - w.exercised;
     warranted += w.size - w.exercised;
   }
@@ -221,15 +228,15 @@ async function runHistory(seed: number, steps: number): Promise<void> {
     const certs = ((await send('GET', '/issuances')) as any[]).filter((i) => i.status === 'OUTSTANDING' && i.issueDate <= date && Number(i.quantity) >= 1);
     const grants = ((await send('GET', '/awards')) as any[]).filter((a) => a.status === 'OUTSTANDING' && roundShares(a.quantity - a.exercisedQuantity - a.cancelledQuantity) >= 1);
     const safes = ((await send('GET', '/convertibles')) as any[]).filter((c) => c.status === 'OUTSTANDING');
-    const live = ((await send('GET', '/warrants')) as any[]).filter((w) => w.status === 'OUTSTANDING' && roundShares(w.quantity - w.exercisedQuantity) >= 1);
+    const live = ((await send('GET', '/warrants')) as any[]).filter((w) => w.status === 'OUTSTANDING' && w.expirationDate >= date && roundShares(w.quantity - w.exercisedQuantity) >= 1);
     let fact: Fact;
     let what = pick(['issue', 'grant', 'safe', 'split', 'transfer', 'transfer', 'repurchase', 'certcancel', 'exercise', 'cancel', 'convert', 'settle', 'correct',
-      'warrant', 'wexercise', 'wend', 'reterm', 'retype', 'backsplit']);
+      'warrant', 'wexercise', 'wend', 'reterm', 'retype', 'retype', 'backsplit', 'reexpire']);
     if (what === 'correct' && !certs.length && !grants.length) what = 'issue';
     if (what === 'retype' && !certs.length) what = 'issue';
     if (what === 'reterm' && !safes.length) what = 'safe';
     if ((what === 'transfer' || what === 'repurchase' || what === 'certcancel') && !certs.length) what = 'issue';
-    if ((what === 'wexercise' || what === 'wend') && !live.length) what = 'warrant';
+    if ((what === 'wexercise' || what === 'wend' || what === 'reexpire') && !live.length) what = 'warrant';
     if (what === 'settle' && !safes.length) what = 'safe';
     if ((what === 'exercise' || what === 'cancel') && !grants.length) what = 'grant';
     if (what === 'convert' && !safes.length) what = 'safe';
@@ -285,18 +292,24 @@ async function runHistory(seed: number, steps: number): Promise<void> {
         break;
       }
       case 'retype': {
-        const row = pick(certs);
+        // A certificate an event issued, or one with an event since, may only change holder or class by that event.
+        const hasHistory = (id: string) => facts.some((f) => ('source' in f && f.source === id) || (['transfer', 'exercise', 'wexercise', 'convert'].includes(f.kind) && 'id' in f && f.id === id));
+        const plain = certs.filter((c) => !hasHistory(c.id));
+        const row = plain.length > 0 && rnd() < 0.8 ? pick(plain) : pick(certs);
+        const history = hasHistory(row.id);
         const choice = rnd();
-        if (choice < 0.4) {
+        if (choice < 0.5) {
           const to = pick(holders.filter((h) => h !== row.stakeholderId));
-          await send('PATCH', `/issuances/${row.id}`, { stakeholderId: to, reason: 'Entered against the wrong holder' });
-          fact = { kind: 'retype', date, id: row.id, holder: to };
-          exercised.add('holder corrected');
-        } else if (choice < 0.7) {
+          const done = await attempt('PATCH', `/issuances/${row.id}`, { stakeholderId: to, reason: 'Entered against the wrong holder' });
+          assert.equal(done, !history, `seed ${seed}: a holder correction of ${row.id} is refused exactly when it has history`);
+          fact = done ? { kind: 'retype', date, id: row.id, holder: to } : { kind: 'none', date };
+          exercised.add(done ? 'holder corrected' : 'holder or class correction refused');
+        } else if (choice < 0.75) {
           // The class is not in the model's totals; the views must not move.
-          await send('PATCH', `/issuances/${row.id}`, { shareClassId: row.shareClassId === common ? seedClass : common, reason: 'Wrong class' });
+          const done = await attempt('PATCH', `/issuances/${row.id}`, { shareClassId: row.shareClassId === common ? seedClass : common, reason: 'Wrong class' });
+          assert.equal(done, !history, `seed ${seed}: a class correction of ${row.id} is refused exactly when it has history`);
           fact = { kind: 'none', date };
-          exercised.add('class corrected');
+          exercised.add(done ? 'class corrected' : 'holder or class correction refused');
         } else {
           let issued = addDays(row.issueDate, Math.floor(rnd() * 61) - 30);
           if (issued < '2020-01-02') issued = '2020-01-02';
@@ -310,7 +323,7 @@ async function runHistory(seed: number, steps: number): Promise<void> {
       }
       case 'warrant': {
         const shares = 1_000 * (1 + Math.floor(rnd() * 100));
-        const w = await send('POST', '/warrants', { stakeholderId: who, shareClassId: common, quantity: shares, strikePrice: 50_000, issueDate: date, expirationDate: '2040-01-01', netExercise: 0 });
+        const w = await send('POST', '/warrants', { stakeholderId: who, shareClassId: common, quantity: shares, strikePrice: 50_000, issueDate: date, expirationDate: WARRANT_EXPIRES, netExercise: 0 });
         fact = { kind: 'warrant', date, id: w.id, holder: who, shares };
         break;
       }
@@ -320,6 +333,15 @@ async function runHistory(seed: number, steps: number): Promise<void> {
         const k = splitsBetween(facts, w.issueDate, date);
         const r = await send('POST', `/warrants/${w.id}/exercise`, { quantity, exerciseDate: date, method: 'CASH' });
         fact = { kind: 'wexercise', date, warrant: w.id, id: r.issuance.id, shares: roundShares(quantity * k), price: k === 1 ? 50_000 : Math.round(50_000 / k) };
+        break;
+      }
+      case 'reexpire': {
+        // The expiry brought in to a day already past, from today on: the views drop the warrant from today, not before.
+        const w = pick(live);
+        const expires = addDays(w.issueDate, Math.floor(rnd() * 30));
+        await send('PATCH', `/warrants/${w.id}`, { expirationDate: expires, effectiveDate: date });
+        fact = { kind: 'reexpire', date, warrant: w.id, expires };
+        exercised.add('expiry corrected');
         break;
       }
       case 'wend': {
@@ -435,5 +457,6 @@ for (const seed of [11, 23, 37, 41, 53, 67]) {
 }
 
 test('the histories took every kind of step the model knows', () => {
-  assert.deepEqual([...exercised].sort(), ['class corrected', 'date corrected', 'holder corrected', 'principal corrected', 'split', 'split behind the ledger refused', 'split behind nothing'].sort());
+  assert.deepEqual([...exercised].sort(), ['class corrected', 'date corrected', 'expiry corrected', 'holder corrected', 'holder or class correction refused', 'principal corrected', 'split',
+    'split behind the ledger refused', 'split behind nothing'].sort());
 });

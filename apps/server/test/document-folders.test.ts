@@ -139,9 +139,10 @@ test('editing a document moves it to a cleaned path and the log says where it we
   assert.deepEqual(logged, [
     'Document moved to folder "Financing/Series A/Side letters"',
     'Document moved to folder "General"',
-    'Document updated', 'Document updated',
-    'Document updated and moved to folder "Legal"',
-  ], 'a move names the folder; filing it where it already is, or a rename alone, is an ordinary update');
+    'Document updated',
+    'Document updated (name: "Side letter" → "Side letter, signed")',
+    'Document updated and moved to folder "Legal" (name: "Side letter, signed" → "Side letter")',
+  ], 'a move names the folder; filing it where it already is, or a rename alone, is an ordinary update that names the old name');
 });
 
 test('a path too deep or too long is refused and the document stays where it was', async () => {

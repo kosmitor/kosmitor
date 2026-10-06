@@ -79,6 +79,10 @@ export default function Warrants() {
   const retyped = !!editing?.id
     && (form.stakeholderId !== editing.stakeholderId || form.shareClassId !== editing.shareClassId || form.issueDate !== editing.issueDate);
 
+  /** A warrant whose count, strike or expiry changes: a correction dated in the ledger. */
+  const redated = !!editing?.id && (parseShares(form.quantity) !== Number(editing.quantity)
+    || parsePPS(form.strikePrice) !== Number(editing.strikePrice) || (form.expirationDate || null) !== (editing.expirationDate ?? null));
+
   const save = async () => {
     const payload = {
       stakeholderId: form.stakeholderId, shareClassId: form.shareClassId,
@@ -224,8 +228,8 @@ export default function Warrants() {
           <Field label="Number of shares" required>
             <Input value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="50,000" required />
           </Field>
-          {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
-            <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count was always wrong.">
+          {redated && (
+            <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count or terms were always wrong.">
               <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
             </Field>
           )}
