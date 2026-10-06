@@ -3,7 +3,7 @@ import type {
 } from './types.ts';
 import { MICRO, CENTS } from './types.ts';
 import { computeCapTable, awardPosition, awardIsLive } from './captable.ts';
-import { conversionAmount, solvePostMoneySafes } from './convertibles.ts';
+import { conversionAmount, resolveMFN, solvePostMoneySafes } from './convertibles.ts';
 import { summarizeVesting } from './vesting.ts';
 import { normalizeSplits } from './splits.ts';
 import { isTransferIssuance } from './valuation-refresh.ts';
@@ -361,7 +361,13 @@ function setupWaterfall(input: CompanyData, opts: WaterfallOptions): WaterfallSe
   // a pre-money SAFE or a note included (YC post-money safe; Safe User Guide
   // Ex.2 Q3: (9,550,000 + 502,631) / 90%), so its share count depends on which of
   // the others convert; electing() below solves it for each set.
-  const instruments = [...(includeSafes ? safes : []), ...(repayNotes ? [] : notes)];
+  // An MFN instrument converts as the later instrument it adopts (resolveMFN),
+  // chosen among every instrument issued, not only the ones converting here.
+  const instruments = [...(includeSafes ? safes : []), ...(repayNotes ? [] : notes)].map((c): Convertible => {
+    const t = resolveMFN(c, data.convertibles, asOf);
+    return { ...c, valuationCap: t.cap, discount: t.discount, instrument: t.instrument, mfn: false };
+  });
+  const noteIds = new Set(notes.map((n) => n.id));
   const liquidityCapitalization = table.totals.fullyDiluted;
   const postMoneySafes = instruments.filter((c) => c.instrument === 'SAFE_POST');
   /** A pre-money SAFE or a note converts at its cap over the Liquidity Capitalization, whatever the others do. */
@@ -380,15 +386,15 @@ function setupWaterfall(input: CompanyData, opts: WaterfallOptions): WaterfallSe
     for (const c of instruments) {
       const amount = conversionAmount(c, asOf);
       const asConverted = c.instrument === 'SAFE_POST' ? postMoney.get(c.id) ?? 0 : fixedShares.get(c.id) ?? 0;
-      const name = `${isNote(c) ? 'Note' : 'SAFE'} — ${holderName(c.stakeholderId)}`;
+      const name = `${noteIds.has(c.id) ? 'Note' : 'SAFE'} — ${holderName(c.stakeholderId)}`;
       // A discount-only safe converts at a Liquidity Price of the common price
       // times the Discount Rate (YC Postmoney Safe - Discount Only), so its
       // shares are worth Purchase Amount / Discount Rate whatever that price is.
-      const liquidityValue = !isNote(c) && c.valuationCap == null && c.discount > 0 && c.discount < 1
+      const liquidityValue = !noteIds.has(c.id) && c.valuationCap == null && c.discount > 0 && c.discount < 1
         ? Math.round(amount / (1 - c.discount)) : null;
       if (asConverted <= 0 && liquidityValue == null) warnings.push(`${name} has no valuation cap, so it is modelled as a cash-out only.`);
       claimants.push({
-        id: c.id, name, kind: isNote(c) ? 'NOTE' : 'SAFE', seniority: topRank,
+        id: c.id, name, kind: noteIds.has(c.id) ? 'NOTE' : 'SAFE', seniority: topRank,
         shares: 0, asConverted: liquidityValue == null ? asConverted : 0, invested: c.principal, claim: amount,
         participation: 'NON_PARTICIPATING', cap: null, liquidityValue, shareClassId: null, convertible: c,
       });

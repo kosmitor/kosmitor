@@ -115,34 +115,50 @@ export interface ConversionContext {
   postMoneyCapitalization: number;
   /** All convertibles in the stack — needed to resolve MFN clauses. */
   allConvertibles?: Convertible[];
+  /** Pre-money valuation of the round, which an MFN holder weighs a discount against (resolveMFN). */
+  valuation?: Cents;
 }
 
 /** Statuses of an instrument the company has actually issued; one awaiting approval or signature has not been. */
 const ISSUED = new Set<Convertible['status']>(['OUTSTANDING', 'CONVERTED', 'REPAID']);
 
+export interface ConversionTerms { cap: Cents | null; discount: number; instrument: Convertible['instrument'] }
+
 /**
- * Resolves an MFN instrument's effective cap and discount by adopting the best
- * terms of any instrument issued after it. Adopting another instrument's cap
- * makes the MFN that instrument for pricing, base and all: the amended safe is
- * identical to the later one apart from the Purchase Amount (YC Safe User
- * Guide, App. I.3), so a pre-money cap prices on the pre-money capitalization.
- * `instrument` is the instrument type whose capitalization the cap prices on.
+ * The terms an instrument converts on. For an MFN instrument, YC Safe (MFN),
+ * "MFN Amendment Provision": if the Company issues Subsequent Convertible
+ * Securities before this safe terminates and "the Investor determines that the
+ * terms of the Subsequent Convertible Securities are preferable to the terms of
+ * this Safe", the Company amends this safe "to be identical to the instrument(s)
+ * evidencing the Subsequent Convertible Securities". So the holder takes ONE
+ * later instrument whole: its cap, its discount and its pre- or post-money basis
+ * (YC Safe User Guide App. I.3), never one's cap with another's discount.
+ *
+ * Candidates are instruments issued (not pending) after this one and on or before
+ * `asOf`, the conversion or event date. Preferable is the lower effective
+ * valuation min(cap, valuation x (1 - discount)), `valuation` being the round's
+ * pre-money where there is one; with none (cap table, exit) only the cap counts.
+ * Ties go to a pre-money basis, whose capitalization leaves the safes out, then
+ * to the larger discount. If no candidate beats its own terms it keeps them.
+ * ponytail: ranks terms by valuation, not by solving the round once per candidate;
+ * a post-money cap a little below a pre-money one can rank first and give fewer shares.
  */
-export function resolveMFN(c: Convertible, all: Convertible[] | undefined, asOf: ISODate): { cap: Cents | null; discount: number; instrument: Convertible['instrument'] } {
-  let cap = c.valuationCap;
-  let discount = c.discount;
-  let instrument = c.instrument;
-  if (!c.mfn || !all) return { cap, discount, instrument };
+export function resolveMFN(c: Convertible, all: Convertible[] | undefined, asOf: ISODate, valuation: Cents = Infinity): ConversionTerms {
+  const own = { cap: c.valuationCap, discount: c.discount, instrument: c.instrument };
+  if (!c.mfn || !all) return own;
+  const score = (t: ConversionTerms) => [Math.min(t.cap ?? Infinity, valuation * (1 - t.discount)), t.instrument === 'SAFE_POST' ? 1 : 0, -t.discount];
+  const better = (a: ConversionTerms, b: ConversionTerms): boolean => {
+    const x = score(a), y = score(b);
+    const i = x.findIndex((v, k) => v !== y[k]);
+    return i >= 0 && x[i] < y[i];
+  };
+  let best: ConversionTerms = own;
   for (const other of all) {
-    if (other.id === c.id || other.issueDate <= c.issueDate || other.issueDate > asOf ||
-      !ISSUED.has(other.status)) continue;
-    if (other.valuationCap != null && (cap == null || other.valuationCap < cap)) {
-      cap = other.valuationCap;
-      instrument = other.instrument;
-    }
-    if (other.discount > discount) discount = other.discount;
+    if (other.id === c.id || other.issueDate <= c.issueDate || other.issueDate > asOf || !ISSUED.has(other.status)) continue;
+    const terms = { cap: other.valuationCap, discount: other.discount, instrument: other.instrument };
+    if (better(terms, best)) best = terms;
   }
-  return { cap, discount, instrument };
+  return best;
 }
 
 
@@ -166,8 +182,8 @@ export function convertOne(c: Convertible, ctx: ConversionContext): ConversionRe
   validateConversion(c, ctx.roundPPS);
   const interest = accruedInterest(c, ctx.asOf);
   const amount = c.principal + interest;
-  const { cap, discount, instrument } = resolveMFN(c, ctx.allConvertibles, ctx.asOf);
-  const usedMFN = c.mfn && (cap !== c.valuationCap || discount !== c.discount);
+  const { cap, discount, instrument } = resolveMFN(c, ctx.allConvertibles, ctx.asOf, ctx.valuation);
+  const usedMFN = c.mfn && (cap !== c.valuationCap || discount !== c.discount || instrument !== c.instrument);
 
   const capBase = instrument === 'SAFE_POST' ? ctx.postMoneyCapitalization : ctx.preMoneyCapitalization;
   const capPrice: PricePerShare | null =
@@ -219,7 +235,8 @@ export function convertAll(convertibles: Convertible[], ctx: ConversionContext):
  * capitalization that includes the other post-money SAFEs, the set has to be
  * solved together. This finds the fixed point. An MFN safe that adopted a
  * pre-money instrument's cap is not post-money and is left out; `all` is the
- * stack its MFN clause looks at (by default the instruments given).
+ * stack its MFN clause looks at (by default the instruments given) and
+ * `valuation` the round's pre-money it weighs terms by (see resolveMFN).
  */
 export function solvePostMoneySafes(
   convertibles: Convertible[],
@@ -227,9 +244,10 @@ export function solvePostMoneySafes(
   roundPPS: PricePerShare,
   asOf: ISODate,
   all: Convertible[] = convertibles,
+  valuation?: Cents,
 ): { shares: Map<string, number>; totalCapitalization: number; iterations: number } {
   const posts = convertibles.filter(
-    (c) => c.status === 'OUTSTANDING' && c.issueDate <= asOf && resolveMFN(c, all, asOf).instrument === 'SAFE_POST',
+    (c) => c.status === 'OUTSTANDING' && c.issueDate <= asOf && resolveMFN(c, all, asOf, valuation).instrument === 'SAFE_POST',
   );
   const shares = new Map<string, number>();
   if (posts.length === 0) return { shares, totalCapitalization: baseCapitalization, iterations: 0 };
@@ -239,7 +257,7 @@ export function solvePostMoneySafes(
   }
   const terms = posts.map((c) => {
     validateConversion(c, roundPPS);
-    const { cap, discount } = resolveMFN(c, all, asOf);
+    const { cap, discount } = resolveMFN(c, all, asOf, valuation);
     const amount = conversionAmount(c, asOf);
     return { c, cap, amount, fixedPrice: Math.max(1, Math.round(roundPPS * (1 - discount))) };
   });
