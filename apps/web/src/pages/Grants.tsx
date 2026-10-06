@@ -40,7 +40,7 @@ const blank = {
   label: '', stakeholderId: '', poolId: '', type: DEFAULT_AWARD, quantity: '',
   strikePrice: '', grantDate: today(), vestingStartDate: '', vestingScheduleId: '',
   expirationDate: '', ptepMonths: String(config.equity.postTerminationExerciseMonths), earlyExerciseAllowed: false,
-  boardApprovalDate: today(), fmvAtGrant: '', notes: '', effectiveDate: '',
+  boardApprovalDate: today(), fmvAtGrant: '', notes: '', effectiveDate: '', reason: '',
 };
 const blankIssue = {
   approval: 'APPROVED' as Approval, directorIds: [] as string[], forSignature: true,
@@ -66,6 +66,7 @@ export default function Grants() {
   const [form, setForm] = useState(blank);
   const [issue, setIssue] = useState(blankIssue);
   const [confirmCancel, setConfirmCancel] = useState<any>(null);
+  const [cancel, setCancel] = useState({ quantity: '', date: today(), reason: '' });
   const [documentsFor, setDocumentsFor] = useState<any>(null);
   const [exercising, setExercising] = useState<any>(null);
   const [exercise, setExercise] = useState({ quantity: '', exerciseDate: today(), method: 'CASH', notes: '' });
@@ -177,10 +178,13 @@ export default function Grants() {
       vestingStartDate: a.vestingStartDate, vestingScheduleId: a.vestingScheduleId,
       expirationDate: a.expirationDate ?? '', ptepMonths: String(a.ptepMonths),
       earlyExerciseAllowed: !!a.earlyExerciseAllowed, boardApprovalDate: a.boardApprovalDate ?? '',
-      fmvAtGrant: String(a.fmvAtGrant / 1e6), notes: a.notes ?? '', effectiveDate: a.grantDate,
+      fmvAtGrant: String(a.fmvAtGrant / 1e6), notes: a.notes ?? '', effectiveDate: a.grantDate, reason: '',
     });
     setEditing(a);
   };
+  /** An issued grant whose holder, plan or grant date is being changed: a correction that needs a reason. */
+  const retyped = !!editing?.id && !IN_FLIGHT.has(editing.status)
+    && (form.stakeholderId !== editing.stakeholderId || form.poolId !== editing.poolId || form.grantDate !== editing.grantDate);
 
   const save = async () => {
     const payload = {
@@ -195,7 +199,7 @@ export default function Grants() {
     };
     if (editing?.id) {
       // A changed share count is a correction, dated in the ledger (docs/design/dated-ledger.md).
-      const ok = await crud.update(editing.id, { ...payload, boardApprovalDate: form.boardApprovalDate || null, status: editing.status ?? 'OUTSTANDING', effectiveDate: form.effectiveDate || form.grantDate }, 'Grant updated');
+      const ok = await crud.update(editing.id, { ...payload, boardApprovalDate: form.boardApprovalDate || null, status: editing.status ?? 'OUTSTANDING', effectiveDate: form.effectiveDate || form.grantDate, reason: form.reason || undefined }, 'Grant updated');
       if (ok) { setEditing(null); reloadPools(); }
       return;
     }
@@ -278,7 +282,9 @@ export default function Grants() {
   const doCancel = async () => {
     setBusy(true);
     try {
-      await api(`/c/${companyId}/awards/${confirmCancel.id}/cancel`, { body: { reason: 'Cancelled' } });
+      await api(`/c/${companyId}/awards/${confirmCancel.id}/cancel`, {
+        body: { quantity: parseShares(cancel.quantity), date: cancel.date, reason: cancel.reason || 'Cancelled' },
+      });
       toast('Grant cancelled');
       setConfirmCancel(null);
       crud.reload();
@@ -458,7 +464,7 @@ export default function Grants() {
                           ...(canEdit && pending
                             ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(a) }] : []),
                           ...(canEdit && !pending && a.status === 'OUTSTANDING'
-                            ? [{ label: 'Cancel the grant', icon: 'trash' as const, danger: true, onClick: () => setConfirmCancel(a) }] : []),
+                            ? [{ label: 'Cancel the grant', icon: 'trash' as const, danger: true, onClick: () => { setCancel({ quantity: String(outstandingOf(a)), date: today(), reason: '' }); setConfirmCancel(a); } }] : []),
                         ]} />
                       </span>
                     </TD>
@@ -513,6 +519,11 @@ export default function Grants() {
           {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
             <Field label="Correct from" hint="The ledger dates the change. Keep the grant date if the old count was always wrong.">
               <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            </Field>
+          )}
+          {retyped && (
+            <Field label="Reason for the correction" required hint="A changed holder, plan or grant date says the record was always wrong, on every date.">
+              <Input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Entered against the wrong holder" required />
             </Field>
           )}
           {!settlesForFree && (
@@ -729,10 +740,18 @@ export default function Grants() {
         message={<>Withdraw <strong>{withdrawing?.label ?? 'this grant'}</strong> before it is issued? Its agreement, signature requests and any pending board consent are removed; nothing was ever outstanding.</>}
         onConfirm={() => void withdraw()} />
 
-      <ConfirmDialog open={!!confirmCancel} onClose={() => setConfirmCancel(null)} danger loading={busy}
-        title="Cancel grant" confirmLabel="Cancel grant"
-        message={<>Cancel the outstanding balance of <strong>{confirmCancel?.label ?? 'this grant'}</strong>? The shares return to the plan reserve if the plan allows it.</>}
-        onConfirm={doCancel} />
+      <FormModal open={!!confirmCancel} onClose={() => setConfirmCancel(null)} busy={busy} title="Cancel options" submitLabel="Record cancellation" onSubmit={doCancel}
+        description="Cancels options under the grant as of a date. The ledger records the cancellation, so views of earlier dates still show the options. They return to the plan reserve if the plan allows it.">
+        {confirmCancel && (
+          <FormGrid>
+            <Field label="Options to cancel" required hint={`${shares(outstandingOf(confirmCancel))} outstanding under ${confirmCancel.label ?? 'this grant'}. Fewer leaves the rest outstanding.`}>
+              <Input value={cancel.quantity} onChange={(e) => setCancel({ ...cancel, quantity: e.target.value })} required />
+            </Field>
+            <Field label="Cancellation date" required><Input type="date" value={cancel.date} onChange={(e) => setCancel({ ...cancel, date: e.target.value })} required /></Field>
+            <Field label="Reason"><Input value={cancel.reason} onChange={(e) => setCancel({ ...cancel, reason: e.target.value })} placeholder="Unvested options forfeited on departure" /></Field>
+          </FormGrid>
+        )}
+      </FormModal>
       <PdfViewer open={!!reading} onClose={() => setReading(null)} title={reading?.name ?? 'Document'}
         description={reading ? categoryLabel(reading.category) : undefined}
         path={reading && companyId ? readableDocumentPath(companyId, reading) : null}

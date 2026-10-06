@@ -162,7 +162,7 @@ export function StatusBadge({ status }: { status: string }) {
     PENDING: 'warning', PENDING_APPROVAL: 'warning', AWAITING_SIGNATURE: 'warning', PENDING_SIGNATURE: 'warning', DRAFT: 'neutral',
     OPEN: 'warning', EXPIRED: 'danger', CANCELLED: 'danger', REJECTED: 'danger', FORFEITED: 'danger',
     REPURCHASED: 'neutral', TRANSFERRED: 'neutral', SUPERSEDED: 'neutral', EXERCISED: 'info',
-    REPAID: 'neutral', DONE: 'success', REQUESTED: 'info', IN_PROGRESS: 'info', DELIVERED: 'success',
+    REPAID: 'neutral', VOID: 'danger', DONE: 'success', REQUESTED: 'info', IN_PROGRESS: 'info', DELIVERED: 'success',
   };
   const label = status.replace(/_/g, ' ').toLowerCase();
   return <Badge tone={map[status] ?? 'neutral'} className="capitalize">{label}</Badge>;
