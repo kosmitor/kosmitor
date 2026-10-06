@@ -1,6 +1,6 @@
 import type { CompanyData, Cents, ISODate, PricePerShare, ShareClass, Convertible } from './types.ts';
 import { computeCapTable } from './captable.ts';
-import { convertAll, conversionAmount, resolveMFNs, solvePostMoneySafes, termsOf, ownTerms, type ConversionResult, type ConversionTerms } from './convertibles.ts';
+import { convertAll, conversionAmount, electedTerms, mfnElections, solvePostMoneySafes, termsOf, type ConversionResult } from './convertibles.ts';
 import { normalizeSplits } from './splits.ts';
 import { sharesForAmount, ppsForAmount, roundShares, floorShares, shareValue, pct } from './util.ts';
 import { MICRO, CENTS } from './types.ts';
@@ -102,11 +102,10 @@ export interface RoundModelResult {
  * result where the new pool and the converting instruments come out of the
  * pre-money valuation.
  *
- * Each MFN instrument converts on the terms that give it the most shares in this
- * round (resolveMFNs), found by solving the round once per candidate; `mfnTerms`
- * is set only by those trial solves.
+ * An MFN instrument converts on the terms it elected on or before the close
+ * (electedTerms), or on its own.
  */
-export function modelRound(data: CompanyData, input: RoundModelInput, mfnTerms?: Map<string, ConversionTerms>): RoundModelResult {
+export function modelRound(data: CompanyData, input: RoundModelInput): RoundModelResult {
   const warnings: string[] = [];
   const asOf = input.closeDate;
   if ((input.preMoney == null) === (input.postMoney == null)) throw new RangeError('Supply exactly one pre-money or post-money valuation.');
@@ -148,13 +147,7 @@ export function modelRound(data: CompanyData, input: RoundModelInput, mfnTerms?:
 
   // Post-money SAFEs (by their own terms or an MFN's) are solved together on
   // Company Capitalization; everything else prices on its own.
-  // A candidate no price solves gives its holder nothing.
-  const terms = mfnTerms ?? resolveMFNs(convertibles, data.convertibles, asOf, (id, t) => {
-    try { return modelRound(data, input, t).conversions.find((c) => c.convertibleId === id)?.shares ?? 0; } catch (e) {
-      if (e instanceof RangeError) return -1;
-      throw e;
-    }
-  });
+  const terms = electedTerms(data, asOf);
   const isPostMoney = (c: Convertible): boolean => termsOf(c, terms).instrument === 'SAFE_POST';
   const preMoneyInstruments = convertibles.filter((c) => !isPostMoney(c));
   const postMoneySafes = convertibles.filter(isPostMoney);
@@ -249,7 +242,7 @@ export function modelRound(data: CompanyData, input: RoundModelInput, mfnTerms?:
         : (input.targetPoolPct * (1 + raised)) / (1 - input.targetPoolPct);
     let postCapped = 0, preCapped = 0, atRoundPrice = 0;
     for (const c of conversions) {
-      const { cap, instrument } = terms.get(c.convertibleId)!;
+      const { cap, instrument } = termsOf(convertibles.find((x) => x.id === c.convertibleId)!, terms);
       if (c.method !== 'CAP' && c.method !== 'MFN_CAP') atRoundPrice += (c.amount * pps) / (c.conversionPrice * preMoney);
       else if (!cap) continue;
       else if (instrument === 'SAFE_POST') postCapped += c.amount / cap;
@@ -474,19 +467,24 @@ export function modelConvertibleStack(input: CompanyData, asOf: ISODate) {
   const live = data.convertibles.filter((c) => c.status === 'OUTSTANDING' && c.issueDate <= asOf);
   const totalPrincipal = live.reduce((s, c) => s + c.principal, 0);
   const totalWithInterest = live.reduce((s, c) => s + conversionAmount(c, asOf), 0);
-  // An MFN instrument shows the terms the as-converted cap table estimates it
-  // on; with no shares yet there is no estimate and it shows its own.
-  const mfnTerms = live.some((c) => c.mfn) && table.totals.fullyDiluted > 0
-    ? computeCapTable(data, { asOf, includeConvertibles: true }).mfnTerms : {};
+  // An MFN instrument shows the terms it elected, or its own and the candidate
+  // the as-converted cap table suggests; with no shares yet there is no suggestion.
+  const elections = mfnElections(data, asOf);
+  const terms = electedTerms(data, asOf);
+  const suggestions = live.some((c) => c.mfn && !elections.has(c.id)) && table.totals.fullyDiluted > 0
+    ? computeCapTable(data, { asOf, includeConvertibles: true }).mfnSuggestions : {};
   const impliedOwnership = live.map((c) => {
     const amount = conversionAmount(c, asOf);
-    const t = mfnTerms[c.id] ?? ownTerms(c);
+    const t = termsOf(c, terms);
     const own = t.instrument === 'SAFE_POST' && t.cap ? amount / t.cap : null;
     return {
       id: c.id, stakeholderId: c.stakeholderId, instrument: c.instrument,
       principal: c.principal, amount, cap: t.cap, discount: t.discount,
       impliedOwnershipPct: own,
       matured: c.maturityDate != null && c.maturityDate <= asOf,
+      mfn: c.mfn,
+      mfnElection: elections.get(c.id) ?? null,
+      mfnSuggestion: suggestions[c.id] ?? null,
     };
   });
   return {

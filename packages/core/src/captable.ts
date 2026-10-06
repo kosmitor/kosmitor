@@ -3,7 +3,7 @@ import type {
 } from './types.ts';
 import { summarizeVesting } from './vesting.ts';
 import { normalizeSplits } from './splits.ts';
-import { conversionAmount, resolveMFNs, solvePostMoneySafes, termsOf, type ConversionTerms } from './convertibles.ts';
+import { conversionAmount, electedTerms, suggestMFNs, solvePostMoneySafes, termsOf, type ConversionTerms, type MFNSuggestion } from './convertibles.ts';
 import { isTransferIssuance } from './valuation-refresh.ts';
 import { roundShares, floorShares, pct, shareValue, sharesForAmount, today, onOrBefore, addMonths } from './util.ts';
 import { enginePolicy } from './policy.ts';
@@ -129,8 +129,8 @@ export interface CapTable {
   totals: CapTableTotals;
   /** Set when convertibles are included and at least one has no cap; see ConversionPriceAssumption. */
   uncappedConversionPrice: ConversionPriceAssumption | null;
-  /** The terms each outstanding MFN instrument is estimated on, when convertibles are included (resolveMFNs). */
-  mfnTerms: Record<string, ConversionTerms>;
+  /** For each outstanding MFN instrument with no election on asOf, the candidate that would give it the most shares here, when convertibles are included (suggestMFNs). */
+  mfnSuggestions: Record<string, MFNSuggestion>;
   /** Warnings the UI surfaces, e.g. over-issuance against authorized shares. */
   warnings: string[];
 }
@@ -445,17 +445,18 @@ export function computeCapTable(input: CompanyData, opts: CapTableOptions = {}):
   // capitalization that includes the others and every other converting
   // security (YC Post-Money Safe User Guide §C.1, Appendix II Example 2).
   let uncappedConversionPrice: ConversionPriceAssumption | null = null;
-  const mfnTerms: Record<string, ConversionTerms> = {};
+  const mfnSuggestions: Record<string, MFNSuggestion> = {};
   const liveConvertibles = data.convertibles.filter((c) => c.issueDate <= asOf && c.status === 'OUTSTANDING');
   for (const c of liveConvertibles) rowFor(c.stakeholderId).convertiblePrincipal += c.principal;
   if (includeConv && liveConvertibles.length > 0) {
     // That capitalization includes the unissued pool whether or not the table
     // shows it (guide §C.1), so the toggle cannot change an estimate.
     const base = sumFullyDiluted(rowById, data, asOf);
-    // An MFN holder that adopts a later instrument's terms becomes that
+    // An MFN holder that elected a later instrument's terms becomes that
     // instrument, base and all (YC Safe User Guide App. I.3), so each one is
-    // estimated or solved by the terms it ends up with: those that give it the
-    // most shares here (resolveMFNs).
+    // estimated or solved by the terms in force on asOf (electedTerms). One that
+    // has not elected is on its own, and the table suggests the candidate that
+    // would give it the most shares here (suggestMFNs).
     const estimate = (terms: Map<string, ConversionTerms>) => {
       const postMoneyCapped = (c: Convertible): boolean => { const t = termsOf(c, terms); return t.instrument === 'SAFE_POST' && t.cap != null; };
       const shares = new Map<string, number>();
@@ -481,13 +482,10 @@ export function computeCapTable(input: CompanyData, opts: CapTableOptions = {}):
       for (const [id, n] of postMoney) shares.set(id, n);
       return { shares, uncapped };
     };
-    // An uncapped estimate at the price common is valued at is the table's
-    // assumption, not a conversion the terms give, so it counts for nothing here.
-    const terms = resolveMFNs(liveConvertibles, data.convertibles, asOf, (id, t) => {
-      const e = estimate(t);
-      return e.uncapped.includes(id) ? 0 : e.shares.get(id) ?? 0;
-    });
+    const terms = electedTerms(data, asOf);
     const { shares, uncapped } = estimate(terms);
+    const suggestions = suggestMFNs(liveConvertibles, data.convertibles, asOf, terms, (id, t) => estimate(t).shares.get(id) ?? 0);
+    for (const [id, s] of suggestions) mfnSuggestions[id] = { ...s, shares: roundShares(s.shares) };
     if (uncapped.length) {
       uncappedConversionPrice = {
         pricePerShare: valuationPPS, source: valuation?.type ?? 'GIVEN',
@@ -495,7 +493,6 @@ export function computeCapTable(input: CompanyData, opts: CapTableOptions = {}):
       };
     }
     for (const c of liveConvertibles) {
-      if (c.mfn) mfnTerms[c.id] = termsOf(c, terms);
       const row = rowFor(c.stakeholderId);
       row.convertibleAsConverted = roundShares(row.convertibleAsConverted + (shares.get(c.id) ?? 0));
     }
@@ -576,7 +573,7 @@ export function computeCapTable(input: CompanyData, opts: CapTableOptions = {}):
       };
     });
 
-  return { asOf, rows, classes, pools, totals, uncappedConversionPrice, mfnTerms, warnings };
+  return { asOf, rows, classes, pools, totals, uncappedConversionPrice, mfnSuggestions, warnings };
 }
 
 function sum<T>(items: T[], f: (t: T) => number): number {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { convertOne, accruedInterest, solvePostMoneySafes } from '../src/convertibles.ts';
+import { convertOne, accruedInterest, solvePostMoneySafes, ownTerms } from '../src/convertibles.ts';
 import type { Convertible } from '../src/types.ts';
 import { dollarsToCents as $, dollarsToPPS as $$, ppsToDollars } from '../src/util.ts';
 
@@ -67,10 +67,11 @@ test('an uncapped undiscounted SAFE converts at the round price', () => {
   assert.equal(r.shares, 500_000);
 });
 
-test('MFN adopts the better terms of a later instrument', () => {
+test('An MFN that elected a later instrument converts on its terms; without the election, on its own', () => {
   const early = safe({ id: 'early', valuationCap: null, discount: 0, mfn: true, issueDate: '2023-01-01' });
   const later = safe({ id: 'later', valuationCap: $(6_000_000), discount: 0.25, issueDate: '2023-09-01' });
-  const r = convertOne(early, { ...ctx, allConvertibles: [early, later] });
+  assert.equal(convertOne(early, ctx).method, 'NO_CAP_NO_DISCOUNT');
+  const r = convertOne(early, { ...ctx, terms: new Map([['early', ownTerms(later)]]) });
   assert.equal(r.method, 'MFN_CAP');
   // Post-money SAFE, so the adopted $6M cap prices against the 10M post-money base.
   assert.equal(ppsToDollars(r.conversionPrice), 0.6);

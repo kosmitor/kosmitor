@@ -26,8 +26,8 @@ export interface WaterfallSpec {
     divRate?: number; divType?: DividendType; divCompound?: boolean; issueDate?: string; convertible?: boolean;
   }[];
   options?: { holder: string; shares: number; strike: number; type?: AwardType }[];
-  /** `mfn` adopts the terms of one safe issued on or after it (issueDate, default 2022-01-01); see refModel. */
-  safes?: { id: string; holder: string; amount: number; cap: number | null; instrument?: ConvertibleInstrument; mfn?: boolean; issueDate?: string }[];
+  /** An `mfn` safe that `adopts` a safe issued on or after it (issueDate, default 2022-01-01) takes its terms from `electedOn`; see electedSafes. */
+  safes?: { id: string; holder: string; amount: number; cap: number | null; instrument?: ConvertibleInstrument; mfn?: boolean; issueDate?: string; adopts?: string; electedOn?: string }[];
   warrants?: { holder: string; shares: number; strike: number }[];
 }
 
@@ -77,28 +77,43 @@ export function refModel(spec: WaterfallSpec): RefModel {
   const options = (spec.options ?? []).map((o) => ({ n: o.shares, K: o.strike }));
   const optionShares = options.reduce((s, o) => s + o.n, 0);
   const prefShares = prefs.reduce((s, p) => s + p.shares, 0);
-  // YC Safe (MFN), "MFN Amendment Provision": the holder may have its safe amended "to be identical to"
-  // a Subsequent Convertible Security whose terms it prefers, so it takes that safe's cap and pre- or
-  // post-money basis whole. By brute force: try every safe issued on or after it (a same-day one counts)
-  // and keep the one under which it converts into the most shares when every capped safe converts; a tie
-  // keeps its own terms. MFN safes are settled latest first, and a later one is offered as amended.
-  const all = (spec.safes ?? []).map((s) => ({ ...s }));
-  const day = (s: (typeof all)[number]) => s.issueDate ?? '2022-01-01';
   const base = common + optionShares + prefShares;
-  const capped = (list: typeof all) => list.filter((s) => s.cap != null).map((s) => ({ id: s.id, amount: s.amount, cap: s.cap!, instrument: s.instrument }));
-  const order = all.map((_, i) => i).filter((i) => all[i].mfn).sort((i, j) => day(all[j]).localeCompare(day(all[i])) || j - i);
-  for (const i of order) {
-    const me = all[i];
-    const sharesAs = (o: typeof me) => refSafeShares(capped(all.map((s) => (s === me ? { ...s, cap: o.cap, instrument: o.instrument } : s))), base)[me.id] ?? 0;
-    let best = me, most = sharesAs(me);
-    for (const o of all) {
-      if (o === me || day(o) < day(me)) continue;
-      const n = sharesAs(o);
-      if (n > most) { most = n; best = o; }
-    }
-    all[i] = { ...me, cap: best.cap, instrument: best.instrument };
+  return { common, prefs, options, safes: capped(electedSafes(spec)), liqBase: () => base };
+}
+
+type SpecSafe = NonNullable<WaterfallSpec['safes']>[number];
+const capped = (list: SpecSafe[]) => list.filter((s) => s.cap != null).map((s) => ({ id: s.id, amount: s.amount, cap: s.cap!, instrument: s.instrument }));
+
+/**
+ * YC Safe (MFN), "MFN Amendment Provision": a holder that elected a Subsequent Convertible
+ * Security has its safe amended "to be identical to" it, so it takes that safe's cap and pre- or
+ * post-money basis whole and keeps its own amount. Every election is taken to precede the exit.
+ */
+function electedSafes(spec: WaterfallSpec): SpecSafe[] {
+  const all = spec.safes ?? [];
+  return all.map((s) => {
+    const o = s.adopts == null ? null : all.find((x) => x.id === s.adopts)!;
+    return o ? { ...s, cap: o.cap, instrument: o.instrument } : s;
+  });
+}
+
+/**
+ * The safe an unelected MFN safe `id` would do best to adopt, by brute force: each safe issued on
+ * or after it (a same-day one counts) and on or before `asOf` is tried in turn, with every capped
+ * safe converting on common, options and preferred. The most shares wins; a tie, the earlier listed.
+ */
+export function refSuggestMFN(spec: WaterfallSpec, id: string, asOf: string): { adoptedId: string; shares: number } | null {
+  const day = (s: SpecSafe) => s.issueDate ?? '2022-01-01';
+  const base = refModel(spec).liqBase!(new Set());
+  const all = electedSafes(spec);
+  const me = all.find((s) => s.id === id)!;
+  let best: { adoptedId: string; shares: number } | null = null;
+  for (const o of all) {
+    if (o === me || day(o) < day(me) || day(o) > asOf) continue;
+    const n = refSafeShares(capped(all.map((s) => (s === me ? { ...s, cap: o.cap, instrument: o.instrument } : s))), base)[id] ?? 0;
+    if (!best || n > best.shares) best = { adoptedId: o.id, shares: n };
   }
-  return { common, prefs, options, safes: capped(all), liqBase: () => base };
+  return best;
 }
 
 /**
