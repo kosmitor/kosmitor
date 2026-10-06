@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { modelRound, modelConvertibleStack, computeAntiDilution, type RoundModelInput } from '../src/round.ts';
-import { solvePostMoneySafes, convertOne, accruedInterest, resolveMFN } from '../src/convertibles.ts';
+import { solvePostMoneySafes, convertOne, accruedInterest } from '../src/convertibles.ts';
 import { computeCapTable } from '../src/captable.ts';
 import { computeWaterfall } from '../src/waterfall.ts';
 import { ppsToDollars, sharesForAmount, dollarsToCents as $, dollarsToPPS as $$ } from '../src/util.ts';
@@ -480,9 +480,9 @@ const mfnCompany = (...safes: ReturnType<typeof convertible>[]) => company({
   issuances: [issuance('f', 'common', 10_000_000, $$(0.0001), '2020-01-01')],
   convertibles: safes,
 });
-const mfnRound = (d: CompanyData, preMoney: number, closeDate: string) => modelRound(d, {
+const mfnRound = (d: CompanyData, preMoney: number, closeDate: string, targetPoolPct = 0) => modelRound(d, {
   name: 'Series A', closeDate, preMoney: $(preMoney), investors: [{ stakeholderId: null, name: 'Lead', amount: $(5_000_000) }],
-  targetPoolPct: 0, poolFromPreMoney: true, convertConvertibles: true,
+  targetPoolPct, poolFromPreMoney: true, convertConvertibles: true,
 });
 
 test('YC MFN Amendment Provision: the best cap and the best discount sit on two later safes; the MFN adopts one of them whole', () => {
@@ -498,7 +498,6 @@ test('YC MFN Amendment Provision: the best cap and the best discount sit on two 
   const a = convertible('a', 'SAFE_PRE', 1_000_000, 8_000_000, { id: 'A', issueDate: '2022-03-01' });
   const b = convertible('b', 'SAFE_PRE', 1_000_000, 20_000_000, { id: 'B', discount: 0.2, issueDate: '2022-06-01' });
   const d = mfnCompany(mfn, a, b);
-  assert.deepEqual(resolveMFN(mfn, d.convertibles, '2023-01-01', $(30_000_000)), { cap: $(8_000_000), discount: 0, instrument: 'SAFE_PRE' });
   const r = mfnRound(d, 30_000_000, '2023-01-01');
   const m = r.conversions.find((c) => c.convertibleId === 'mfn')!;
   assert.equal(m.discountPrice, null);
@@ -510,12 +509,20 @@ test('YC MFN Amendment Provision: the best cap and the best discount sit on two 
 });
 
 test('YC MFN Amendment Provision: when the discount is worth more, the MFN adopts the discounted safe whole, cap included', () => {
-  // Same safes, a $9M pre-money. A = min($8M, $9M) = $8M; B = min($20M, $9M x 0.8 = $7.2M) = $7.2M. B wins:
-  // the MFN takes B's $20M cap and 20% discount and drops A's $8M cap.
-  const mfn = convertible('m', 'SAFE_PRE', 1_000_000, null, { id: 'mfn', mfn: true, issueDate: '2022-01-01' });
-  const all = [mfn, convertible('a', 'SAFE_PRE', 1_000_000, 8_000_000, { issueDate: '2022-03-01' }),
-    convertible('b', 'SAFE_POST', 1_000_000, 20_000_000, { discount: 0.2, issueDate: '2022-06-01' })];
-  assert.deepEqual(resolveMFN(mfn, all, '2023-01-01', $(9_000_000)), { cap: $(20_000_000), discount: 0.2, instrument: 'SAFE_POST' });
+  // Same safes but B post-money, a $9M pre-money, $5M raised. No cap binds (A's $8M / 10M = $0.80 is above
+  // the price), so A converts at p and B at 0.8p: shares = $1M / p each at p, $1.25M / p each at 0.8p.
+  //  - As A: p x 10M + $1M + $1M + $1.25M = $9M, p = $0.575, MFN = $1M / $0.575 = 1,739,130.
+  //  - As B: p x 10M + $1M + $1.25M + $1.25M = $9M, p = $0.55, MFN = $1M / $0.44 = 2,272,727.
+  // B gives more: the MFN takes B's $20M cap and 20% discount and drops A's $8M cap.
+  const r = mfnRound(mfnCompany(
+    convertible('m', 'SAFE_PRE', 1_000_000, null, { id: 'mfn', mfn: true, issueDate: '2022-01-01' }),
+    convertible('a', 'SAFE_PRE', 1_000_000, 8_000_000, { id: 'A', issueDate: '2022-03-01' }),
+    convertible('b', 'SAFE_POST', 1_000_000, 20_000_000, { id: 'B', discount: 0.2, issueDate: '2022-06-01' }),
+  ), 9_000_000, '2023-01-01');
+  const m = r.conversions.find((c) => c.convertibleId === 'mfn')!;
+  assert.equal(m.method, 'MFN_DISCOUNT');
+  near(m.shares, 2_272_727, 1, 'MFN');
+  near(ppsToDollars(r.pricePerShare), 0.55, 1e-6, 'price');
 });
 
 test('YC MFN Amendment Provision: a safe issued after the round is not a Subsequent Convertible Security the MFN can adopt', () => {
@@ -564,6 +571,85 @@ test('One MFN resolution: the cap table, modelRound and the waterfall give an MF
     const stack = modelConvertibleStack(d, '2025-01-01').instruments.find((i) => i.id === 'mfn')!;
     assert.deepEqual([stack.cap, stack.impliedOwnershipPct], [$(k.cap), k.later === 'SAFE_POST' ? 0.1 : null], `${what}: bridge`);
   }
+});
+
+/** The MFN holder's shares in each view: cap table, modelRound and the waterfall (notes convert). */
+const mfnViews = (d: CompanyData, id: string, holderId: string, preMoney: number, asOf: string, targetPoolPct = 0) => ({
+  table: computeCapTable(d, { asOf, includeConvertibles: true }).rows.find((x) => x.stakeholderId === holderId)!.convertibleAsConverted,
+  round: sharesOf(mfnRound(d, preMoney, asOf, targetPoolPct), id),
+  waterfall: computeWaterfall(d, $(100_000_000), { asOf, repayNotesAsDebt: false }).classPayouts.find((c) => c.shareClassId === id)!.asConvertedShares,
+});
+
+test('YC MFN: the holder adopts the later safe that gives it the most shares, not the lowest cap', () => {
+  // 10,000,000 common, no pool. MFN $1M uncapped (Jan 2022); X $1M pre-money at $10M (Mar 2022); Y $1M
+  // post-money at $9.9M (Jun 2022). $30M pre-money, $5M raised, 30% post-round pool; caps bind (price ~$1.29).
+  // Pool I = 0.3 x (T + I + new) with new = $5M / p = (T + I) / 6, so I = 0.35 (T + I) = 0.538462 T.
+  //  - As X: MFN = X = $1M x (10M + I) / $10M = 0.1 (10M + I). Y owns 1/9.9 of T = 10M + 0.2 (10M + I) + Y:
+  //    T = (12M + 0.2 I) x 9.9 / 8.9 = 13,348,315 + 0.222472 I, I = 8,165,748, MFN = 0.1 x 18,165,748 = 1,816,575.
+  //  - As Y: MFN and Y own 1/9.9 of T each, T = (10M + 0.1 (10M + I)) x 9.9 / 7.9 = 13,784,810 + 0.125316 I,
+  //    I = 7,959,695, T = 14,782,281, MFN = T / 9.9 = 1,493,160.
+  // X gives more, so in the round the MFN is X. Ranking by the lower cap took Y's $9.9M.
+  const d = mfnCompany(
+    convertible('m', 'SAFE_PRE', 1_000_000, null, { id: 'mfn', mfn: true, issueDate: '2022-01-01' }),
+    convertible('x', 'SAFE_PRE', 1_000_000, 10_000_000, { id: 'X', issueDate: '2022-03-01' }),
+    convertible('y', 'SAFE_POST', 1_000_000, 9_900_000, { id: 'Y', issueDate: '2022-06-01' }),
+  );
+  const r = mfnRound(d, 30_000_000, '2023-01-01', 0.3);
+  near(r.poolIncrease, 8_165_748, 3, 'pool');
+  near(sharesOf(r, 'mfn'), 1_816_575, 3, 'MFN');
+  near(sharesOf(r, 'X'), 1_816_575, 3, 'X');
+  // The cap table has no round: base 10,000,000, X = 1,000,000. As X the MFN gets 1,000,000; as Y,
+  // T = (10M + 1M) x 9.9 / 7.9 = 13,924,051 and the MFN gets T / 9.9 = 1,392,405. There Y gives more.
+  near(mfnViews(d, 'mfn', 'm', 30_000_000, '2023-01-01').table, 1_392_405, 1, 'cap table');
+});
+
+test('An MFN note that adopts a post-money safe converts principal plus interest on the safe terms, in every view', () => {
+  // Note $1M at 8% simple, MFN, no cap (1 Jan 2022); safe $1M post-money at $10M (1 Jun 2022). On 1 Jan 2025
+  // the interest is $1M x 8% x 3 = $240,000, so the note converts $1,240,000 and owns 12.4% of Company
+  // Capitalization: T = 10,000,000 / (1 - 0.124 - 0.1) = 12,886,598, note = 0.124 T = 1,597,938.
+  // The round ($50M pre-money, price ~$3.88) is far above the cap price ($10M / T = $0.78).
+  // Before the fix the waterfall converted the principal alone: T = 12,500,000, note 1,250,000.
+  const d = mfnCompany(
+    convertible('n', 'NOTE', 1_000_000, null, { id: 'note', mfn: true, interestRate: 0.08, issueDate: '2022-01-01' }),
+    convertible('s', 'SAFE_POST', 1_000_000, 10_000_000, { id: 'S', issueDate: '2022-06-01' }),
+  );
+  const v = mfnViews(d, 'note', 'n', 50_000_000, '2025-01-01');
+  near(v.table, 1_597_938, 1, 'cap table');
+  near(v.round, 1_597_938, 1, 'modelRound');
+  near(v.waterfall, 1_597_938, 1, 'waterfall');
+});
+
+test('YC MFN: a safe issued the same day as the MFN safe counts as a Subsequent Convertible Security', () => {
+  // A Convertible carries no creation time and the store orders them by issue date alone, so a same-day
+  // safe cannot be placed before or after the MFN; it is included. MFN $1M uncapped and L $1M pre-money
+  // at $5M, both 1 Jan 2022: the MFN is L, $1M x 10,000,000 / $5M = 2,000,000 shares in every view
+  // (round $50M pre-money: price $50M / 14M = $3.57, above the $0.50 cap price).
+  const d = mfnCompany(
+    convertible('m', 'SAFE_PRE', 1_000_000, null, { id: 'mfn', mfn: true, issueDate: '2022-01-01' }),
+    convertible('l', 'SAFE_PRE', 1_000_000, 5_000_000, { id: 'L', issueDate: '2022-01-01' }),
+  );
+  const v = mfnViews(d, 'mfn', 'm', 50_000_000, '2025-01-01');
+  near(v.table, 2_000_000, 1, 'cap table');
+  near(v.round, 2_000_000, 1, 'modelRound');
+  near(v.waterfall, 2_000_000, 1, 'waterfall');
+});
+
+test('YC MFN: a later MFN safe is offered on the terms it adopted, not on its own', () => {
+  // 10,000,000 common. M1 $1M MFN uncapped (Jan 2022); M2 $1M MFN post-money at $7.5M (Mar 2022);
+  // L $1M pre-money at $5M (Jun 2022). M2 resolves first: on its own terms it owns 1/7.5 of
+  // 10M + L's 2,000,000 + itself, 12M / 6.5 = 1,846,153; as L, $1M x 10M / $5M = 2,000,000. So M2 is L.
+  // M1 then chooses between L and the amended M2, both L's terms: 2,000,000. Offered M2's own terms
+  // it would have taken them: (10M + 2M + 2M) / 6.5 = 2,153,846.
+  const d = mfnCompany(
+    convertible('m1', 'SAFE_PRE', 1_000_000, null, { id: 'M1', mfn: true, issueDate: '2022-01-01' }),
+    convertible('m2', 'SAFE_POST', 1_000_000, 7_500_000, { id: 'M2', mfn: true, issueDate: '2022-03-01' }),
+    convertible('l', 'SAFE_PRE', 1_000_000, 5_000_000, { id: 'L', issueDate: '2022-06-01' }),
+  );
+  const t = computeCapTable(d, { asOf: '2023-01-01', includeConvertibles: true });
+  const row = (id: string) => t.rows.find((x) => x.stakeholderId === id)!.convertibleAsConverted;
+  assert.deepEqual([row('m1'), row('m2'), row('l')], [2_000_000, 2_000_000, 2_000_000]);
+  const w = computeWaterfall(d, $(100_000_000), { asOf: '2023-01-01' });
+  assert.equal(w.classPayouts.find((c) => c.shareClassId === 'M1')!.asConvertedShares, 2_000_000);
 });
 
 test('Seeded rounds with an MFN safe: modelRound agrees with the independent reference (300 tables)', () => {

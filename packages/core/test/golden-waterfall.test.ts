@@ -442,6 +442,24 @@ test('YC MFN safe: a safe issued after the sale is not one the MFN can adopt', (
   near(paid(w, 'M').total, 833_333_333, 2, 'MFN');
 });
 
+test('YC MFN safe in a $100M sale: the MFN adopts the later safe that gives it the most shares, $5.5M post-money over $5M pre-money', () => {
+  // 10,000,000 common; MFN $1M uncapped (Jan 2022), X $1M pre-money at $5M (Mar 2022), Y $1M post-money at $5.5M (Jun 2022).
+  // X converts on the 10,000,000 base: $1M x 10M / $5M = 2,000,000.
+  //  - As X: MFN 2,000,000; Y owns 1/5.5 of (10M + 4M) / (1 - 1/5.5) = 17,111,111, so 3,111,111. MFN $100M x 2 / 17.11 = $11.69M.
+  //  - As Y: MFN and Y own 1/5.5 each of (10M + 2M) / (1 - 2/5.5) = 18,857,142.9, so 3,428,571 each.
+  // Y gives more. 18,857,142 shares share $100M: MFN and Y $100M x 3,428,571 / 18,857,142 = $18,181,816.74,
+  // X $10,606,061.09, common $53,030,305.44. Ranking by the lower cap took X's $5M.
+  const spec = mfnSpec('SAFE_PRE',
+    { id: 'X', holder: 'x', amount: 1_000_000, cap: 5_000_000, instrument: 'SAFE_PRE', issueDate: '2022-03-01' },
+    { id: 'Y', holder: 'y', amount: 1_000_000, cap: 5_500_000, instrument: 'SAFE_POST', issueDate: '2022-06-01' });
+  const w = run(spec, 100_000_000);
+  assert.deepEqual(['M', 'X', 'Y'].map((id) => paid(w, id).asConvertedShares), [3_428_571, 2_000_000, 3_428_571]);
+  near(paid(w, 'M').total, 1_818_181_674, 2, 'MFN');
+  near(paid(w, 'X').total, 1_060_606_109, 2, 'X');
+  near(paid(w, 'Common').total, 5_303_030_544, 2, 'common');
+  assert.equal(Math.floor(refEquilibria(100_000_000, refModel(spec))[0].safeShares.M), 3_428_571);
+});
+
 test('Seeded waterfalls with MFN safes: the engine agrees with the independent reference (80 tables)', () => {
   // randomWaterfallSpec plus an MFN safe and one to three later capped safes, pre- or post-money. Only exits
   // where the reference finds a single stable set of elections are compared.
