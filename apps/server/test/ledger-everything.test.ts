@@ -18,7 +18,7 @@ await import('../src/routes/auth.ts');
 await import('../src/routes/entities.ts');
 await import('../src/routes/analytics.ts');
 await import('../src/routes/workflows.ts');
-const { one, all } = await import('../src/db.ts');
+const { one, all, run } = await import('../src/db.ts');
 
 const api: Server = createServer((req, res) => { void handle(req, res); });
 await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));
@@ -119,9 +119,12 @@ test('a correction dated the grant date holds for every date; one across a split
 test('a lowered exercised count is a correction; a raised one is an exercise', async () => {
   const opt = await grant(10_000);
   await ok('POST', `/awards/${opt}/exercise`, { quantity: 4_000, exerciseDate: '2024-01-01', method: 'CASH' });
-  await ok('PATCH', `/awards/${opt}`, { exercisedQuantity: 3_000, effectiveDate: '2024-03-01' });
+  // As an import leaves it: 1,000 more exercised with no date and no shares issued here.
+  await run('UPDATE awards SET exercised_quantity = 5000 WHERE id = ?', opt);
+  await ok('PATCH', `/awards/${opt}`, { exercisedQuantity: 4_500, effectiveDate: '2024-03-01' });
+  await refused('PATCH', `/awards/${opt}`, { exercisedQuantity: 3_000, effectiveDate: '2024-03-01' }, /issued on exercise/i);
   const entries = (await ledgerOf(opt)).map((e) => [e.type, Number(e.quantity), e.field]);
-  assert.deepEqual(entries, [['EXERCISE', 4_000, null], ['CORRECTION', -1_000, 'exercisedQuantity']]);
+  assert.deepEqual(entries, [['EXERCISE', 4_000, null], ['CORRECTION', -500, 'exercisedQuantity']]);
 });
 
 // ---------------------------------------------------------------------------
@@ -165,7 +168,7 @@ test('a warrant is exercised through its own route: shares issued, a dated EXERC
 // ---------------------------------------------------------------------------
 
 test('a manual ledger entry is checked and refreshes the cached cap table', async () => {
-  const opt = await grant(20_000, { cancelledQuantity: 5_000 });
+  const opt = await grant(20_000);
   const elsewhere = await company('Other Co');
   const foreign = (await call('POST', `/api/c/${elsewhere}/issuances`, {
     stakeholderId: (await call('POST', `/api/c/${elsewhere}/stakeholders`, { name: 'Lior Kade', type: 'INDIVIDUAL', relation: 'OTHER' }, admin)).json.id,
@@ -173,14 +176,11 @@ test('a manual ledger entry is checked and refreshes the cached cap table', asyn
     quantity: 10, pricePerShare: 100, issueDate: '2021-01-01',
   }, admin)).json.id;
   await refused('POST', '/transactions', { type: 'GIFT', date: '2024-01-01', securityId: opt, quantity: 5_000 }, /type/i);
-  await refused('POST', '/transactions', { type: 'CANCELLATION', date: '2024-01-01', securityId: opt, quantity: -5 }, /quantity/i);
-  await refused('POST', '/transactions', { type: 'CANCELLATION', date: '2024-01-01', securityId: opt, quantity: 2.5 }, /quantity/i);
-  await refused('POST', '/transactions', { type: 'TRANSFER', date: '2024-01-01', securityId: foreign, quantity: 5 }, /company/i);
-
-  const before = (await holderAt('2023-01-01', employee)).optionsOutstanding;
-  await ok('POST', '/transactions', { type: 'CANCELLATION', date: '2024-01-01', securityId: opt, quantity: 5_000 });
-  // The cancellation is now dated 2024, so in 2023 the 5,000 were still outstanding.
-  assert.equal((await holderAt('2023-01-01', employee)).optionsOutstanding - before, 5_000);
+  await refused('POST', '/transactions', { type: 'GRANT', date: '2024-01-01', securityId: opt, quantity: -5 }, /quantity/i);
+  await refused('POST', '/transactions', { type: 'GRANT', date: '2024-01-01', securityId: opt, quantity: 2.5 }, /quantity/i);
+  await refused('POST', '/transactions', { type: 'ISSUANCE', date: '2024-01-01', securityId: foreign, quantity: 5 }, /company/i);
+  const entry = await ok('POST', '/transactions', { type: 'GRANT', date: '2021-03-01', securityId: opt, quantity: 20_000 });
+  assert.ok(await one('SELECT 1 FROM audit_log WHERE entity_id = ?', entry.id));
 });
 
 // ---------------------------------------------------------------------------
@@ -219,4 +219,145 @@ test('once anyone has signed, a document\'s body and status cannot be edited, an
   await ok('PATCH', `/documents/${doc.id}`, { name: 'Side letter (2024)' });
   assert.equal((await ok('GET', '/documents')).find((d: any) => d.id === doc.id).name, 'Side letter (2024)');
   assert.equal((await one<{ body: string }>('SELECT body FROM documents WHERE id = ?', doc.id))!.body, `${text} Amended.`);
+});
+
+// ---------------------------------------------------------------------------
+// 7. Review gaps: own dates, holders, manual entries, creation, corrections
+// ---------------------------------------------------------------------------
+
+test('a security with ledger history keeps its own date: moving it would change its shares across a split', async () => {
+  const holder = await person('Tamsin Rook');
+  const buyer = await person('Ivo Brandt');
+  const cert = (await ok('POST', '/issuances', { stakeholderId: holder, shareClassId: common, quantity: 1_000, pricePerShare: 100, issueDate: '2022-01-01' })).id;
+  // No history yet: a typo in the date can still be fixed.
+  await ok('PATCH', `/issuances/${cert}`, { issueDate: '2022-01-02' });
+  const split = (await ok('POST', '/stock-splits', { date: '2022-06-01', ratio: 2 })).id;
+  await ok('POST', `/issuances/${cert}/transfer`, { toStakeholderId: buyer, quantity: 100, date: '2022-03-01' });
+  await refused('PATCH', `/issuances/${cert}`, { issueDate: '2022-07-01' }, /ledger history/i);
+  assert.equal((await holderAt('2023-01-01', holder)).outstanding, 1_800);
+  const opt = await grant(1_000);
+  await ok('POST', `/awards/${opt}/exercise`, { quantity: 100, exerciseDate: '2022-02-01', method: 'CASH' });
+  await refused('PATCH', `/awards/${opt}`, { grantDate: '2022-07-01' }, /ledger history/i);
+  await ok('DELETE', `/stock-splits/${split}`);
+});
+
+test('a holder or class change on a security with ledger history is a transfer, not an edit', async () => {
+  const a = await person('Nell Quarry');
+  const b = await person('Otto Plume');
+  const cert = (await ok('POST', '/issuances', { stakeholderId: a, shareClassId: common, quantity: 1_000, pricePerShare: 100, issueDate: '2022-01-01' })).id;
+  await ok('PATCH', `/issuances/${cert}`, { stakeholderId: b });
+  await ok('PATCH', `/issuances/${cert}`, { stakeholderId: a });
+  await ok('POST', `/issuances/${cert}/repurchase`, { quantity: 10, date: '2022-02-01' });
+  await refused('PATCH', `/issuances/${cert}`, { stakeholderId: b }, /transfer/i);
+  const other = (await ok('POST', '/share-classes', { name: 'Class B', kind: 'COMMON', authorized: 1_000_000, issueDate: '2020-01-01' })).id;
+  await refused('PATCH', `/issuances/${cert}`, { shareClassId: other }, /ledger history/i);
+  const w = (await ok('POST', '/warrants', { stakeholderId: a, shareClassId: common, quantity: 500, strikePrice: 100, issueDate: '2021-01-01' })).id;
+  await ok('POST', `/warrants/${w}/exercise`, { quantity: 100, exerciseDate: '2022-01-01' });
+  await refused('PATCH', `/warrants/${w}`, { stakeholderId: b }, /ledger history/i);
+  assert.equal((await ok('GET', `/issuances/${cert}`)).stakeholderId, a);
+});
+
+test('a manual entry cannot be an event the engine rewinds: those come from their routes', async () => {
+  const cert = await certificate(1_000, '2022-01-01');
+  for (const type of ['TRANSFER', 'REPURCHASE', 'EXERCISE', 'CANCELLATION', 'FORFEITURE', 'EXPIRATION', 'CONVERSION', 'REPAYMENT']) {
+    await refused('POST', '/transactions', { type, date: '2024-01-01', securityId: cert, quantity: 500 }, /route|action/i);
+  }
+  // An entry with no security, or one the engine does not rewind, is still a note in the ledger.
+  await ok('POST', '/transactions', { type: 'TRANSFER', date: '2024-01-01', quantity: 500, memo: 'Secondary noted' });
+  await ok('POST', '/transactions', { type: 'ISSUANCE', date: '2022-01-01', securityId: cert, quantity: 1_000 });
+});
+
+test('a security is created in its initial state; a closed or exercised one comes from the import', async () => {
+  await refused('POST', '/issuances', { stakeholderId: founder, shareClassId: common, quantity: 10, pricePerShare: 100, issueDate: '2022-01-01', status: 'CANCELLED' }, /outstanding|import/i);
+  await refused('POST', '/warrants', { stakeholderId: lender, shareClassId: common, quantity: 10, strikePrice: 100, issueDate: '2022-01-01', status: 'EXERCISED', exercisedQuantity: 10 }, /outstanding|import/i);
+  await refused('POST', '/warrants', { stakeholderId: lender, shareClassId: common, quantity: 10, strikePrice: 100, issueDate: '2022-01-01', exercisedQuantity: 5 }, /exercise|import/i);
+  await refused('POST', '/awards', { stakeholderId: employee, poolId: plan, type: 'NSO', quantity: 10, strikePrice: 100, grantDate: '2022-01-01', vestingScheduleId: vested, cancelledQuantity: 5 }, /cancel|import/i);
+  await refused('POST', '/convertibles', { stakeholderId: lender, instrument: 'SAFE_POST', principal: 100_000, valuationCap: 1_000_000, issueDate: '2022-01-01', status: 'CONVERTED' }, /outstanding|import/i);
+  await ok('POST', '/warrants', { stakeholderId: lender, shareClassId: common, quantity: 10, strikePrice: 100, issueDate: '2022-01-01', status: 'OUTSTANDING' });
+});
+
+test('a correction keeps status and issued shares consistent', async () => {
+  const holder = await person('Fen Aldous');
+  const w = (await ok('POST', '/warrants', { stakeholderId: holder, shareClassId: common, quantity: 1_000, strikePrice: 100, issueDate: '2021-01-01' })).id;
+  await ok('POST', `/warrants/${w}/exercise`, { quantity: 1_000, exerciseDate: '2022-01-01' });
+  // The WX certificate for 1,000 shares stands, so the exercised count cannot drop below it.
+  await refused('PATCH', `/warrants/${w}`, { exercisedQuantity: 600, effectiveDate: '2022-06-01' }, /exercise/i);
+  // Raising the size reopens the warrant for what is now left.
+  const raised = await ok('PATCH', `/warrants/${w}`, { quantity: 1_200, effectiveDate: '2021-01-01' });
+  assert.equal(raised.status, 'OUTSTANDING');
+  const opt = await grant(1_000);
+  await ok('POST', `/awards/${opt}/exercise`, { quantity: 400, exerciseDate: '2022-01-01', method: 'CASH' });
+  // Lowering the size to what was exercised uses the grant up.
+  const lowered = await ok('PATCH', `/awards/${opt}`, { quantity: 400, effectiveDate: '2023-01-01' });
+  assert.equal(lowered.status, 'EXERCISED');
+  await refused('PATCH', `/awards/${opt}`, { quantity: 300, effectiveDate: '2023-01-01' }, /exercised|cancelled/i);
+});
+
+// ---------------------------------------------------------------------------
+// 8. Event routes for what an edit can no longer do
+// ---------------------------------------------------------------------------
+
+test('a certificate is cancelled through its route, dated in the ledger in the shares of the day', async () => {
+  const holder = await person('Rhea Lantos');
+  const cert = (await ok('POST', '/issuances', { stakeholderId: holder, shareClassId: common, quantity: 1_000, pricePerShare: 100, issueDate: '2022-01-01' })).id;
+  await refused('PATCH', `/issuances/${cert}`, { status: 'CANCELLED' }, /cancel/i);
+  await refused('POST', `/issuances/${cert}/cancel`, { date: '2021-12-31' }, /before/i);
+  const split = (await ok('POST', '/stock-splits', { date: '2022-06-01', ratio: 2 })).id;
+  await ok('POST', `/issuances/${cert}/cancel`, { quantity: 400, date: '2023-01-01' });
+  assert.deepEqual((await ledgerOf(cert)).map((e) => [e.type, e.date, Number(e.quantity)]), [['CANCELLATION', '2023-01-01', 800]]);
+  const closed = await ok('POST', `/issuances/${cert}/cancel`, { date: '2024-01-01' });
+  assert.equal(closed.status, 'CANCELLED');
+  await refused('POST', `/issuances/${cert}/cancel`, { date: '2024-02-01' }, /outstanding/i);
+  assert.deepEqual([(await holderAt('2022-12-31', holder)).outstanding, (await holderAt('2023-06-01', holder)).outstanding, (await holderAt('2024-06-01', holder)).outstanding ?? 0], [2_000, 1_200, 0]);
+  assert.ok(await one('SELECT 1 FROM audit_log WHERE entity_id = ? AND action = ?', cert, 'CANCEL'));
+  await ok('DELETE', `/stock-splits/${split}`);
+});
+
+test('a warrant expires or is cancelled through its route, and past views keep it', async () => {
+  const holder = await person('Sable Okonkwo');
+  const w = (await ok('POST', '/warrants', { stakeholderId: holder, shareClassId: common, quantity: 1_000, strikePrice: 100, issueDate: '2021-01-01' })).id;
+  await refused('PATCH', `/warrants/${w}`, { status: 'EXPIRED' }, /cancel/i);
+  await ok('POST', `/warrants/${w}/exercise`, { quantity: 300, exerciseDate: '2022-01-01' });
+  const r = await ok('POST', `/warrants/${w}/cancel`, { date: '2023-01-01', reason: 'EXPIRED' });
+  assert.equal(r.status, 'EXPIRED');
+  assert.deepEqual((await ledgerOf(w)).map((e) => [e.type, Number(e.quantity)]), [['EXERCISE', 300], ['EXPIRATION', 700]]);
+  assert.equal((await holderAt('2022-06-01', holder)).warrantsOutstanding, 700);
+  assert.equal((await holderAt('2023-06-01', holder)).warrantsOutstanding ?? 0, 0);
+  const w2 = (await ok('POST', '/warrants', { stakeholderId: holder, shareClassId: common, quantity: 500, strikePrice: 100, issueDate: '2021-01-01' })).id;
+  assert.equal((await ok('POST', `/warrants/${w2}/cancel`, { date: '2023-01-01' })).status, 'CANCELLED');
+  await refused('POST', `/warrants/${w2}/cancel`, { date: '2023-02-01' }, /outstanding/i);
+});
+
+test('a note is repaid, and a SAFE cancelled, through their routes; past views keep them outstanding', async () => {
+  const holder = await person('Bea Halvorsen');
+  const note = (await ok('POST', '/convertibles', { stakeholderId: holder, instrument: 'NOTE', principal: 5_000_000, valuationCap: 1_000_000_000, interestRate: 0.05, maturityDate: '2024-01-01', issueDate: '2021-01-01' })).id;
+  await refused('PATCH', `/convertibles/${note}`, { status: 'REPAID' }, /repay/i);
+  await refused('POST', `/convertibles/${note}/repay`, { date: '2020-12-31' }, /before/i);
+  assert.equal((await ok('POST', `/convertibles/${note}/repay`, { date: '2024-01-01', amount: 5_500_000 })).status, 'REPAID');
+  assert.deepEqual((await ledgerOf(note)).map((e) => e.type), ['REPAYMENT']);
+  const safe = (await ok('POST', '/convertibles', { stakeholderId: holder, instrument: 'SAFE_POST', principal: 1_000_000, valuationCap: 1_000_000_000, issueDate: '2021-01-01' })).id;
+  assert.equal((await ok('POST', `/convertibles/${safe}/cancel`, { date: '2023-01-01' })).status, 'CANCELLED');
+  const principal = async (asOf: string) => (await ok('GET', `/captable?asOf=${asOf}&includeConvertibles=true`)).table.rows.find((r: any) => r.stakeholderId === holder)?.convertiblePrincipal ?? 0;
+  assert.deepEqual([await principal('2022-06-01'), await principal('2023-06-01'), await principal('2024-06-01')], [6_000_000, 5_000_000, 0]);
+  await refused('POST', `/convertibles/${safe}/repay`, { date: '2023-02-01' }, /outstanding|settled/i);
+});
+
+// ---------------------------------------------------------------------------
+// 9. Signed documents cannot be deleted, and a changed text shows
+// ---------------------------------------------------------------------------
+
+test('a document anyone has signed cannot be deleted, and a text changed under a signature is flagged', async () => {
+  const doc = await ok('POST', '/documents', { name: 'Board consent', category: 'OTHER', body: 'Resolved.', requiresSignature: true, signers: [{ name: 'Wren Ashby' }, { name: 'Odile Fenwick', stakeholderId: lender }] });
+  const draft = await ok('POST', '/documents', { name: 'Draft', category: 'OTHER', body: 'Draft.', requiresSignature: true, signers: [{ name: 'Wren Ashby' }] });
+  await ok('DELETE', `/documents/${draft.id}`);
+  const block = (await one<{ id: string }>('SELECT id FROM signatures WHERE document_id = ? AND stakeholder_id IS NULL', doc.id))!.id;
+  await ok('POST', `/signatures/${block}/sign`, { typedSignature: 'Wren Ashby' });
+  await refused('DELETE', `/documents/${doc.id}`, undefined, /signed/i);
+  const listed = async () => (await ok('GET', '/documents')).find((d: any) => d.id === doc.id);
+  assert.equal((await listed()).tampered, false);
+  // Changed in the database, past the routes.
+  await run('UPDATE documents SET body = ? WHERE id = ?', 'Resolved, and more.', doc.id);
+  assert.equal((await listed()).tampered, true);
+  const res = await fetch(`${base}${c(`/documents/${doc.id}/print`)}`, { headers: { Authorization: `Bearer ${admin}` } });
+  assert.match(await res.text(), /changed since it was signed/i);
 });
