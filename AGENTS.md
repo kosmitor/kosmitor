@@ -1,0 +1,18 @@
+# Kosmitor: notes for agents
+
+Read README.md for the layout and setup. This file only holds rules that the code and the scripts do not show.
+
+## Running things
+
+- Node runs the TypeScript directly. There is no build step for the server or for `packages/core`. Use Node 26, the same version as the Dockerfile.
+- Server tests need a running PostgreSQL. Each test file creates and then drops its own database through `PG_ADMIN_URL` (default `postgres://localhost:5432/postgres`).
+- In a server test, call `await freshDatabase()` (`apps/server/test/helpers.ts`) at the top level before you import anything from `src/`. Otherwise the code binds to the wrong database.
+- `docs/configuration.md` is generated. Edit `kosmitor.config.schema.json` or `kosmitor.config.json`, then run `npm run config:docs`. Local overrides go in `kosmitor.config.local.json` (ignored by git). Secrets go only in `apps/server/.env`.
+
+## Rules
+
+- **Money.** Amounts are integer cents and per-share prices are integer micro-cents. Convert to these units at the parse boundary. One exception: split-adjusted prices in `normalizeSplits` can hold a fraction of a micro-cent, on purpose (see the comment in `packages/core/src/splits.ts`).
+- **Roles.** Use `EDITOR_ROLES` and `FULL_VIEW_ROLES` from `apps/server/src/auth.ts`. Do not write a new inline role list.
+- **Ledger.** A route that changes a security's `quantity`, `status`, `exercisedQuantity`, `cancelledQuantity` or `convertedOn` must also write a dated `transactions` entry in the shares of the event's date. If it does not, past-date views show today's state. See `docs/design/dated-ledger.md`. The `PATCH` route does not follow this rule yet.
+- **Cache.** Call `invalidate(companyId)` after any write that the engine reads.
+- **Dependencies.** The server's only runtime dependency is `pg`. Import parsers, PDF and XLSX writers are written by hand. Do not add a package for something the code already does.

@@ -1,10 +1,29 @@
 # As-of cap tables: a dated ledger or effective-dated rows
 
-Status: proposal, not built. Math audit 2026-10-05, bug CAP-1.
+Status: Option A accepted and partly built. Math audit 2026-10-05, bug CAP-1. See [Where this stands](#where-this-stands) for what the code does today; the sections after it are the original proposal.
+
+## Where this stands
+
+### Built
+
+- **Store.** `loadCompanyData` reads `transactions` rows that have a `security_id` into `CompanyData.ledger` (`apps/server/src/store.ts:38`, `:180`).
+- **Engine.** `rewindToDate` (`packages/core/src/ledger.ts`) undoes transfers, repurchases, exercises, cancellations (including an import's `FORFEITURE` and `EXPIRATION`) and conversions dated after `asOf`.
+- **Order.** `normalizeSplits` calls `rewindToDate` first, before it applies splits (`packages/core/src/splits.ts`), not after it as proposed below. The ledger converts units itself with `splitsBetween`, a copy of `splitFactor` that avoids an import cycle.
+- **Partial fix.** A convertible counts as outstanding before `convertedOn`. If `convertedOn` is not set, the date of its `CONVERSION` entry is used.
+- **Fallback.** When the ledger cannot rebuild a row's history, the row keeps today's state, the same as before the ledger existed. This covers rows older than the ledger, imports, rows edited by hand, and entries without a quantity.
+- **Tests.** Unit tests per entry type are in `packages/core/test/ledger.test.ts`. The model-based route test is `apps/server/test/ledger-replay.test.ts`.
+- **Delete guard.** A security that has ledger history cannot be deleted (`apps/server/src/routes/entities.ts`).
+
+### Not built: what the code does instead
+
+- **`PATCH` guard and `CORRECTION` entries.** `PATCH /api/c/:cid/<entity>/:id` still changes `quantity`, `status`, `exercisedQuantity` and `cancelledQuantity` without writing a ledger entry (`apps/server/src/routes/entities.ts`). `CORRECTION` is not a `TransactionType`. The rewind detects such an edit only when the counts no longer agree with the ledger, and then it falls back to today's state.
+- **`resultingSecurityIds`.** `LedgerEntry` is `{ id, type, date, securityId, quantity }`. A transfer entry does not record which certificate it created.
+- **Backfill and migration report.** No script exists for steps 2 and 3 of [Migration](#migration). Entries written before the CAP-2 fix have not been restated.
+- **Manual ledger route.** `POST /api/c/:cid/transactions` was not in this proposal. The rewind reads its entries. It does not validate `type` or `quantity`, does not check that `securityId` belongs to the company, and does not call `invalidate()`.
 
 ## The problem
 
-Every engine entry point takes an `asOf` date and filters securities by their own date (`issueDate`, `grantDate`). It does not filter by the date of what happened to them since. The rows only hold their current state, because the write paths change them in place (`apps/server/src/routes/workflows.ts`):
+At the time of the proposal, every engine entry point took an `asOf` date and filters securities by their own date (`issueDate`, `grantDate`). It does not filter by the date of what happened to them since. The rows only hold their current state, because the write paths change them in place (`apps/server/src/routes/workflows.ts`):
 
 | Event | What the route changes |
 | --- | --- |
