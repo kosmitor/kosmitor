@@ -26,7 +26,7 @@ export interface WaterfallSpec {
     divRate?: number; divType?: DividendType; divCompound?: boolean; issueDate?: string; convertible?: boolean;
   }[];
   options?: { holder: string; shares: number; strike: number; type?: AwardType }[];
-  /** `mfn` adopts the terms of one safe issued after it (issueDate, default 2022-01-01); see refModel. */
+  /** `mfn` adopts the terms of one safe issued on or after it (issueDate, default 2022-01-01); see refModel. */
   safes?: { id: string; holder: string; amount: number; cap: number | null; instrument?: ConvertibleInstrument; mfn?: boolean; issueDate?: string }[];
   warrants?: { holder: string; shares: number; strike: number }[];
 }
@@ -78,22 +78,42 @@ export function refModel(spec: WaterfallSpec): RefModel {
   const optionShares = options.reduce((s, o) => s + o.n, 0);
   const prefShares = prefs.reduce((s, p) => s + p.shares, 0);
   // YC Safe (MFN), "MFN Amendment Provision": the holder may have its safe amended "to be identical to"
-  // a later convertible security whose terms it prefers, so it takes one later safe's cap and pre- or
-  // post-money basis in full. With no round price, preferable is the lower cap; on equal caps a
-  // pre-money one, whose capitalization leaves the safes out.
-  const all = spec.safes ?? [];
+  // a Subsequent Convertible Security whose terms it prefers, so it takes that safe's cap and pre- or
+  // post-money basis whole. By brute force: try every safe issued on or after it (a same-day one counts)
+  // and keep the one under which it converts into the most shares when every capped safe converts; a tie
+  // keeps its own terms. MFN safes are settled latest first, and a later one is offered as amended.
+  const all = (spec.safes ?? []).map((s) => ({ ...s }));
   const day = (s: (typeof all)[number]) => s.issueDate ?? '2022-01-01';
-  const kind = (s: (typeof all)[number]) => (s.instrument === 'SAFE_PRE' ? 0 : 1);
-  const better = (a: (typeof all)[number], b: (typeof all)[number]) =>
-    (a.cap ?? Infinity) < (b.cap ?? Infinity) || ((a.cap ?? Infinity) === (b.cap ?? Infinity) && kind(a) < kind(b));
-  const adopted = all.map((s) => {
-    if (!s.mfn) return s;
-    let best = s;
-    for (const o of all) if (day(o) > day(s) && better(o, best)) best = o;
-    return { ...s, cap: best.cap, instrument: best.instrument };
-  });
-  const safes = adopted.filter((s) => s.cap != null).map((s) => ({ id: s.id, amount: s.amount, cap: s.cap!, instrument: s.instrument }));
-  return { common, prefs, options, safes, liqBase: () => common + optionShares + prefShares };
+  const base = common + optionShares + prefShares;
+  const capped = (list: typeof all) => list.filter((s) => s.cap != null).map((s) => ({ id: s.id, amount: s.amount, cap: s.cap!, instrument: s.instrument }));
+  const order = all.map((_, i) => i).filter((i) => all[i].mfn).sort((i, j) => day(all[j]).localeCompare(day(all[i])) || j - i);
+  for (const i of order) {
+    const me = all[i];
+    const sharesAs = (o: typeof me) => refSafeShares(capped(all.map((s) => (s === me ? { ...s, cap: o.cap, instrument: o.instrument } : s))), base)[me.id] ?? 0;
+    let best = me, most = sharesAs(me);
+    for (const o of all) {
+      if (o === me || day(o) < day(me)) continue;
+      const n = sharesAs(o);
+      if (n > most) { most = n; best = o; }
+    }
+    all[i] = { ...me, cap: best.cap, instrument: best.instrument };
+  }
+  return { common, prefs, options, safes: capped(all), liqBase: () => base };
+}
+
+/**
+ * Each converting safe's shares on a Liquidity Capitalization of `base` before the safes. A pre-money
+ * safe converts on the base, and once it converts it is in a post-money safe's Liquidity Capitalization:
+ * Safe User Guide Ex.2 Q3, B = $800,000 / ($8M / ((9,550,000 + 502,631) / 90%)).
+ */
+function refSafeShares(convSafes: NonNullable<RefModel['safes']>, base: number): Record<string, number> {
+  const safeShares: Record<string, number> = {};
+  for (const s of convSafes) if (s.instrument === 'SAFE_PRE') safeShares[s.id] = s.amount * base / s.cap;
+  const pre = convSafes.reduce((t, s) => t + (safeShares[s.id] ?? 0), 0);
+  const own = convSafes.filter((s) => s.instrument !== 'SAFE_PRE').reduce((t, x) => t + x.amount / x.cap, 0);
+  const liq = (base + pre) / (1 - own);
+  for (const s of convSafes) if (s.instrument !== 'SAFE_PRE') safeShares[s.id] = s.amount / s.cap * liq;
+  return safeShares;
 }
 
 /** Payouts in dollars for one set of conversion elections. */
@@ -117,17 +137,7 @@ export function refDistribute(E: number, m: RefModel, conv: Set<string>): RefDis
 
   // SAFE conversion shares on a Liquidity Capitalization that excludes cash-out SAFEs.
   const convSafes = (m.safes ?? []).filter((s) => conv.has(s.id));
-  const safeShares: Record<string, number> = {};
-  if (convSafes.length) {
-    const base = (m.liqBase ?? (() => m.common))(conv);
-    // A pre-money safe converts on the base, and once it converts it is in a post-money safe's
-    // Liquidity Capitalization: Safe User Guide Ex.2 Q3, B = $800,000 / ($8M / ((9,550,000 + 502,631) / 90%)).
-    for (const s of convSafes) if (s.instrument === 'SAFE_PRE') safeShares[s.id] = s.amount * base / s.cap;
-    const pre = convSafes.reduce((t, s) => t + (safeShares[s.id] ?? 0), 0);
-    const own = convSafes.filter((s) => s.instrument !== 'SAFE_PRE').reduce((t, x) => t + x.amount / x.cap, 0);
-    const liq = (base + pre) / (1 - own);
-    for (const s of convSafes) if (s.instrument !== 'SAFE_PRE') safeShares[s.id] = s.amount / s.cap * liq;
-  }
+  const safeShares = convSafes.length ? refSafeShares(convSafes, (m.liqBase ?? (() => m.common))(conv)) : {};
 
   const parts: { id: string; f: (P: number) => number }[] = [{ id: 'common', f: (P) => m.common * P }];
   for (const p of m.prefs) {

@@ -41,22 +41,29 @@ export interface RefSafe { amount: number; cap: number | null; discount: number;
  * Securities and the investor finds their terms preferable, the company amends the safe "to be
  * identical to" that instrument. The holder takes one later safe whole: its cap, its discount
  * and its pre- or post-money basis, never a cap from one and a discount from another.
- * Preferable: the lower effective valuation min(cap, pre-money x (1 - discount)); on a tie a
- * pre-money basis (its capitalization leaves the safes out), then the larger discount.
+ * By brute force: solve the round with the MFN safe on its own terms and on each later safe's,
+ * and keep the one that gives it the most shares; a tie keeps its own terms. A candidate whose
+ * post-money caps take 100% or more has no solution and is not taken. MFN safes are settled
+ * from the last one back, and a later one is offered as amended.
  */
-export function refAdoptMFN(safes: RefSafe[], preMoney: number): RefSafe[] {
-  const score = (s: RefSafe) => [Math.min(s.cap ?? Infinity, preMoney * (1 - s.discount)), s.kind === 'PRE' ? 0 : 1, -s.discount];
-  const better = (a: RefSafe, b: RefSafe) => {
-    const x = score(a), y = score(b);
-    const i = x.findIndex((v, k) => v !== y[k]);
-    return i >= 0 && x[i] < y[i];
-  };
-  return safes.map((s, i) => {
-    if (!s.mfn) return s;
-    let best = s;
-    for (const later of safes.slice(i + 1)) if (better(later, best)) best = later;
-    return { ...best, amount: s.amount, mfn: false };
-  });
+function refAdoptMFN(input: RefRound): RefSafe[] {
+  const safes = input.safes.map((s) => ({ ...s }));
+  for (let i = safes.length - 1; i >= 0; i--) {
+    if (!safes[i].mfn) continue;
+    const sharesAs = (o: RefSafe) => {
+      const trial = safes.map((s, k) => (k === i ? { ...o, amount: s.amount, mfn: false } : s));
+      if (trial.reduce((t, s) => t + (s.kind === 'POST' && s.cap ? s.amount / s.cap : 0), 0) >= 1) return -1;
+      const r = solveRound({ ...input, safes: trial });
+      return r.preShares[i] + r.postShares[i];
+    };
+    let best = safes[i], most = sharesAs(safes[i]);
+    for (const o of safes.slice(i + 1)) {
+      const n = sharesAs(o);
+      if (n > most) { most = n; best = o; }
+    }
+    safes[i] = { ...best, amount: safes[i].amount, mfn: false };
+  }
+  return safes;
 }
 
 export interface RefRound {
@@ -84,7 +91,11 @@ export interface RefRoundResult {
  * full precision. Returns real-valued shares; floor them to compare with a cap table.
  */
 export function refRound(input: RefRound): RefRoundResult {
-  const r = { ...input, safes: refAdoptMFN(input.safes, input.preMoney) };
+  return solveRound({ ...input, safes: refAdoptMFN(input) });
+}
+
+/** refRound with every safe on its own terms. */
+function solveRound(r: RefRound): RefRoundResult {
   const fromPre = r.poolFromPreMoney !== false;
   const inner = (inc: number) => {
     let p = r.preMoney / r.baseFD;

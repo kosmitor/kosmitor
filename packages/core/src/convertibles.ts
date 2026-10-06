@@ -113,52 +113,71 @@ export interface ConversionContext {
    * but excludes the new round's shares.
    */
   postMoneyCapitalization: number;
-  /** All convertibles in the stack — needed to resolve MFN clauses. */
+  /** All convertibles in the stack — needed to resolve MFN clauses when `terms` is not given. */
   allConvertibles?: Convertible[];
-  /** Pre-money valuation of the round, which an MFN holder weighs a discount against (resolveMFN). */
-  valuation?: Cents;
+  /** The terms each instrument converts on, MFN clauses resolved (resolveMFNs); an instrument not in it converts on its own. */
+  terms?: Map<string, ConversionTerms>;
 }
 
 /** Statuses of an instrument the company has actually issued; one awaiting approval or signature has not been. */
 const ISSUED = new Set<Convertible['status']>(['OUTSTANDING', 'CONVERTED', 'REPAID']);
 
+/**
+ * The price terms an instrument converts on: cap, discount, and the pre- or
+ * post-money basis the cap prices on (`instrument`). The amount converting is
+ * always the instrument's own, a note's interest included (conversionAmount).
+ */
 export interface ConversionTerms { cap: Cents | null; discount: number; instrument: Convertible['instrument'] }
 
+export const ownTerms = (c: Convertible): ConversionTerms => ({ cap: c.valuationCap, discount: c.discount, instrument: c.instrument });
+
+/** The terms `c` converts on in `terms`, its own when it is not there. */
+export const termsOf = (c: Convertible, terms?: Map<string, ConversionTerms>): ConversionTerms => terms?.get(c.id) ?? ownTerms(c);
+
 /**
- * The terms an instrument converts on. For an MFN instrument, YC Safe (MFN),
- * "MFN Amendment Provision": if the Company issues Subsequent Convertible
- * Securities before this safe terminates and "the Investor determines that the
- * terms of the Subsequent Convertible Securities are preferable to the terms of
- * this Safe", the Company amends this safe "to be identical to the instrument(s)
- * evidencing the Subsequent Convertible Securities". So the holder takes ONE
- * later instrument whole: its cap, its discount and its pre- or post-money basis
- * (YC Safe User Guide App. I.3), never one's cap with another's discount.
+ * Resolves the MFN clauses of the instruments in `stack`. YC Safe (MFN), "MFN
+ * Amendment Provision": if the Company issues Subsequent Convertible Securities
+ * before this safe terminates and "the Investor determines that the terms of the
+ * Subsequent Convertible Securities are preferable to the terms of this Safe",
+ * the Company amends this safe "to be identical to the instrument(s) evidencing
+ * the Subsequent Convertible Securities". So the holder takes ONE later
+ * instrument's terms whole: cap, discount and pre- or post-money basis (YC Safe
+ * User Guide App. I.3), never one's cap with another's discount.
  *
- * Candidates are instruments issued (not pending) after this one and on or before
- * `asOf`, the conversion or event date. Preferable is the lower effective
- * valuation min(cap, valuation x (1 - discount)), `valuation` being the round's
- * pre-money where there is one; with none (cap table, exit) only the cap counts.
- * Ties go to a pre-money basis, whose capitalization leaves the safes out, then
- * to the larger discount. If no candidate beats its own terms it keeps them.
- * ponytail: ranks terms by valuation, not by solving the round once per candidate;
- * a post-money cap a little below a pre-money one can rank first and give fewer shares.
+ * Candidates are the instruments in `all` issued (not pending) on or after the
+ * MFN instrument's date and on or before `asOf`. A Convertible has no creation
+ * time and the store orders them by issue date alone, so one issued the same day
+ * counts as subsequent. Preferable is what gives the holder the most shares:
+ * `sharesOf(id, terms)` is the holder's shares in the caller's view (cap table,
+ * round or exit) with every instrument on `terms`, and each candidate is tried
+ * in turn. On a tie the holder keeps its own terms, then the earlier candidate.
+ *
+ * Several MFN instruments resolve one at a time, the latest issued first (by
+ * issue date, then the later in `all`). A later MFN is offered to earlier ones on
+ * the terms it adopted; each is weighed with the earlier MFNs still on their own
+ * terms, and none is revisited, so this is one pass of at most
+ * (MFN instruments x candidates) calls to `sharesOf`.
  */
-export function resolveMFN(c: Convertible, all: Convertible[] | undefined, asOf: ISODate, valuation: Cents = Infinity): ConversionTerms {
-  const own = { cap: c.valuationCap, discount: c.discount, instrument: c.instrument };
-  if (!c.mfn || !all) return own;
-  const score = (t: ConversionTerms) => [Math.min(t.cap ?? Infinity, valuation * (1 - t.discount)), t.instrument === 'SAFE_POST' ? 1 : 0, -t.discount];
-  const better = (a: ConversionTerms, b: ConversionTerms): boolean => {
-    const x = score(a), y = score(b);
-    const i = x.findIndex((v, k) => v !== y[k]);
-    return i >= 0 && x[i] < y[i];
-  };
-  let best: ConversionTerms = own;
-  for (const other of all) {
-    if (other.id === c.id || other.issueDate <= c.issueDate || other.issueDate > asOf || !ISSUED.has(other.status)) continue;
-    const terms = { cap: other.valuationCap, discount: other.discount, instrument: other.instrument };
-    if (better(terms, best)) best = terms;
+export function resolveMFNs(
+  stack: Convertible[], all: Convertible[], asOf: ISODate,
+  sharesOf: (id: string, terms: Map<string, ConversionTerms>) => number,
+): Map<string, ConversionTerms> {
+  const terms = new Map([...all, ...stack].map((c) => [c.id, ownTerms(c)]));
+  const position = new Map(all.map((c, i) => [c.id, i]));
+  const mfns = stack.filter((c) => c.mfn).sort((a, b) =>
+    a.issueDate !== b.issueDate ? (a.issueDate < b.issueDate ? 1 : -1) : (position.get(b.id) ?? -1) - (position.get(a.id) ?? -1));
+  for (const c of mfns) {
+    let best = terms.get(c.id)!;
+    let most = sharesOf(c.id, terms);
+    for (const other of all) {
+      if (other.id === c.id || other.issueDate < c.issueDate || other.issueDate > asOf || !ISSUED.has(other.status)) continue;
+      const candidate = terms.get(other.id)!;
+      const n = sharesOf(c.id, new Map(terms).set(c.id, candidate));
+      if (n > most) { most = n; best = candidate; }
+    }
+    terms.set(c.id, best);
   }
-  return best;
+  return terms;
 }
 
 
@@ -182,7 +201,10 @@ export function convertOne(c: Convertible, ctx: ConversionContext): ConversionRe
   validateConversion(c, ctx.roundPPS);
   const interest = accruedInterest(c, ctx.asOf);
   const amount = c.principal + interest;
-  const { cap, discount, instrument } = resolveMFN(c, ctx.allConvertibles, ctx.asOf, ctx.valuation);
+  // With no resolved terms given, an MFN instrument takes the candidate that converts it into the most shares in this context.
+  const terms = ctx.terms ?? (c.mfn && ctx.allConvertibles
+    ? resolveMFNs([c], ctx.allConvertibles, ctx.asOf, (_, t) => convertOne(c, { ...ctx, terms: t }).shares) : undefined);
+  const { cap, discount, instrument } = termsOf(c, terms);
   const usedMFN = c.mfn && (cap !== c.valuationCap || discount !== c.discount || instrument !== c.instrument);
 
   const capBase = instrument === 'SAFE_POST' ? ctx.postMoneyCapitalization : ctx.preMoneyCapitalization;
@@ -233,21 +255,19 @@ export function convertAll(convertibles: Convertible[], ctx: ConversionContext):
  * owns principal / post-money-cap of the company after all SAFEs convert but
  * before the new money. Because every post-money SAFE's price depends on a
  * capitalization that includes the other post-money SAFEs, the set has to be
- * solved together. This finds the fixed point. An MFN safe that adopted a
- * pre-money instrument's cap is not post-money and is left out; `all` is the
- * stack its MFN clause looks at (by default the instruments given) and
- * `valuation` the round's pre-money it weighs terms by (see resolveMFN).
+ * solved together. This finds the fixed point. Each instrument prices on
+ * `resolved` terms (resolveMFNs), or its own: one on a pre-money basis is left
+ * out, an MFN note on a post-money safe's terms is in, interest and all.
  */
 export function solvePostMoneySafes(
   convertibles: Convertible[],
   baseCapitalization: number,
   roundPPS: PricePerShare,
   asOf: ISODate,
-  all: Convertible[] = convertibles,
-  valuation?: Cents,
+  resolved?: Map<string, ConversionTerms>,
 ): { shares: Map<string, number>; totalCapitalization: number; iterations: number } {
   const posts = convertibles.filter(
-    (c) => c.status === 'OUTSTANDING' && c.issueDate <= asOf && resolveMFN(c, all, asOf, valuation).instrument === 'SAFE_POST',
+    (c) => c.status === 'OUTSTANDING' && c.issueDate <= asOf && termsOf(c, resolved).instrument === 'SAFE_POST',
   );
   const shares = new Map<string, number>();
   if (posts.length === 0) return { shares, totalCapitalization: baseCapitalization, iterations: 0 };
@@ -257,7 +277,7 @@ export function solvePostMoneySafes(
   }
   const terms = posts.map((c) => {
     validateConversion(c, roundPPS);
-    const { cap, discount } = resolveMFN(c, all, asOf, valuation);
+    const { cap, discount } = termsOf(c, resolved);
     const amount = conversionAmount(c, asOf);
     return { c, cap, amount, fixedPrice: Math.max(1, Math.round(roundPPS * (1 - discount))) };
   });

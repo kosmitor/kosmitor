@@ -3,7 +3,7 @@ import type {
 } from './types.ts';
 import { summarizeVesting } from './vesting.ts';
 import { normalizeSplits } from './splits.ts';
-import { conversionAmount, resolveMFN, solvePostMoneySafes } from './convertibles.ts';
+import { conversionAmount, resolveMFNs, solvePostMoneySafes, termsOf, type ConversionTerms } from './convertibles.ts';
 import { isTransferIssuance } from './valuation-refresh.ts';
 import { roundShares, floorShares, pct, shareValue, sharesForAmount, today, onOrBefore, addMonths } from './util.ts';
 import { enginePolicy } from './policy.ts';
@@ -129,6 +129,8 @@ export interface CapTable {
   totals: CapTableTotals;
   /** Set when convertibles are included and at least one has no cap; see ConversionPriceAssumption. */
   uncappedConversionPrice: ConversionPriceAssumption | null;
+  /** The terms each outstanding MFN instrument is estimated on, when convertibles are included (resolveMFNs). */
+  mfnTerms: Record<string, ConversionTerms>;
   /** Warnings the UI surfaces, e.g. over-issuance against authorized shares. */
   warnings: string[];
 }
@@ -443,44 +445,59 @@ export function computeCapTable(input: CompanyData, opts: CapTableOptions = {}):
   // capitalization that includes the others and every other converting
   // security (YC Post-Money Safe User Guide §C.1, Appendix II Example 2).
   let uncappedConversionPrice: ConversionPriceAssumption | null = null;
+  const mfnTerms: Record<string, ConversionTerms> = {};
   const liveConvertibles = data.convertibles.filter((c) => c.issueDate <= asOf && c.status === 'OUTSTANDING');
   for (const c of liveConvertibles) rowFor(c.stakeholderId).convertiblePrincipal += c.principal;
   if (includeConv && liveConvertibles.length > 0) {
     // That capitalization includes the unissued pool whether or not the table
     // shows it (guide §C.1), so the toggle cannot change an estimate.
     const base = sumFullyDiluted(rowById, data, asOf);
-    // An MFN holder that adopts a later instrument's cap becomes that
+    // An MFN holder that adopts a later instrument's terms becomes that
     // instrument, base and all (YC Safe User Guide App. I.3), so each one is
-    // estimated or solved by the terms it ends up with.
-    const terms = new Map(liveConvertibles.map((c) => [c.id, resolveMFN(c, data.convertibles, asOf)]));
-    const postMoneyCapped = (c: Convertible): boolean => { const t = terms.get(c.id)!; return t.instrument === 'SAFE_POST' && t.cap != null; };
-    const estimates = new Map<string, number>();
-    for (const c of liveConvertibles) {
-      if (postMoneyCapped(c)) continue;
-      const { cap, discount } = terms.get(c.id)!;
-      const amount = conversionAmount(c, asOf);
-      let estimate = 0;
-      if (cap && base > 0) estimate = (amount * base) / cap;
-      else if (valuationPPS > 0) {
-        estimate = sharesForAmount(amount, Math.max(1, Math.round(valuationPPS * (1 - discount))), true);
-        uncappedConversionPrice ??= {
-          pricePerShare: valuationPPS, source: valuation?.type ?? 'GIVEN',
-          effectiveDate: valuation?.effectiveDate ?? null, convertibleIds: [],
-        };
-        uncappedConversionPrice.convertibleIds.push(c.id);
+    // estimated or solved by the terms it ends up with: those that give it the
+    // most shares here (resolveMFNs).
+    const estimate = (terms: Map<string, ConversionTerms>) => {
+      const postMoneyCapped = (c: Convertible): boolean => { const t = termsOf(c, terms); return t.instrument === 'SAFE_POST' && t.cap != null; };
+      const shares = new Map<string, number>();
+      const uncapped: string[] = [];
+      for (const c of liveConvertibles) {
+        if (postMoneyCapped(c)) continue;
+        const { cap, discount } = termsOf(c, terms);
+        const amount = conversionAmount(c, asOf);
+        let n = 0;
+        if (cap && base > 0) n = (amount * base) / cap;
+        else if (valuationPPS > 0) {
+          n = sharesForAmount(amount, Math.max(1, Math.round(valuationPPS * (1 - discount))), true);
+          uncapped.push(c.id);
+        }
+        shares.set(c.id, n);
       }
-      estimates.set(c.id, estimate);
+      const others = [...shares.values()].reduce((s, n) => s + n, 0);
+      // There is no round price to cap the conversion price here, so the solver is
+      // given an unreachable one and capped instruments price at their cap alone.
+      const postMoney = solvePostMoneySafes(
+        liveConvertibles.filter(postMoneyCapped), base + others, Number.MAX_SAFE_INTEGER, asOf, terms,
+      ).shares;
+      for (const [id, n] of postMoney) shares.set(id, n);
+      return { shares, uncapped };
+    };
+    // An uncapped estimate at the price common is valued at is the table's
+    // assumption, not a conversion the terms give, so it counts for nothing here.
+    const terms = resolveMFNs(liveConvertibles, data.convertibles, asOf, (id, t) => {
+      const e = estimate(t);
+      return e.uncapped.includes(id) ? 0 : e.shares.get(id) ?? 0;
+    });
+    const { shares, uncapped } = estimate(terms);
+    if (uncapped.length) {
+      uncappedConversionPrice = {
+        pricePerShare: valuationPPS, source: valuation?.type ?? 'GIVEN',
+        effectiveDate: valuation?.effectiveDate ?? null, convertibleIds: uncapped,
+      };
     }
-    const others = [...estimates.values()].reduce((s, n) => s + n, 0);
-    // There is no round price to cap the conversion price here, so the solver is
-    // given an unreachable one and capped instruments price at their cap alone.
-    const postMoney = solvePostMoneySafes(
-      liveConvertibles.filter(postMoneyCapped), base + others, Number.MAX_SAFE_INTEGER, asOf, data.convertibles,
-    ).shares;
     for (const c of liveConvertibles) {
-      const estimate = estimates.get(c.id) ?? postMoney.get(c.id) ?? 0;
+      if (c.mfn) mfnTerms[c.id] = termsOf(c, terms);
       const row = rowFor(c.stakeholderId);
-      row.convertibleAsConverted = roundShares(row.convertibleAsConverted + estimate);
+      row.convertibleAsConverted = roundShares(row.convertibleAsConverted + (shares.get(c.id) ?? 0));
     }
   }
 
@@ -559,7 +576,7 @@ export function computeCapTable(input: CompanyData, opts: CapTableOptions = {}):
       };
     });
 
-  return { asOf, rows, classes, pools, totals, uncappedConversionPrice, warnings };
+  return { asOf, rows, classes, pools, totals, uncappedConversionPrice, mfnTerms, warnings };
 }
 
 function sum<T>(items: T[], f: (t: T) => number): number {
