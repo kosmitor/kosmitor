@@ -7,7 +7,7 @@
 import { route, audit, badRequest } from '../http.ts';
 import { one } from '../db.ts';
 import { getCompanyData } from '../store.ts';
-import { computeCapTable, today, type CapTable, type CapTableRow } from '@ct/core';
+import { computeCapTable, today, type CapTable, type CapTableRow } from '@kosmitor/core';
 import { xlsx, type Cell } from '../xlsx-writer.ts';
 import { tablePdf, type PdfRow } from '../pdf-writer.ts';
 import { config } from '../config.ts';

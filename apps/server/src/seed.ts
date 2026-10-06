@@ -7,7 +7,7 @@
 import './env.ts';
 import { insert, run, migrate, close, transaction } from './db.ts';
 import { createUser, findUserByEmail } from './auth.ts';
-import { STANDARD_SCHEDULES, dollarsToCents as $, dollarsToPPS as pps, addMonths } from '@ct/core';
+import { STANDARD_SCHEDULES, dollarsToCents as $, dollarsToPPS as pps, addMonths } from '@kosmitor/core';
 import { randomUUID } from 'node:crypto';
 import { config, vestingTemplates } from './config.ts';
 
@@ -344,6 +344,11 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
 }
 
 if (process.argv[1]?.endsWith('seed.ts')) {
+  if (!process.argv.includes('--yes')) {
+    console.error('npm run seed deletes every company and session in the database before building the demo.');
+    console.error('Run it only on a throwaway database, as: npm run seed -- --yes');
+    process.exit(1);
+  }
   await migrate();
   const result = await transaction(() => seed());
   console.log('Seeded demo company:', result.companyId);

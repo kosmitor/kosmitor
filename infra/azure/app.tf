@@ -160,7 +160,7 @@ resource "azurerm_container_app" "main" {
       }
 
       env {
-        name        = "CT_SECRET_KEY"
+        name        = "KOSMITOR_SECRET_KEY"
         secret_name = "secret-key"
       }
 

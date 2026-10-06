@@ -45,7 +45,7 @@ await import('../src/routes/valuation-requests.ts');
 const { configure, resetConfig, deskName, publicConfig } = await import('../src/config.ts');
 const { run, one, all, transaction } = await import('../src/db.ts');
 const { documentPdf } = await import('../src/pdf-writer.ts');
-const { longDate } = await import('@ct/core');
+const { longDate } = await import('@kosmitor/core');
 
 /** The service is off by default; these tests are about it running. */
 const offerTheDesk = () => { resetConfig(); configure({ valuationDesk: { enabled: true } }); };

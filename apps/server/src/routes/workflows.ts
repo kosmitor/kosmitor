@@ -15,7 +15,7 @@ import { updatesFor, markUpdateRead } from './communications.ts';
 import {
   computeCapTable, activeValuation, summarizeVesting, vestingCurve, portfolioValue, modelExercise,
   shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor,
-} from '@ct/core';
+} from '@kosmitor/core';
 
 // A certificate or grant keeps the share count and price of the day it was
 // recorded; a later stock split is applied when the cap table is read

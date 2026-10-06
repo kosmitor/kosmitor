@@ -14,7 +14,7 @@
  * never turn real rows into fixtures: rebuild a case with invented names instead.
  */
 import { randomUUID } from 'node:crypto';
-import { computeCapTable, today, type CapTable, type CompanyData } from '@ct/core';
+import { computeCapTable, today, type CapTable, type CompanyData } from '@kosmitor/core';
 import { Company, emptyPlan, prepareImport, type Plan } from '../import/engine.ts';
 import type { DateOrder, ImportKind } from '../import/values.ts';
 import { companyDataFromRows, type CompanyRows } from '../store.ts';

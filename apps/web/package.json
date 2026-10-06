@@ -1,7 +1,8 @@
 {
-  "name": "@ct/web",
+  "name": "@kosmitor/web",
   "private": true,
   "version": "1.0.0",
+  "license": "MPL-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

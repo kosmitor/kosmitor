@@ -23,7 +23,7 @@
  * so a page stuffed with figures neither takes long nor crowds out the page that
  * states the conclusion.
  */
-import { addMonths, dollarsToPPS, today } from '@ct/core';
+import { addMonths, dollarsToPPS, today } from '@kosmitor/core';
 
 export type Confidence = 'high' | 'medium' | 'low';
 

@@ -13,7 +13,7 @@
 import {
   computeCapTable, awardIsLive, accruedInterest, addMonths, roundShares, shareValue, splitFactor,
   type CompanyData, type CapTable, type Award, type VestingSchedule,
-} from '@ct/core';
+} from '@kosmitor/core';
 import { LABELLED_TOTALS, type SourceFigures, type GrantLine, type CertificateLine, type Line, type Measure } from './source.ts';
 
 export type Level = 'import' | 'internal' | 'class' | 'holder' | 'grant' | 'percent';

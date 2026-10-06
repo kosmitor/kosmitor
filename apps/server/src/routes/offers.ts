@@ -12,7 +12,7 @@ import { sendMail, mailConfigured, type Message } from '../mail.ts';
 import { config } from '../config.ts';
 import { renderEmail } from '../email.ts';
 import { templateFor, renderTemplate, AWARD_TYPE_NAMES, ENTITY_WORDS, usd, perShare, integer, type MergeContext } from '../templates.ts';
-import { today } from '@ct/core';
+import { today } from '@kosmitor/core';
 
 interface OfferRow {
   id: string; company_id: string; candidate_name: string; candidate_email: string | null; position: string; department: string | null;

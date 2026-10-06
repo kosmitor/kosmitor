@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const TOKEN_KEY = 'ct_token';
+const TOKEN_KEY = 'kosmitor_token';
 
 export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string | null): void => {

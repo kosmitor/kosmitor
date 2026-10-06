@@ -51,7 +51,7 @@ Secrets and wiring stay in the environment and never go in a param file:
 | `DATABASE_URL` | PostgreSQL connection string. Default `postgres://localhost:5432/kosmitor`. |
 | `SMTP_URL` | Send mail through an SMTP server: `smtp://user:pass@host:587` (STARTTLS) or `smtps://user:pass@host:465`. |
 | `ACS_CONNECTION_STRING` | Send mail through Azure Communication Services; wins over `SMTP_URL`. Neither set: messages are printed to the log. |
-| `CT_SECRET_KEY` | Encrypts the API keys people give the assistant. Without it the server keeps a generated key in its own table. |
+| `KOSMITOR_SECRET_KEY` | Encrypts the API keys people give the assistant. Without it the server keeps a generated key in its own table. |
 | `BACKUP_ACCOUNT_URL` | Blob endpoint of the storage account the backup job writes to. |
 | `AZURE_CLIENT_ID` | Managed identity the backup job signs in to storage with. |
 | `BACKUP_TOKEN` | A storage bearer token for running the backup job by hand instead. |

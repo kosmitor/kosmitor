@@ -283,7 +283,7 @@ test('a cap table spreadsheet becomes stakeholders, share classes and certificat
   const { insert } = await import('../src/db.ts');
   const { prepareImport, commitImport } = await import('../src/import/engine.ts');
   const { loadCompanyData } = await import('../src/store.ts');
-  const { computeCapTable } = await import('@ct/core');
+  const { computeCapTable } = await import('@kosmitor/core');
 
   const companyId = 'co_test';
   await insert('companies', { id: companyId, name: 'Test Co', createdAt: new Date().toISOString() });
@@ -507,7 +507,7 @@ test('a workbook export imports sheet by sheet: fixed share class, total rows, a
   const { insert } = await import('../src/db.ts');
   const { prepareImport, commitImport } = await import('../src/import/engine.ts');
   const { loadCompanyData } = await import('../src/store.ts');
-  const { computeCapTable } = await import('@ct/core');
+  const { computeCapTable } = await import('@kosmitor/core');
   const companyId = 'co_export';
   const now = new Date().toISOString();
   await insert('companies', { id: companyId, name: 'Export Co', createdAt: now });

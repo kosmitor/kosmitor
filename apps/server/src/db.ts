@@ -28,7 +28,7 @@ export const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://localhost:54
  * database; pure tests may still load it, but the first query is refused.
  */
 function guardTestDatabase(): void {
-  if (process.env.NODE_TEST_CONTEXT && !/\/strata_test_[0-9a-f]+$/.test(DATABASE_URL)) {
+  if (process.env.NODE_TEST_CONTEXT && !/\/kosmitor_test_[0-9a-f]+$/.test(DATABASE_URL)) {
     throw new Error(`Refusing to query ${DATABASE_URL} from a test: call freshDatabase() before importing anything from src/.`);
   }
 }

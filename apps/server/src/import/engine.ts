@@ -16,7 +16,7 @@ import {
   type Cell, type ImportKind, type DateOrder, type FieldSpec,
 } from './values.ts';
 import { config } from '../config.ts';
-import { roundShares, today } from '@ct/core';
+import { roundShares, today } from '@kosmitor/core';
 
 export interface ImportOptions {
   dateOrder?: DateOrder;

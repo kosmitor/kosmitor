@@ -20,7 +20,7 @@ import { config } from './config.ts';
  * on the server and so goes with them. The list is kept per person, because a
  * shared computer should not hand one person's choices to the next.
  */
-const LEGACY_STORE = 'ct_concepts_open';
+const LEGACY_STORE = 'kosmitor_concepts_open';
 const storeFor = (userId: string | undefined) => `${LEGACY_STORE}:${userId ?? 'anonymous'}`;
 
 /** Reading preferences is a convenience, never a correctness requirement, so failures are silent. */

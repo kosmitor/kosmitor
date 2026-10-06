@@ -50,7 +50,7 @@ function appVersion(): string {
       for (const f of readdirSync(resolve(root, dir))) newest = Math.max(newest, statSync(resolve(root, dir, f)).mtimeMs);
     } catch { /* a missing folder says nothing */ }
   }
-  return `@ct/core 1.0.0, engine and import code last changed ${newest ? new Date(newest).toISOString().slice(0, 10) : 'unknown'}`;
+  return `@kosmitor/core 1.0.0, engine and import code last changed ${newest ? new Date(newest).toISOString().slice(0, 10) : 'unknown'}`;
 }
 
 const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');

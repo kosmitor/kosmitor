@@ -156,10 +156,10 @@ const COOKIE_SECURE = process.env.NODE_ENV === 'production' ? '; Secure' : '';
 
 export function setSessionCookie(res: ServerResponse, token: string): void {
   res.setHeader('Set-Cookie',
-    `ct_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${config().auth.sessionDays * 86400}${COOKIE_SECURE}`);
+    `kosmitor_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${config().auth.sessionDays * 86400}${COOKIE_SECURE}`);
 }
 export function clearSessionCookie(res: ServerResponse): void {
-  res.setHeader('Set-Cookie', `ct_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${COOKIE_SECURE}`);
+  res.setHeader('Set-Cookie', `kosmitor_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${COOKIE_SECURE}`);
 }
 
 /**
@@ -228,7 +228,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
   const ip = clientIp(req);
   const bearer = (req.headers.authorization ?? '').replace(/^Bearer /i, '') || null;
-  const token = cookie(req, 'ct_session') ?? bearer;
+  const token = cookie(req, 'kosmitor_session') ?? bearer;
   const user = await userForToken(token);
 
   const ctx: Ctx = {

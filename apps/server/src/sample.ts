@@ -8,9 +8,9 @@
  * Pulley-style workbooks so the import wizard can be tried without anyone's
  * real data.
  *
- *   npm run sample --workspace=@ct/server           create (skips if it exists) and write the workbooks
- *   npm run sample --workspace=@ct/server -- --replace   delete the existing sample company first
- *   npm run sample --workspace=@ct/server -- --files-only  only write the workbooks
+ *   npm run sample --workspace=@kosmitor/server           create (skips if it exists) and write the workbooks
+ *   npm run sample --workspace=@kosmitor/server -- --replace   delete the existing sample company first
+ *   npm run sample --workspace=@kosmitor/server -- --files-only  only write the workbooks
  */
 import './env.ts';
 import { randomUUID } from 'node:crypto';
@@ -19,7 +19,7 @@ import { resolve } from 'node:path';
 import { insert, all, one, run, migrate, close, transaction } from './db.ts';
 import { createUser, findUserByEmail } from './auth.ts';
 import { deleteCompany } from './company-admin.ts';
-import { STANDARD_SCHEDULES, dollarsToCents as $, dollarsToPPS as pps, addMonths } from '@ct/core';
+import { STANDARD_SCHEDULES, dollarsToCents as $, dollarsToPPS as pps, addMonths } from '@kosmitor/core';
 import { xlsx, type Cell } from './xlsx-writer.ts';
 import { BUILT_IN_TEMPLATES, renderTemplate } from './templates.ts';
 import { config, vestingTemplates } from './config.ts';

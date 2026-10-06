@@ -21,7 +21,7 @@ await import('../src/routes/entities.ts');
 await import('../src/routes/analytics.ts');
 await import('../src/routes/workflows.ts');
 const { one } = await import('../src/db.ts');
-const { addDays, roundShares, shareValue, today } = await import('@ct/core');
+const { addDays, roundShares, shareValue, today } = await import('@kosmitor/core');
 
 const api: Server = createServer((req, res) => { void handle(req, res); });
 await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));

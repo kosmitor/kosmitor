@@ -9,7 +9,7 @@
  */
 import type { Ctx } from '../http.ts';
 import { all, toCamelAll } from '../db.ts';
-import type { CompanyData } from '@ct/core';
+import type { CompanyData } from '@kosmitor/core';
 
 /** The roles that read the whole vault; everyone else sees what is published or theirs. */
 const WIDE = ['ADMIN', 'LEGAL', 'BOARD'];

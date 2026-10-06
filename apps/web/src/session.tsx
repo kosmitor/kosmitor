@@ -58,7 +58,7 @@ export function useSession(): SessionValue {
   return ctx;
 }
 
-const LAST_COMPANY = 'ct_company';
+const LAST_COMPANY = 'kosmitor_company';
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);

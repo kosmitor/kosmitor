@@ -1,5 +1,5 @@
 import { all, toCamelAll, inTransaction, concurrently } from './db.ts';
-import type { CompanyData } from '@ct/core';
+import type { CompanyData } from '@kosmitor/core';
 
 const bool = (v: unknown): boolean => v === 1 || v === true;
 const json = <T>(v: unknown, fallback: T): T => {
@@ -34,7 +34,7 @@ export async function loadCompanyData(companyId: string): Promise<CompanyData> {
     () => q('SELECT * FROM exercises WHERE company_id = ? ORDER BY exercise_date, created_at'),
     () => q('SELECT * FROM compliance_filings WHERE company_id = ? ORDER BY filed_on, created_at'),
     // What happened to each security since it was issued, which the engine undoes
-    // for a view of an earlier date (rewindToDate in @ct/core).
+    // for a view of an earlier date (rewindToDate in @kosmitor/core).
     () => q('SELECT id, type, date, security_id, quantity FROM transactions WHERE company_id = ? AND security_id IS NOT NULL ORDER BY date, created_at'),
   ]);
 

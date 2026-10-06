@@ -6,7 +6,7 @@
 import { route, newId, nowISO, audit, badRequest, notFound, forbidden, str, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
 import { getCompanyData } from '../store.ts';
-import { computeCapTable, summarizeVesting, activeValuation, today, type CompanyData } from '@ct/core';
+import { computeCapTable, summarizeVesting, activeValuation, today, type CompanyData } from '@kosmitor/core';
 import { xlsx } from '../xlsx-writer.ts';
 import { config } from '../config.ts';
 

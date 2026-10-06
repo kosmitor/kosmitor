@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { enginePolicy } from '@ct/core';
+import { enginePolicy } from '@kosmitor/core';
 
 type Json = Record<string, any>;
 

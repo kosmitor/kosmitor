@@ -22,7 +22,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/
 COPY apps/server/package.json apps/server/
-RUN npm ci --omit=dev --workspace=@ct/server --workspace=@ct/core --include-workspace-root=false \
+RUN npm ci --omit=dev --workspace=@kosmitor/server --workspace=@kosmitor/core --include-workspace-root=false \
  && npm cache clean --force
 COPY packages/core/src ./packages/core/src
 COPY apps/server/src ./apps/server/src

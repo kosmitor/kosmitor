@@ -6,12 +6,12 @@
  * to reach the provider on their behalf, so it is encrypted before it touches a
  * row and opened only on the way out.
  *
- * The encryption key comes from CT_SECRET_KEY when the environment sets it,
+ * The encryption key comes from KOSMITOR_SECRET_KEY when the environment sets it,
  * which is the arrangement worth having: the key then lives somewhere the
  * database does not, and a stolen dump is not enough to read the secrets. With
  * no such variable the server generates one and keeps it in its own table, which
  * still keeps keys out of logs, exports and casual queries, but cannot protect
- * them from someone holding the whole database. Set CT_SECRET_KEY in anything
+ * them from someone holding the whole database. Set KOSMITOR_SECRET_KEY in anything
  * that matters.
  */
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
@@ -26,7 +26,8 @@ let cached: Buffer | null = null;
 
 async function key(): Promise<Buffer> {
   if (cached) return cached;
-  const fromEnv = process.env.CT_SECRET_KEY;
+  // CT_SECRET_KEY is the old name, still read so deployments that set it keep decrypting their stored keys.
+  const fromEnv = process.env.KOSMITOR_SECRET_KEY ?? process.env.CT_SECRET_KEY;
   if (fromEnv && fromEnv.trim()) {
     cached = scryptSync(fromEnv.trim(), SALT, 32);
     return cached;

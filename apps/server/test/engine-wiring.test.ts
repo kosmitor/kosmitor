@@ -28,7 +28,7 @@ const { insert, one, run } = await import('../src/db.ts');
 const { parseXlsx } = await import('../src/import/xlsx.ts');
 const { getCompanyData, invalidate } = await import('../src/store.ts');
 const { config } = await import('../src/config.ts');
-const { stockCompReport } = await import('@ct/core');
+const { stockCompReport } = await import('@kosmitor/core');
 
 const api: Server = createServer((req, res) => { void handle(req, res); });
 await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));

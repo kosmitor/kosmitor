@@ -1,26 +1,27 @@
 {
-  "name": "captable-monorepo",
+  "name": "kosmitor",
   "private": true,
   "version": "1.0.0",
+  "license": "MPL-2.0",
   "type": "module",
   "workspaces": [
     "packages/*",
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@ct/server & npm run dev --workspace=@ct/web",
-    "start": "npm start --workspace=@ct/server",
-    "dev:server": "npm run dev --workspace=@ct/server",
-    "dev:web": "npm run dev --workspace=@ct/web",
-    "build": "npm run build --workspace=@ct/core && npm run build --workspace=@ct/web",
-    "test": "npm run test --workspace=@ct/core && npm run test --workspace=@ct/server",
-    "sample": "npm run sample --workspace=@ct/server --",
-    "reconcile": "npm run reconcile --workspace=@ct/server --",
-    "seed": "npm run seed --workspace=@ct/server",
-    "backup": "npm run backup --workspace=@ct/server --",
-    "db:create": "npm run db:create --workspace=@ct/server",
-    "db:migrate-sqlite": "npm run db:migrate-sqlite --workspace=@ct/server --",
-    "config:docs": "npm run config:docs --workspace=@ct/server --",
-    "emails:preview": "npm run emails:preview --workspace=@ct/server --"
+    "dev": "npm run dev --workspace=@kosmitor/server & npm run dev --workspace=@kosmitor/web",
+    "start": "npm start --workspace=@kosmitor/server",
+    "dev:server": "npm run dev --workspace=@kosmitor/server",
+    "dev:web": "npm run dev --workspace=@kosmitor/web",
+    "build": "npm run build --workspace=@kosmitor/core && npm run build --workspace=@kosmitor/web",
+    "test": "npm run test --workspace=@kosmitor/core && npm run test --workspace=@kosmitor/server",
+    "sample": "npm run sample --workspace=@kosmitor/server --",
+    "reconcile": "npm run reconcile --workspace=@kosmitor/server --",
+    "seed": "npm run seed --workspace=@kosmitor/server --",
+    "backup": "npm run backup --workspace=@kosmitor/server --",
+    "db:create": "npm run db:create --workspace=@kosmitor/server",
+    "db:migrate-sqlite": "npm run db:migrate-sqlite --workspace=@kosmitor/server --",
+    "config:docs": "npm run config:docs --workspace=@kosmitor/server --",
+    "emails:preview": "npm run emails:preview --workspace=@kosmitor/server --"
   }
 }

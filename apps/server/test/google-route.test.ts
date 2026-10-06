@@ -77,7 +77,7 @@ test('a valid Google ID token signs in: account created, cookie and bearer token
   assert.equal(body.user.name, 'Avery Stone');
   assert.equal(body.user.authProvider, 'GOOGLE');
   assert.equal(body.user.avatarUrl, 'https://lh3.googleusercontent.com/a/photo');
-  assert.match(res.headers.get('set-cookie') ?? '', /^ct_session=[^;]+; HttpOnly; SameSite=Lax; Path=\//);
+  assert.match(res.headers.get('set-cookie') ?? '', /^kosmitor_session=[^;]+; HttpOnly; SameSite=Lax; Path=\//);
 
   const me = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${body.token}` } });
   assert.equal(me.status, 200);

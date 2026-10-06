@@ -14,7 +14,7 @@ import {
   computeCapTable, ownershipByGroup, computePoolSummaries, complianceSummary,
   activeValuation, today, formatShares, formatPPS, formatMoney, formatPct,
   type CompanyData, type ComplianceOptions,
-} from '@ct/core';
+} from '@kosmitor/core';
 import { config } from '../config.ts';
 
 const line = (label: string, value: string | number): string => `${label}: ${value}`;

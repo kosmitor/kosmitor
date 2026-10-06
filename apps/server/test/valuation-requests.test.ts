@@ -43,7 +43,7 @@ const limits = () => config().valuationDesk;
 const { getCompanyData, invalidate } = await import('../src/store.ts');
 const { run, one, all } = await import('../src/db.ts');
 const { parseXlsx, readZip } = await import('../src/import/xlsx.ts');
-const { longDate } = await import('@ct/core');
+const { longDate } = await import('@kosmitor/core');
 
 // --- Mail, as the console transport prints it ---------------------------------
 interface Sent { to: string; subject: string; text: string }

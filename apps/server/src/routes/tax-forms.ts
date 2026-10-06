@@ -8,7 +8,7 @@
 import { route, audit, notFound, forbidden, badRequest } from '../http.ts';
 import { all, one } from '../db.ts';
 import { getCompanyData, cancellationDates } from '../store.ts';
-import { election83bRows, form3921Rows, activeValuation, today } from '@ct/core';
+import { election83bRows, form3921Rows, activeValuation, today } from '@kosmitor/core';
 import { esc, page, sendHtml } from './certificates.ts';
 
 const usd = (cents: number): string => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

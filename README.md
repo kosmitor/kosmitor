@@ -8,6 +8,13 @@ The interesting part is `packages/core` — a dependency-free domain engine that
 the real financial math, covered by tests whose expected values are derived from
 the underlying rules rather than from the code.
 
+> **Not legal, tax or financial advice.** Kosmitor computes ownership, vesting,
+> conversions, waterfalls, compliance checks and tax estimates to help you manage
+> equity records. Its results can be wrong or incomplete, and the rules it models
+> change. Check every figure and filing with a qualified attorney, accountant or
+> valuation provider before you rely on it. The software comes with no warranty;
+> see the [license](LICENSE).
+
 ## Running it
 
 You need PostgreSQL 14 or newer running locally (Homebrew: `brew install postgresql@17 && brew services start postgresql@17`).
@@ -27,7 +34,8 @@ To have the sign-in page show that login and fill it in, put
 
 > **Do not run `npm run seed` on a database you care about.** It builds an older demo
 > company, and to do so it first **deletes every company in the database**, along with
-> every session. Use it only on a throwaway database.
+> every session. It refuses to run without `--yes` (`npm run seed -- --yes`). Use it
+> only on a throwaway database.
 
 ```bash
 npm test              # engine tests, then server tests (each server test file gets its own scratch database)
@@ -83,7 +91,7 @@ variables win over both files, for values that differ per deployment: `APP_URL`,
 `apps/server/.env` (copy `apps/server/.env.example`).
 
 Secrets never go in either file. `DATABASE_URL`, `SMTP_URL`, `ACS_CONNECTION_STRING`,
-`CT_SECRET_KEY` and the backup job's credentials stay environment variables.
+`KOSMITOR_SECRET_KEY` and the backup job's credentials stay environment variables.
 
 The server checks the result against the schema when it starts and refuses to start
 on a misspelt key or a wrong type, naming the entry. Settings the web app needs reach

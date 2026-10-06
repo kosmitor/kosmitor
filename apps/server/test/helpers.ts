@@ -16,7 +16,7 @@ process.on('warning', (warning) => {
 });
 
 export async function freshDatabase(): Promise<string> {
-  const name = `strata_test_${randomBytes(6).toString('hex')}`;
+  const name = `kosmitor_test_${randomBytes(6).toString('hex')}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });
   await admin.connect();
   await admin.query(`CREATE DATABASE ${name}`);

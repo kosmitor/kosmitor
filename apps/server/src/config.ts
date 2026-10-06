@@ -8,7 +8,7 @@
  *   3. A few environment variables for values that differ per deployment
  *      (APP_URL, PORT, MAIL_FROM and the others in ENV below).
  * Secrets never go in either file: DATABASE_URL, SMTP_URL, ACS_CONNECTION_STRING,
- * CT_SECRET_KEY and the backup credentials stay environment variables.
+ * KOSMITOR_SECRET_KEY and the backup credentials stay environment variables.
  *
  * The merged result is checked against kosmitor.config.schema.json, so a typo or a
  * wrong type stops the server at start with the exact entry named, rather than
@@ -17,7 +17,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import { configureEngine, enginePolicyFrom, resetEngine, type KosmitorConfig, type PublicConfig, type VestingSchedule } from '@ct/core';
+import { configureEngine, enginePolicyFrom, resetEngine, type KosmitorConfig, type PublicConfig, type VestingSchedule } from '@kosmitor/core';
 import { SERVER_DIR } from './env.ts';
 
 export type { KosmitorConfig, PublicConfig };

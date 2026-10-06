@@ -65,7 +65,7 @@ import {
   valuationRefresh, describeRefreshTrigger, computeCapTable, computePoolSummaries, awardPosition, awardIsLive,
   normalizeSplits, longDate, isTransferIssuance, formatMoney, formatPPS, formatShares, today, daysBetween, fiscalYear,
   type Choice, type CompanyData, type RefreshTrigger, type ValuationRefresh,
-} from '@ct/core';
+} from '@kosmitor/core';
 
 /** The roles that see the whole company. Everyone else sees only their own holdings. */
 const FULL_VIEW = ['ADMIN', 'LEGAL', 'BOARD', 'VIEWER'];

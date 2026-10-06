@@ -1,6 +1,7 @@
 {
-  "name": "@ct/server",
+  "name": "@kosmitor/server",
   "version": "1.0.0",
+  "license": "MPL-2.0",
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.ts",
@@ -12,11 +13,11 @@
     "db:create": "node src/db-create.ts",
     "db:migrate-sqlite": "node src/migrate-sqlite.ts",
     "config:docs": "node src/config-docs.ts",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test --test-concurrency=4 test/*.test.ts",
     "emails:preview": "node src/email-preview.ts"
   },
   "dependencies": {
-    "@ct/core": "*",
+    "@kosmitor/core": "*",
     "pg": "^8.23.0"
   },
   "devDependencies": {

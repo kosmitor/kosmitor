@@ -17,7 +17,7 @@ import { PROVIDERS, isProvider, complete, ProviderError, type ChatMessage, type 
 import { captableSnapshot, SYSTEM_PROMPT } from '../ai/context.ts';
 import { complianceOptionsFor } from './analytics.ts';
 import { config } from '../config.ts';
-import { today } from '@ct/core';
+import { today } from '@kosmitor/core';
 
 // How much of the conversation travels with each question (ai.historyTurns; older
 // turns fall away) and how long a question may be (ai.maxQuestionChars) are settings.
@@ -121,7 +121,7 @@ async function ownedChat(ctx: { params: Record<string, string>; companyId: strin
 
 const messagesOf = (chatId: string) =>
   all<{ id: string; role: string; content: string; created_at: string }>(
-    'SELECT id, role, content, created_at FROM ai_messages WHERE chat_id = ? ORDER BY created_at, id', chatId);
+    "SELECT id, role, content, created_at FROM ai_messages WHERE chat_id = ? ORDER BY created_at, CASE role WHEN 'user' THEN 0 ELSE 1 END, id", chatId);
 
 const shape = (chat: { id: string; title: string; created_at: string; updated_at: string }) =>
   ({ id: chat.id, title: chat.title, createdAt: chat.created_at, updatedAt: chat.updated_at });

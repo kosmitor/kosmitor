@@ -130,7 +130,7 @@ export interface FolderExpansion {
   reveal: (path: string) => void;
 }
 
-const storeFor = (companyId: string) => `ct_documents_closed_${companyId}`;
+const storeFor = (companyId: string) => `kosmitor_documents_closed_${companyId}`;
 /** One empty set, so a render with nothing closed does not look like a change to everything that depends on it. */
 const NOTHING_CLOSED: ReadonlySet<string> = new Set();
 

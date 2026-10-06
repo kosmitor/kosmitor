@@ -14,7 +14,7 @@ import { getCompanyData } from '../store.ts';
 import { documentsFor, timelineFor, holderOf, hiddenFrom } from './detail-shared.ts';
 import {
   computeCapTable, summarizeVesting, vestingCurve, activeValuation, today, shareValue, businessDayOnOrAfter,
-} from '@ct/core';
+} from '@kosmitor/core';
 
 /**
  * An 83(b) election must be filed within 30 days of the transfer. A thirtieth day on a

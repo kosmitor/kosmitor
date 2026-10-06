@@ -15,7 +15,7 @@ import { renderEmail, type EmailContent } from '../email.ts';
 import { config, mailSignature } from '../config.ts';
 import { templateFor, renderTemplate, ENTITY_WORDS, usd, type MergeContext } from '../templates.ts';
 import { convertibleFace } from '../certificate-face.ts';
-import { today } from '@ct/core';
+import { today } from '@kosmitor/core';
 
 export const INSTRUMENT_NAMES: Record<string, string> = { SAFE_POST: 'Post-money SAFE', SAFE_PRE: 'Pre-money SAFE', NOTE: 'Convertible note', KISS: 'KISS' };
 const COMPOUNDING_WORDS: Record<string, string> = { SIMPLE: 'simple interest', ANNUAL: 'compounded annually', MONTHLY: 'compounded monthly', DAILY: 'compounded daily' };

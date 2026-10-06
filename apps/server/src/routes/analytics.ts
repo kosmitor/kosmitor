@@ -14,7 +14,7 @@ import {
   type CompanyData, type Award,
   election83bRows, form3921Rows, form3921Status, form3921Deadlines, beneficialOwnershipReport, type BoiStatus,
   stockCompReport, type StockCompAssumptions,
-} from '@ct/core';
+} from '@kosmitor/core';
 
 const asOfOf = (ctx: { query: URLSearchParams }): string => ctx.query.get('asOf') || today();
 const flag = (ctx: { query: URLSearchParams }, key: string, dflt: boolean): boolean => {

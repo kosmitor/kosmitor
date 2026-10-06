@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './session.tsx';
 import { Avatar, Button, Loading, cx } from './ui.tsx';
@@ -8,53 +8,53 @@ import { SearchPalette, SearchButton } from './search.tsx';
 import { config, PRODUCT } from './config.ts';
 
 import SignIn from './pages/SignIn.tsx';
-import ResetPassword from './pages/ResetPassword.tsx';
+const ResetPassword = lazy(() => import('./pages/ResetPassword.tsx'));
 import { MustChangePasswordGate } from './account.tsx';
-import Dashboard from './pages/Dashboard.tsx';
-import CapTable from './pages/CapTable.tsx';
-import Stakeholders from './pages/Stakeholders.tsx';
-import StakeholderDetail from './pages/StakeholderDetail.tsx';
-import ShareClasses from './pages/ShareClasses.tsx';
-import Certificates from './pages/Certificates.tsx';
-import CertificateDetail from './pages/CertificateDetail.tsx';
-import Grants from './pages/Grants.tsx';
-import AwardDetail from './pages/AwardDetail.tsx';
-import Offers from './pages/Offers.tsx';
-import OfferView from './pages/OfferView.tsx';
-import ValuationDesk from './pages/ValuationDesk.tsx';
-import Convertibles from './pages/Convertibles.tsx';
-import ConvertibleDetail from './pages/ConvertibleDetail.tsx';
-import Warrants from './pages/Warrants.tsx';
-import WarrantDetail from './pages/WarrantDetail.tsx';
-import ValuationDetail from './pages/ValuationDetail.tsx';
-import Plans from './pages/Plans.tsx';
-import ModelRound from './pages/ModelRound.tsx';
-import ModelExit from './pages/ModelExit.tsx';
-import Compliance from './pages/Compliance.tsx';
-import Documents from './pages/Documents.tsx';
-import Templates from './pages/Templates.tsx';
-import Updates from './pages/Updates.tsx';
-import Calculator from './pages/Calculator.tsx';
-import Consents from './pages/Consents.tsx';
-import Ledger from './pages/Ledger.tsx';
-import Reports from './pages/Reports.tsx';
-import ReportBuilder from './pages/ReportBuilder.tsx';
-import StockComp from './pages/StockComp.tsx';
-import AuditLog from './pages/AuditLog.tsx';
-import Team from './pages/Team.tsx';
-import Company from './pages/Company.tsx';
-import Portal from './pages/Portal.tsx';
-import Preferences from './pages/Preferences.tsx';
+const Dashboard = lazy(() => import('./pages/Dashboard.tsx'));
+const CapTable = lazy(() => import('./pages/CapTable.tsx'));
+const Stakeholders = lazy(() => import('./pages/Stakeholders.tsx'));
+const StakeholderDetail = lazy(() => import('./pages/StakeholderDetail.tsx'));
+const ShareClasses = lazy(() => import('./pages/ShareClasses.tsx'));
+const Certificates = lazy(() => import('./pages/Certificates.tsx'));
+const CertificateDetail = lazy(() => import('./pages/CertificateDetail.tsx'));
+const Grants = lazy(() => import('./pages/Grants.tsx'));
+const AwardDetail = lazy(() => import('./pages/AwardDetail.tsx'));
+const Offers = lazy(() => import('./pages/Offers.tsx'));
+const OfferView = lazy(() => import('./pages/OfferView.tsx'));
+const ValuationDesk = lazy(() => import('./pages/ValuationDesk.tsx'));
+const Convertibles = lazy(() => import('./pages/Convertibles.tsx'));
+const ConvertibleDetail = lazy(() => import('./pages/ConvertibleDetail.tsx'));
+const Warrants = lazy(() => import('./pages/Warrants.tsx'));
+const WarrantDetail = lazy(() => import('./pages/WarrantDetail.tsx'));
+const ValuationDetail = lazy(() => import('./pages/ValuationDetail.tsx'));
+const Plans = lazy(() => import('./pages/Plans.tsx'));
+const ModelRound = lazy(() => import('./pages/ModelRound.tsx'));
+const ModelExit = lazy(() => import('./pages/ModelExit.tsx'));
+const Compliance = lazy(() => import('./pages/Compliance.tsx'));
+const Documents = lazy(() => import('./pages/Documents.tsx'));
+const Templates = lazy(() => import('./pages/Templates.tsx'));
+const Updates = lazy(() => import('./pages/Updates.tsx'));
+const Calculator = lazy(() => import('./pages/Calculator.tsx'));
+const Consents = lazy(() => import('./pages/Consents.tsx'));
+const Ledger = lazy(() => import('./pages/Ledger.tsx'));
+const Reports = lazy(() => import('./pages/Reports.tsx'));
+const ReportBuilder = lazy(() => import('./pages/ReportBuilder.tsx'));
+const StockComp = lazy(() => import('./pages/StockComp.tsx'));
+const AuditLog = lazy(() => import('./pages/AuditLog.tsx'));
+const Team = lazy(() => import('./pages/Team.tsx'));
+const Company = lazy(() => import('./pages/Company.tsx'));
+const Portal = lazy(() => import('./pages/Portal.tsx'));
+const Preferences = lazy(() => import('./pages/Preferences.tsx'));
 import { AccountMenu } from './AccountMenu.tsx';
 import { AssistantLauncher } from './assistant/AssistantLauncher.tsx';
 import { AssistantPanelProvider, useAssistantPanel } from './assistant/shared.tsx';
-import Onboarding from './pages/Onboarding.tsx';
-import ImportData from './pages/Import.tsx';
+const Onboarding = lazy(() => import('./pages/Onboarding.tsx'));
+const ImportData = lazy(() => import('./pages/Import.tsx'));
 
 const NAV_LINK = 'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors';
 const NAV_ACTIVE = 'bg-brand-50 text-brand-700';
 const NAV_IDLE = 'text-ink-800 hover:bg-ink-50 hover:text-ink-950';
-const SECTIONS_KEY = 'ct_nav_sections';
+const SECTIONS_KEY = 'kosmitor_nav_sections';
 
 /** Whether the current page belongs to a sidebar item: its own route or one of its sub-items, which may live at their own paths. */
 function isWithin(item: NavItem, pathname: string): boolean {
@@ -278,6 +278,7 @@ function Shell() {
         )}
         {/* Room at the foot of every page, so the round assistant button never sits over its last row. */}
         <main className={cx('mx-auto max-w-[1600px] px-4 pt-6 sm:px-6 lg:px-8', canViewAll && config.ai.enabled ? 'pb-24' : 'pb-6')}>
+          <Suspense fallback={<Loading label="Loading" />}>
           <Routes>
             {!canViewAll ? (
               // Employees and investors see their own equity and documents; the API refuses everything else.
@@ -332,6 +333,7 @@ function Shell() {
               </>
             )}
           </Routes>
+          </Suspense>
         </main>
       </div>
       <AssistantLauncher />
@@ -347,5 +349,7 @@ function OpenAssistant() {
 }
 
 export default function App() {
-  return <SessionProvider><AssistantPanelProvider><Shell /></AssistantPanelProvider></SessionProvider>;
+  // Pages load on first visit, so the first screen does not wait for all of them.
+  const page = <div className="grid min-h-screen place-items-center"><Loading label="Loading" /></div>;
+  return <SessionProvider><AssistantPanelProvider><Suspense fallback={page}><Shell /></Suspense></AssistantPanelProvider></SessionProvider>;
 }

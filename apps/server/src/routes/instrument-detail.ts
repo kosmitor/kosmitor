@@ -16,7 +16,7 @@ import { config } from '../config.ts';
 import {
   computeCapTable, computePoolSummaries, summarizeVesting, vestingCurve, awardPosition, awardIsLive,
   isoHundredKTest, modelConvertibleStack, activeValuation, today, shareValue, addMonths, splitFactor,
-} from '@ct/core';
+} from '@kosmitor/core';
 
 // --- Equity award -----------------------------------------------------------
 

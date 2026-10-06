@@ -25,7 +25,7 @@ const { parseXlsx } = await import('../src/import/xlsx.ts');
 const { detectSheet, guessHeaderRow } = await import('../src/import/values.ts');
 const { runWorkbook } = await import('../src/import/engine.ts');
 const { getCompanyData } = await import('../src/store.ts');
-const { computeCapTable, addMonths, addDays, daysBetween } = await import('@ct/core');
+const { computeCapTable, addMonths, addDays, daysBetween } = await import('@kosmitor/core');
 const { one, all } = await import('../src/db.ts');
 
 const api: Server = createServer((req, res) => { void handle(req, res); });

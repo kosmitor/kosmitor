@@ -76,7 +76,7 @@ const isProduction = (): boolean => process.env.NODE_ENV === 'production';
 
 /** The session token behind a request, however it was sent. */
 function sessionTokenOf(ctx: { req: { headers: Record<string, string | string[] | undefined> } }): string | null {
-  const cookie = String(ctx.req.headers.cookie ?? '').match(/(?:^|;\s*)ct_session=([^;]+)/);
+  const cookie = String(ctx.req.headers.cookie ?? '').match(/(?:^|;\s*)kosmitor_session=([^;]+)/);
   if (cookie) return decodeURIComponent(cookie[1]);
   const auth = String(ctx.req.headers.authorization ?? '');
   return auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
@@ -470,7 +470,7 @@ route.post('/api/auth/google', 'public', async (ctx) => {
 });
 
 route.post('/api/auth/logout', 'public', async (ctx) => {
-  const header = (ctx.req.headers.cookie ?? '').match(/ct_session=([^;]+)/);
+  const header = (ctx.req.headers.cookie ?? '').match(/kosmitor_session=([^;]+)/);
   if (header) await destroySession(decodeURIComponent(header[1]));
   clearSessionCookie(ctx.res);
   return { ok: true };

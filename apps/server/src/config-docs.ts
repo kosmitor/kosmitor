@@ -26,7 +26,7 @@ const ENVIRONMENT_ONLY: { name: string; what: string }[] = [
   { name: 'DATABASE_URL', what: 'PostgreSQL connection string. Default `postgres://localhost:5432/kosmitor`.' },
   { name: 'SMTP_URL', what: 'Send mail through an SMTP server: `smtp://user:pass@host:587` (STARTTLS) or `smtps://user:pass@host:465`.' },
   { name: 'ACS_CONNECTION_STRING', what: 'Send mail through Azure Communication Services; wins over `SMTP_URL`. Neither set: messages are printed to the log.' },
-  { name: 'CT_SECRET_KEY', what: 'Encrypts the API keys people give the assistant. Without it the server keeps a generated key in its own table.' },
+  { name: 'KOSMITOR_SECRET_KEY', what: 'Encrypts the API keys people give the assistant. Without it the server keeps a generated key in its own table.' },
   { name: 'BACKUP_ACCOUNT_URL', what: 'Blob endpoint of the storage account the backup job writes to.' },
   { name: 'AZURE_CLIENT_ID', what: 'Managed identity the backup job signs in to storage with.' },
   { name: 'BACKUP_TOKEN', what: 'A storage bearer token for running the backup job by hand instead.' },

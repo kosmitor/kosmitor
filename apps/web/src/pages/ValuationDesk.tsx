@@ -63,7 +63,7 @@ interface DeskRequest {
   report?: DeskReport | null;
 }
 
-const TOKEN_KEY = 'ct_desk_token';
+const TOKEN_KEY = 'kosmitor_desk_token';
 
 /** The token from the link, read once and moved out of the address bar. */
 function takeToken(): string | null {

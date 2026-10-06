@@ -276,7 +276,7 @@ export default function Company() {
                 try {
                   await api(`/c/${companyId}?confirm=${encodeURIComponent(confirmName.trim())}`, { method: 'DELETE' });
                   toast('Company deleted');
-                  localStorage.removeItem('ct_company');
+                  localStorage.removeItem('kosmitor_company');
                   await refresh();
                   navigate('/', { replace: true });
                 } catch (err) { toast((err as Error).message, 'error'); } finally { setDeletingCompany(false); }
