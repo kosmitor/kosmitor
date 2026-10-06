@@ -68,6 +68,8 @@ export default function Convertibles() {
   // An MFN holder's election of one later instrument's terms, recorded as a dated ledger entry.
   const [electing, setElecting] = useState<any>(null);
   const [election, setElection] = useState({ adoptedId: '', date: today() });
+  const [settling, setSettling] = useState<{ c: any; kind: 'repay' | 'cancel' } | null>(null);
+  const [settle, setSettle] = useState({ date: today(), amount: '', reason: '' });
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
   const directors = useMemo(() => (stakeholders ?? []).filter((s) => s.relation === 'BOARD_MEMBER' || s.relation === 'FOUNDER'), [stakeholders]);
@@ -229,6 +231,15 @@ export default function Convertibles() {
       setElecting(null);
       reloadStack();
     } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
+  };
+
+  // A dated event in the ledger, so views of earlier dates still show the instrument outstanding.
+  const doSettle = async () => {
+    const { c, kind } = settling!;
+    const ok = await crud.action(`convertibles/${c.id}/${kind}`, kind === 'repay'
+      ? { date: settle.date, amount: settle.amount ? parseMoney(settle.amount) : null }
+      : { date: settle.date, reason: settle.reason || null }, kind === 'repay' ? 'Repayment recorded' : 'Instrument cancelled');
+    if (ok) setSettling(null);
   };
 
   if (crud.loading) return <Loading label="Loading convertibles" />;
@@ -420,6 +431,12 @@ export default function Convertibles() {
                             ? [{ label: mfnOf.get(c.id).mfnElection ? 'Correct the MFN election' : 'Record the MFN election', icon: 'convert' as const, onClick: () => openElection(c) }] : []),
                           ...(canEdit && pending
                             ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(c) }] : []),
+                          ...(canEdit && c.status === 'OUTSTANDING' ? [
+                            { label: 'Record repayment', icon: 'wallet' as const,
+                              onClick: () => { setSettle({ date: today(), amount: '', reason: '' }); setSettling({ c, kind: 'repay' }); } },
+                            { label: 'Cancel the instrument', icon: 'trash' as const, danger: true,
+                              onClick: () => { setSettle({ date: today(), amount: '', reason: '' }); setSettling({ c, kind: 'cancel' }); } },
+                          ] : []),
                           ...(canEdit && !pending
                             ? [{ label: 'Delete the instrument', icon: 'trash' as const, danger: true, onClick: () => setConfirmDelete(c) }] : []),
                         ]} />
@@ -728,6 +745,24 @@ export default function Convertibles() {
         title="Withdraw instrument" confirmLabel="Withdraw"
         message={<>Withdraw the {withdrawing ? INSTRUMENT_LABELS[withdrawing.instrument] : 'instrument'} for <strong>{withdrawing ? nameOf.get(withdrawing.stakeholderId) : ''}</strong> before it is issued? Its agreement and signature requests are removed; nothing was ever outstanding.</>}
         onConfirm={() => void withdraw()} />
+
+      <FormModal open={!!settling} onClose={() => setSettling(null)} busy={crud.busy} danger={settling?.kind === 'cancel'}
+        title={settling?.kind === 'repay' ? 'Record repayment' : 'Cancel instrument'}
+        submitLabel={settling?.kind === 'repay' ? 'Record repayment' : 'Record cancellation'} onSubmit={doSettle}
+        description="Closes the instrument as of a date. The ledger records it, so views of earlier dates still show it outstanding.">
+        <FormGrid>
+          <Field label={settling?.kind === 'repay' ? 'Repaid on' : 'Cancelled on'} required>
+            <Input type="date" value={settle.date} onChange={(e) => setSettle({ ...settle, date: e.target.value })} required />
+          </Field>
+          {settling?.kind === 'repay' ? (
+            <Field label="Amount repaid" hint="Principal and interest paid back. Optional.">
+              <Input value={settle.amount} onChange={(e) => setSettle({ ...settle, amount: e.target.value })} placeholder="$250,000" />
+            </Field>
+          ) : (
+            <Field label="Reason"><Input value={settle.reason} onChange={(e) => setSettle({ ...settle, reason: e.target.value })} placeholder="Recorded in error" /></Field>
+          )}
+        </FormGrid>
+      </FormModal>
 
       <ConfirmDialog open={!!confirmDelete} onClose={() => setConfirmDelete(null)} danger loading={crud.busy}
         title="Delete instrument" confirmLabel="Delete"

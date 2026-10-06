@@ -31,6 +31,10 @@ export default function Warrants() {
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
   const [documentsFor, setDocumentsFor] = useState<any>(null);
   const [reading, setReading] = useState<any>(null);
+  const [exercising, setExercising] = useState<any>(null);
+  const [exercise, setExercise] = useState({ quantity: '', exerciseDate: today(), method: 'CASH' });
+  const [closing, setClosing] = useState<any>(null);
+  const [close, setClose] = useState({ date: today(), reason: 'EXPIRED' });
   const toast = useToast();
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
@@ -84,6 +88,18 @@ export default function Warrants() {
       ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate }, 'Warrant updated')
       : await crud.create(payload, 'Warrant issued');
     if (ok) setEditing(null);
+  };
+
+  // Each is a dated event in the ledger, so past views still show the warrant as it stood.
+  const doExercise = async () => {
+    const ok = await crud.action(`warrants/${exercising.id}/exercise`,
+      { quantity: parseShares(exercise.quantity), exerciseDate: exercise.exerciseDate, method: exercise.method }, 'Warrant exercised and shares issued');
+    if (ok) setExercising(null);
+  };
+  const doClose = async () => {
+    const ok = await crud.action(`warrants/${closing.id}/cancel`, { date: close.date, reason: close.reason },
+      close.reason === 'EXPIRED' ? 'Warrant expired' : 'Warrant cancelled');
+    if (ok) setClosing(null);
   };
 
   if (crud.loading) return <Loading label="Loading warrants" />;
@@ -168,6 +184,12 @@ export default function Warrants() {
                         <ActionMenu items={[
                           { label: 'Open the warrant', icon: 'ticket', onClick: () => navigate(`/warrants/${w.id}`) },
                           { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(w) },
+                          ...(canEdit && w.status === 'OUTSTANDING' ? [
+                            { label: 'Exercise the warrant', icon: 'convert' as const,
+                              onClick: () => { setExercise({ quantity: String(outstanding), exerciseDate: today(), method: 'CASH' }); setExercising(w); } },
+                            { label: 'Cancel or expire', icon: 'trash' as const, danger: true,
+                              onClick: () => { setClose({ date: w.expirationDate && w.expirationDate <= today() ? w.expirationDate : today(), reason: 'EXPIRED' }); setClosing(w); } },
+                          ] : []),
                           ...(canEdit ? [{ label: 'Delete the warrant', icon: 'trash' as const, danger: true, onClick: () => setConfirmDelete(w) }] : []),
                         ]} />
                       </span>
@@ -216,6 +238,41 @@ export default function Warrants() {
         </FormGrid>
         <Checkbox label="Net (cashless) exercise permitted" checked={form.netExercise}
           onChange={(v) => setForm({ ...form, netExercise: v })} />
+      </FormModal>
+
+      <FormModal open={!!exercising} onClose={() => setExercising(null)} busy={crud.busy} title="Exercise warrant" submitLabel="Record exercise" onSubmit={doExercise}
+        description="Issues the shares to the holder and records a dated exercise in the ledger.">
+        {exercising && (
+          <FormGrid>
+            <Field label="Shares to exercise" required hint={`${shares(exercising.quantity - exercising.exercisedQuantity)} remain under this warrant.`}>
+              <Input value={exercise.quantity} onChange={(e) => setExercise({ ...exercise, quantity: e.target.value })} required />
+            </Field>
+            <Field label="Exercise date" required>
+              <Input type="date" value={exercise.exerciseDate} onChange={(e) => setExercise({ ...exercise, exerciseDate: e.target.value })} required />
+            </Field>
+            <Field label="Method">
+              <Select value={exercise.method} onChange={(e) => setExercise({ ...exercise, method: e.target.value })}>
+                <option value="CASH">Cash</option>
+                {!!exercising.netExercise && <option value="NET_EXERCISE">Net exercise</option>}
+              </Select>
+            </Field>
+          </FormGrid>
+        )}
+      </FormModal>
+
+      <FormModal open={!!closing} onClose={() => setClosing(null)} busy={crud.busy} danger title="Cancel or expire warrant" submitLabel="Record" onSubmit={doClose}
+        description="Closes what remains of the warrant as of a date. The ledger records it, so views of earlier dates still show the warrant.">
+        <FormGrid>
+          <Field label="What happened">
+            <Select value={close.reason} onChange={(e) => setClose({ ...close, reason: e.target.value })}>
+              <option value="EXPIRED">It expired</option>
+              <option value="CANCELLED">It was cancelled</option>
+            </Select>
+          </Field>
+          <Field label="Date" required>
+            <Input type="date" value={close.date} onChange={(e) => setClose({ ...close, date: e.target.value })} required />
+          </Field>
+        </FormGrid>
       </FormModal>
 
       {/* Closing the dialog is when anything just attached should reach the row behind it. */}

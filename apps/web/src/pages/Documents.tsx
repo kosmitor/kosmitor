@@ -419,7 +419,11 @@ export default function Documents() {
         </span>
       ),
       <span className="text-ink-600">{date(d.createdAt?.slice(0, 10))}</span>,
-      <StatusBadge status={d.status} />,
+      <span className="flex flex-wrap items-center gap-1">
+        <StatusBadge status={d.status} />
+        {/* The server found text that no longer matches what a signer signed. */}
+        {d.tampered && <Badge tone="danger">Changed after signing</Badge>}
+      </span>,
       actionsFor(d),
     ];
   };
