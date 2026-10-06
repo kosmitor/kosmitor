@@ -164,6 +164,10 @@ export default function Certificates() {
   /** An issued certificate whose holder, class or date is being changed: a correction that needs a reason. */
   const retyped = !!editing?.id && editing.status !== 'PENDING_SIGNATURE'
     && (form.stakeholderId !== editing.stakeholderId || form.shareClassId !== editing.shareClassId || form.issueDate !== editing.issueDate);
+  /** An issued certificate whose count, price or vesting changes: a correction dated in the ledger. */
+  const redated = !!editing?.id && (parseShares(form.quantity) !== Number(editing.quantity)
+    || parsePPS(form.pricePerShare) !== Number(editing.pricePerShare) || (form.vestingScheduleId || null) !== (editing.vestingScheduleId ?? null)
+    || (form.vestingStartDate || (form.vestingScheduleId ? form.issueDate : null)) !== (editing.vestingStartDate ?? null));
   const signedCertificate = (i: any) => (documentsOf.get(i.id) ?? []).some((d: any) => d.category === 'CERTIFICATE' && d.status === 'EXECUTED');
 
   const save = async () => {
@@ -172,7 +176,7 @@ export default function Certificates() {
       shareClassId: form.shareClassId, quantity: parseShares(form.quantity),
       pricePerShare: parsePPS(form.pricePerShare), issueDate: form.issueDate,
       vestingScheduleId: form.vestingScheduleId || null,
-      vestingStartDate: form.vestingStartDate || form.issueDate,
+      vestingStartDate: form.vestingStartDate || (form.vestingScheduleId ? form.issueDate : null),
       earlyExercised: form.earlyExercised,
       election83bFiledOn: form.election83bFiledOn || null,
       boardApprovalDate: form.boardApprovalDate || null, notes: form.notes || null,
@@ -484,8 +488,8 @@ export default function Certificates() {
           <Field label="Number of shares" required>
             <Input value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="1,000,000" required />
           </Field>
-          {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
-            <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count was always wrong.">
+          {redated && (
+            <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count or terms were always wrong.">
               <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
             </Field>
           )}

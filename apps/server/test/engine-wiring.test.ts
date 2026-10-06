@@ -142,9 +142,8 @@ test('a leaver\'s unvested options leave the grant page and the appraiser\'s wor
   // exercise window closed.
   const c = await newCompany('Leaver Co', 5_000_000);
   const leaver = (await call('POST', `/api/c/${c.cid}/stakeholders`, { name: 'Wynn Asante', type: 'INDIVIDUAL', relation: 'EMPLOYEE' }, admin)).json.id as string;
-  const id = await grant(c, leaver, {});
+  const id = await grant(c, leaver, { ptepMonths: 1200 });
   await run("UPDATE stakeholders SET termination_date = '2024-07-01' WHERE id = ?", leaver);
-  await run("UPDATE awards SET ptep_months = 1200 WHERE id = ?", id);
   invalidate(c.cid);
   const detail = await call('GET', `/api/c/${c.cid}/awards/${id}/detail`, undefined, admin);
   assert.equal(detail.status, 200, JSON.stringify(detail.json));

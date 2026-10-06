@@ -896,7 +896,8 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reason TEXT;
 
 -- Every change to a security's dated state is a dated ledger entry (docs/design/dated-ledger.md).
 -- The database holds every writer to it, not only the routes: an INSERT, a DELETE, or an UPDATE
--- of a column below on issuances, awards, warrants or convertibles fails at COMMIT unless the
+-- of a column below (holder, class or plan, counts, own date, status, conversion, and the terms in
+-- CORRECTED_TERMS, packages/core/src/types.ts) on issuances, awards, warrants or convertibles fails at COMMIT unless the
 -- same transaction also wrote a transactions row for that security, and a change to a stock
 -- split unless it wrote a company STOCK_SPLIT entry. The check is deferred, so the entry may
 -- follow the change. A row not yet issued (draft, awaiting approval or signatures) is not on
@@ -933,24 +934,26 @@ DROP TRIGGER IF EXISTS ledger_required_write ON issuances;
 CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON issuances DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
 DROP TRIGGER IF EXISTS ledger_required_update ON issuances;
 CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON issuances DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-  WHEN ((OLD.stakeholder_id, OLD.share_class_id, OLD.quantity, OLD.issue_date, OLD.status)
-    IS DISTINCT FROM (NEW.stakeholder_id, NEW.share_class_id, NEW.quantity, NEW.issue_date, NEW.status))
+  WHEN ((OLD.stakeholder_id, OLD.share_class_id, OLD.quantity, OLD.issue_date, OLD.status, OLD.price_per_share, OLD.vesting_schedule_id, OLD.vesting_start_date)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.share_class_id, NEW.quantity, NEW.issue_date, NEW.status, NEW.price_per_share, NEW.vesting_schedule_id, NEW.vesting_start_date))
   EXECUTE FUNCTION ledger_entry_required();
 
 DROP TRIGGER IF EXISTS ledger_required_write ON awards;
 CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON awards DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
 DROP TRIGGER IF EXISTS ledger_required_update ON awards;
 CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON awards DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-  WHEN ((OLD.stakeholder_id, OLD.pool_id, OLD.quantity, OLD.grant_date, OLD.status, OLD.exercised_quantity, OLD.cancelled_quantity)
-    IS DISTINCT FROM (NEW.stakeholder_id, NEW.pool_id, NEW.quantity, NEW.grant_date, NEW.status, NEW.exercised_quantity, NEW.cancelled_quantity))
+  WHEN ((OLD.stakeholder_id, OLD.pool_id, OLD.quantity, OLD.grant_date, OLD.status, OLD.exercised_quantity, OLD.cancelled_quantity,
+         OLD.type, OLD.strike_price, OLD.vesting_start_date, OLD.vesting_schedule_id, OLD.expiration_date, OLD.ptep_months, OLD.fmv_at_grant)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.pool_id, NEW.quantity, NEW.grant_date, NEW.status, NEW.exercised_quantity, NEW.cancelled_quantity,
+         NEW.type, NEW.strike_price, NEW.vesting_start_date, NEW.vesting_schedule_id, NEW.expiration_date, NEW.ptep_months, NEW.fmv_at_grant))
   EXECUTE FUNCTION ledger_entry_required();
 
 DROP TRIGGER IF EXISTS ledger_required_write ON warrants;
 CREATE CONSTRAINT TRIGGER ledger_required_write AFTER INSERT OR DELETE ON warrants DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ledger_entry_required();
 DROP TRIGGER IF EXISTS ledger_required_update ON warrants;
 CREATE CONSTRAINT TRIGGER ledger_required_update AFTER UPDATE ON warrants DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-  WHEN ((OLD.stakeholder_id, OLD.share_class_id, OLD.quantity, OLD.issue_date, OLD.status, OLD.exercised_quantity)
-    IS DISTINCT FROM (NEW.stakeholder_id, NEW.share_class_id, NEW.quantity, NEW.issue_date, NEW.status, NEW.exercised_quantity))
+  WHEN ((OLD.stakeholder_id, OLD.share_class_id, OLD.quantity, OLD.issue_date, OLD.status, OLD.exercised_quantity, OLD.strike_price, OLD.expiration_date)
+    IS DISTINCT FROM (NEW.stakeholder_id, NEW.share_class_id, NEW.quantity, NEW.issue_date, NEW.status, NEW.exercised_quantity, NEW.strike_price, NEW.expiration_date))
   EXECUTE FUNCTION ledger_entry_required();
 
 DROP TRIGGER IF EXISTS ledger_required_write ON convertibles;
