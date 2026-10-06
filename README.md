@@ -92,7 +92,7 @@ entries you change:
 
 To keep the file somewhere else, point `KOSMITOR_CONFIG` at it. A few environment
 variables win over both files, for values that differ per deployment: `APP_URL`,
-`PORT`, `ALLOWED_ORIGINS`, `TRUST_PROXY`, `PG_POOL_MAX`, `MAIL_FROM`,
+`PORT`, `ALLOWED_ORIGINS`, `TRUST_PROXY`, `VERIFY_EMAIL`, `PG_POOL_MAX`, `MAIL_FROM`,
 `GOOGLE_CLIENT_ID`, `GOOGLE_ALLOWED_DOMAINS`, `VALUATION_DESK_EMAIL`,
 `BACKUP_CONTAINER`, `BACKUP_PREFIX` and `DRILL_DATABASE`. They can live in
 `apps/server/.env` (copy `apps/server/.env.example`).

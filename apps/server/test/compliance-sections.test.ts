@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -31,11 +31,11 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { json = text; }
-  return { status: res.status, json, headers: res.headers };
+  return { status: res.status, json, headers: res.headers, token: sessionCookie(res) };
 }
 
 test('83(b), Form 3921 and BOI sections read from the cap table; filings and the BOI status change what they report', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Sections Co', jurisdiction: 'Delaware' }, admin)).json.id as string;
   const now = new Date().toISOString();
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
@@ -114,12 +114,12 @@ test('83(b), Form 3921 and BOI sections read from the cap table; filings and the
   const marcus = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'marcus-pass-1',
-  })).json.token as string;
+  })).token as string;
   assert.equal((await call('GET', `/api/c/${cid}/compliance/form-3921`, undefined, marcus)).status, 403);
 });
 
 test('the findings come with every area checked and the scoring, and the dashboard shows the same score', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'rowan@example.com', name: 'Rowan Hale', password: 'rowan-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'rowan@example.com', name: 'Rowan Hale', password: 'rowan-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Score Co', jurisdiction: 'Delaware' }, admin)).json.id as string;
   // A reporting company with no report on file: a must-fix finding the dashboard used to leave out.
   const set = await call('PATCH', `/api/c/${cid}`, { boiStatus: 'REQUIRED' }, admin);

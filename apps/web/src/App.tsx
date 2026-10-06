@@ -9,6 +9,7 @@ import { config, PRODUCT } from './config.ts';
 
 import SignIn from './pages/SignIn.tsx';
 const ResetPassword = lazy(() => import('./pages/ResetPassword.tsx'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail.tsx'));
 import { MustChangePasswordGate } from './account.tsx';
 const Dashboard = lazy(() => import('./pages/Dashboard.tsx'));
 const CapTable = lazy(() => import('./pages/CapTable.tsx'));
@@ -247,6 +248,8 @@ function Shell() {
   }
   // The reset link from an email lands here signed out — and works while signed in too.
   if (pathname === '/reset-password') return <ResetPassword />;
+  // So does the link from the welcome email that confirms a new account's address.
+  if (pathname === '/verify-email') return <VerifyEmail />;
   // A candidate's offer link works without an account.
   if (pathname.startsWith('/offer/')) return <OfferView />;
   // So does the valuation team's link to a 409A request, signed in or not.

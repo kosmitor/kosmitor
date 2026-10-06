@@ -49,6 +49,9 @@ export interface Membership {
   isSample: boolean;
 }
 
+/** The stored form of a session or reset token: a dump of the database is not a way to sign in. */
+const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
   const derived = scryptSync(password, salt, 64).toString('hex');
@@ -74,13 +77,13 @@ export async function createSession(userId: string): Promise<string> {
   const now = new Date();
   const expires = new Date(now.getTime() + config().auth.sessionDays * 86_400_000);
   await insert('sessions', {
-    token, userId, createdAt: now.toISOString(), expiresAt: expires.toISOString(),
+    token: hashToken(token), userId, createdAt: now.toISOString(), expiresAt: expires.toISOString(),
   });
   return token;
 }
 
 export async function destroySession(token: string): Promise<void> {
-  await run('DELETE FROM sessions WHERE token = ?', token);
+  await run('DELETE FROM sessions WHERE token = ?', hashToken(token));
 }
 
 export async function userForToken(token: string | null): Promise<AuthUser | null> {
@@ -89,7 +92,7 @@ export async function userForToken(token: string | null): Promise<AuthUser | nul
     `SELECT u.id, u.email, u.name, u.avatar_color, u.avatar_url, u.auth_provider, u.must_change_password, u.explanations_open, u.google_sub FROM sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token = ? AND s.expires_at > ?`,
-    token, new Date().toISOString(),
+    hashToken(token), new Date().toISOString(),
   );
   if (!row) return null;
   return publicUser(toCamel<UserRow>(row)!);
@@ -122,6 +125,8 @@ export interface UserRow {
   authProvider: 'PASSWORD' | 'GOOGLE' | null; mustChangePassword: number | null;
   explanationsOpen?: number | null;
   lastLoginAt?: string | null;
+  /** When the address was shown to be the person's: a link opened from it, or Google vouching for it. */
+  emailVerifiedAt?: string | null;
 }
 
 /**
@@ -173,7 +178,15 @@ export async function upsertGoogleAccount(profile: GoogleProfile): Promise<{ use
     // A placeholder account created by an invitation has no real name yet.
     const name = byEmail.name === byEmail.email.split('@')[0] ? cleanPersonName(profile.name, byEmail.name) : byEmail.name;
     const avatarUrl = profile.picture ?? byEmail.avatarUrl;
-    await update('users', byEmail.id, { googleSub: profile.sub, avatarUrl, name, lastLoginAt: now });
+    // An account whose address was never shown to be its owner's may have been made by
+    // someone else who knew it: its password is dropped and its sessions ended, so
+    // signing in with Google here cannot hand that someone the owner's account.
+    const unproven = !byEmail.emailVerifiedAt;
+    await update('users', byEmail.id, {
+      googleSub: profile.sub, avatarUrl, name, lastLoginAt: now, emailVerifiedAt: byEmail.emailVerifiedAt ?? now,
+      ...(unproven ? { passwordHash: hashPassword(randomBytes(32).toString('hex')) } : {}),
+    });
+    if (unproven) await run('DELETE FROM sessions WHERE user_id = ?', byEmail.id);
     // Claimed this way, the account needs no invitation link any more, and nobody else may use one.
     await run("UPDATE password_resets SET used_at = ? WHERE user_id = ? AND purpose = 'INVITE' AND used_at IS NULL", now, byEmail.id);
     return { user: publicUser({ ...byEmail, name, googleSub: profile.sub, avatarUrl }), created: false };
@@ -186,7 +199,7 @@ export async function upsertGoogleAccount(profile: GoogleProfile): Promise<{ use
     id, email: profile.email, name,
     passwordHash: hashPassword(randomBytes(32).toString('hex')),
     avatarColor, avatarUrl: profile.picture, googleSub: profile.sub, authProvider: 'GOOGLE',
-    createdAt: now, lastLoginAt: now,
+    createdAt: now, lastLoginAt: now, emailVerifiedAt: now,
   });
   return {
     user: { id, email: profile.email, name, avatarColor, avatarUrl: profile.picture, authProvider: 'GOOGLE', mustChangePassword: false, explanationsOpen: false, googleLinked: true },
@@ -209,13 +222,11 @@ export function can(role: Role, action: 'read' | 'write' | 'admin'): boolean {
 
 /** The shortest password accepted, auth.passwordMinLength. */
 export const minPasswordLength = (): number => config().auth.passwordMinLength;
-const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
-
 /**
  * What a link is for: a reset, or an invitation to choose a first password. They
  * work the same way; the page and the audit log word them differently.
  */
-export type ResetPurpose = 'RESET' | 'INVITE';
+export type ResetPurpose = 'RESET' | 'INVITE' | 'VERIFY';
 
 /**
  * Issues a single-use reset link token. Only its hash is stored, earlier
@@ -265,7 +276,7 @@ export async function readPasswordReset(token: string): Promise<ResetLink | null
   if (!row) return null;
   const user = toCamel<UserRow>(await one('SELECT * FROM users WHERE id = ?', row.user_id));
   if (!user) return null;
-  const purpose: ResetPurpose = row.purpose === 'INVITE' ? 'INVITE' : 'RESET';
+  const purpose: ResetPurpose = row.purpose === 'INVITE' || row.purpose === 'VERIFY' ? row.purpose : 'RESET';
   if (purpose === 'INVITE') {
     if (!neverSignedIn(user)) return null;
     if (Number(row.handed_out) === 1
@@ -302,7 +313,7 @@ export async function setPassword(
   userId: string, password: string, opts: { mustChange?: boolean; keepToken?: string | null } = {},
 ): Promise<void> {
   await update('users', userId, { passwordHash: hashPassword(password), mustChangePassword: opts.mustChange ? 1 : 0 });
-  if (opts.keepToken) await run('DELETE FROM sessions WHERE user_id = ? AND token <> ?', userId, opts.keepToken);
+  if (opts.keepToken) await run('DELETE FROM sessions WHERE user_id = ? AND token <> ?', userId, hashToken(opts.keepToken));
   else await run('DELETE FROM sessions WHERE user_id = ?', userId);
 }
 

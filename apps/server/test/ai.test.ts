@@ -11,7 +11,7 @@ import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -51,12 +51,12 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 const KEY = 'sk-ant-api03-test-key-0123456789';
 
-const owner = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const owner = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Assistant Co' }, owner)).json.id as string;
 const classes = (await call('GET', `/api/c/${cid}/share-classes`, undefined, owner)).json;
 const holder = (await call('POST', `/api/c/${cid}/stakeholders`, { name: 'Avery Stone', type: 'INDIVIDUAL', relation: 'FOUNDER' }, owner)).json;
@@ -134,7 +134,7 @@ test('a refusal from the provider reaches the person, and nothing is written', a
 
 test('conversations belong to the person who had them', async () => {
   const chat = (await call('POST', `/api/c/${cid}/ai/chats`, {}, owner)).json;
-  const other = (await call('POST', '/api/auth/register', { email: 'sam@example.com', name: 'Sam Reed', password: 'sam-pass-12' })).json.token as string;
+  const other = (await call('POST', '/api/auth/register', { email: 'sam@example.com', name: 'Sam Reed', password: 'sam-pass-12' })).token as string;
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'sam@example.com', name: 'Sam Reed', role: 'ADMIN' }, owner);
   assert.equal(invite.status, 200, JSON.stringify(invite.json));
 
@@ -148,7 +148,7 @@ test('conversations belong to the person who had them', async () => {
 });
 
 test('without a key the assistant says so instead of failing', async () => {
-  const other = (await call('POST', '/api/auth/register', { email: 'lee@example.com', name: 'Lee Park', password: 'lee-pass-123' })).json.token as string;
+  const other = (await call('POST', '/api/auth/register', { email: 'lee@example.com', name: 'Lee Park', password: 'lee-pass-123' })).token as string;
   await call('POST', `/api/c/${cid}/members`, { email: 'lee@example.com', name: 'Lee Park', role: 'ADMIN' }, owner);
   const chat = await call('POST', `/api/c/${cid}/ai/chats`, {}, other);
   const asked = await call('POST', `/api/c/${cid}/ai/chats/${chat.json.id}/messages`, { message: 'hello' }, other);
@@ -160,7 +160,7 @@ test('a role that cannot see the cap table cannot ask about it', async () => {
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'priya@example.com', name: 'Priya Raman', role: 'EMPLOYEE' }, owner);
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, owner);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const employee = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).json.token as string;
+  const employee = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).token as string;
   const chats = await call('GET', `/api/c/${cid}/ai/chats`, undefined, employee);
   assert.notEqual(chats.status, 200);
 });

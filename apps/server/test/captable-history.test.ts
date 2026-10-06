@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -25,10 +25,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'History Co', incorporationDate: '2021-01-01' }, admin)).json.id as string;
 const classes = (await call('GET', `/api/c/${cid}/share-classes`, undefined, admin)).json;
 const common = classes[0];
@@ -65,7 +65,7 @@ test('a holder who cannot see the whole register cannot see the history either',
   assert.equal(invite.status, 200, JSON.stringify(invite.json));
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const investor = (await call('POST', '/api/auth/reset', { token, password: 'northwind-pass-1' })).json.token as string;
+  const investor = (await call('POST', '/api/auth/reset', { token, password: 'northwind-pass-1' })).token as string;
 
   const r = await call('GET', `/api/c/${cid}/captable/history`, undefined, investor);
   assert.notEqual(r.status, 200, 'the dilution history is the whole cap table in another shape');

@@ -81,6 +81,8 @@ export interface KosmitorConfig {
     inviteEmailsPerAddressPerDay: number;
     passwordSignIn: boolean;
     selfSignup: boolean;
+    /** Whether signing up sends a link to open before the account can be used; needs a mail transport. */
+    verifyEmail: boolean;
     google: { clientId: string; allowedDomains: string[] };
   };
   demo: { enabled: boolean; email: string; password: string; description: string };

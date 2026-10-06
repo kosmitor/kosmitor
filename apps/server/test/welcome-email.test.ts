@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // --- a stand-in for https://www.googleapis.com/oauth2/v3/certs -------------
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -74,7 +74,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 const register = (email: string, name: string) => call('POST', '/api/auth/register', { email, name, password: 'a-long-password-1' });
 
@@ -175,7 +175,7 @@ test('a first Google sign-in that creates an account sends one welcome; signing 
 });
 
 test('an invited person gets their invitation and no welcome, before or after accepting it', async () => {
-  const owner = (await register('owen.price@example.com', 'Owen Price')).json.token as string;
+  const owner = (await register('owen.price@example.com', 'Owen Price')).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Fenwick Labs' }, owner)).json.id as string;
 
   // Accepted by choosing a password from the invitation's link.
@@ -288,7 +288,7 @@ test('a welcome email that fails does not fail the sign-up', async () => {
   try {
     const res = await register('ivy.chen@example.com', 'Ivy Chen');
     assert.equal(res.status, 200, JSON.stringify(res.json));
-    assert.equal((await call('GET', '/api/auth/me', undefined, res.json.token)).status, 200, 'signed in');
+    assert.equal((await call('GET', '/api/auth/me', undefined, res.token)).status, 200, 'signed in');
     await settled();
     assert.deepEqual((await welcomeRows('ivy.chen@example.com')).map((r) => r.action), ['WELCOME_EMAIL_FAILED']);
     assert.ok(errors.some((e) => e.includes('welcome email to ivy.chen@example.com failed') && e.includes('refused')), errors.join('\n'));

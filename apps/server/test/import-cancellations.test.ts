@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -36,10 +36,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'nadia.voss@example.com', name: 'Nadia Voss', password: 'nadia-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'nadia.voss@example.com', name: 'Nadia Voss', password: 'nadia-pass-1' })).token as string;
 const company = async (name: string) => (await call('POST', '/api/companies', { name, incorporationDate: '2021-06-01' }, admin)).json.id as string;
 
 const HEADERS = ['Optionee', 'Email', 'Grant ID', 'Grant Type', 'Granted', 'Exercise Price', 'Grant Date', 'Vesting Schedule', 'Equity Plan', 'Amount Cancelled', 'Cancellation Date'];

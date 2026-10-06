@@ -8,7 +8,7 @@
  * goes away, because an object URL pins its blob in memory until it is revoked.
  */
 import { useEffect, useState } from 'react';
-import { getToken, ApiError } from './api.ts';
+import { ApiError } from './api.ts';
 import { Spinner, ErrorNote } from './ui.tsx';
 
 /** Fetches a PDF while `enabled`, and returns an object URL for it or the reason it failed. */
@@ -25,11 +25,7 @@ export function usePdfUrl(path: string | null, enabled = true): { url: string | 
 
     void (async () => {
       try {
-        const token = getToken();
-        const res = await fetch(`/api${path}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          credentials: 'include',
-        });
+        const res = await fetch(`/api${path}`, { credentials: 'include' });
         if (!res.ok) {
           let message = 'That document could not be opened.';
           try { message = ((await res.json()) as { error?: string }).error ?? message; } catch { /* keep the default */ }

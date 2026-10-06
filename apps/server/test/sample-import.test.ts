@@ -10,7 +10,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -38,7 +38,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 /** Detects every sheet of a workbook the way the wizard does and turns the recognised ones into import requests. */
@@ -56,7 +56,7 @@ function sheetsOf(buffer: Buffer) {
 }
 
 test('the sample workbooks import like a real export and reconcile to the declared totals', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'import@example.com', name: 'Import Tester', password: 'import-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'import@example.com', name: 'Import Tester', password: 'import-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Marlowe (import)' }, admin)).json.id as string;
   const { stakeholderReport, capTable } = buildWorkbooks();
 

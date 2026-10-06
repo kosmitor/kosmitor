@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -26,11 +26,11 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const text = await res.text();
   let json: any = text;
   try { json = JSON.parse(text); } catch { /* csv */ }
-  return { status: res.status, json, text, type: res.headers.get('content-type') ?? '' };
+  return { status: res.status, json, text, type: res.headers.get('content-type') ?? '', token: sessionCookie(res) };
 }
 
 test('the stock-compensation report values grants, follows the company assumptions and exports its workpaper', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Comp Co', fiscalYearEnd: '12-31' }, admin)).json.id as string;
   const now = new Date().toISOString();
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
@@ -93,6 +93,6 @@ test('the stock-compensation report values grants, follows the company assumptio
   const marcus = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'marcus-pass-1',
-  })).json.token as string;
+  })).token as string;
   assert.equal((await call('GET', `/api/c/${cid}/reports/stock-comp`, undefined, marcus)).status, 403);
 });

@@ -454,6 +454,10 @@
           "description": "Let anyone create an account from the sign-in page. Turn it off so only invited people and existing accounts get in.",
           "type": "boolean"
         },
+        "verifyEmail": {
+          "description": "Make someone who signs up open a link sent to their address before they can sign in. Needs a mail transport (SMTP_URL or ACS_CONNECTION_STRING); without one the address is taken as given. Environment variable VERIFY_EMAIL wins over it.",
+          "type": "boolean"
+        },
         "google": {
           "description": "Sign in with Google.",
           "type": "object",

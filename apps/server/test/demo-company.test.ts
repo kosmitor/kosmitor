@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { configure, resetConfig, config } = await import('../src/config.ts');
@@ -21,7 +21,7 @@ const { after } = await import('node:test');
 after(() => api.close());
 const call = async (method: string, path: string, body?: unknown, token?: string) => {
   const res = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 };
 const { ensureDemoCompany } = await import('../src/sample.ts');
 const { all, one } = await import('../src/db.ts');
@@ -62,16 +62,16 @@ test('with it on, an existing demo account with no company gets the sample compa
 test('the shared demo account cannot create companies while the demo card is on; anyone else can', async () => {
   configure({ demo: { enabled: true } });
   try {
-    const demo = (await call('POST', '/api/auth/login', { email: config().demo.email, password: config().demo.password })).json.token as string;
+    const demo = (await call('POST', '/api/auth/login', { email: config().demo.email, password: config().demo.password })).token as string;
     const refused = await call('POST', '/api/companies', { name: 'Visitor Co' }, demo);
     assert.equal(refused.status, 403);
     assert.match(refused.json.error, /demo account is for exploring the sample company/);
-    const own = (await call('POST', '/api/auth/register', { email: 'jordan@example.com', name: 'Jordan Vale', password: 'jordan-pass-1' })).json.token as string;
+    const own = (await call('POST', '/api/auth/register', { email: 'jordan@example.com', name: 'Jordan Vale', password: 'jordan-pass-1' })).token as string;
     assert.equal((await call('POST', '/api/companies', { name: 'Vale Robotics' }, own)).status, 200);
   } finally {
     resetConfig();
   }
   // With the card off, the demo address is an ordinary account.
-  const demo = (await call('POST', '/api/auth/login', { email: config().demo.email, password: config().demo.password })).json.token as string;
+  const demo = (await call('POST', '/api/auth/login', { email: config().demo.email, password: config().demo.password })).token as string;
   assert.equal((await call('POST', '/api/companies', { name: 'Avery Co' }, demo)).status, 200);
 });

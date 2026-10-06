@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
-import { api, setToken, getToken } from './api.ts';
+import { api } from './api.ts';
 import { config } from './config.ts';
 
 export interface User {
@@ -44,7 +44,8 @@ interface SessionValue {
   selectCompany: (id: string) => void;
   refresh: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string) => Promise<void>;
+  /** Resolves signed in, or with `verifyEmail` when a link to open was sent to the address first. */
+  signUp: (name: string, email: string, password: string) => Promise<{ verifyEmail: boolean }>;
   /** Completes a Google Identity Services sign-in with the credential it returned. */
   signInWithGoogle: (credential: string, nonce: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -67,7 +68,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    if (!getToken()) { setUser(null); setCompanies([]); setLoading(false); return; }
     try {
       const me = await api<{ user: User; companies: CompanyRef[] }>('/auth/me');
       setUser(me.user);
@@ -95,26 +95,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [companyId]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const res = await api<{ user: User; token: string }>('/auth/login', { body: { email, password } });
-    setToken(res.token);
+    await api<{ user: User }>('/auth/login', { body: { email, password } });
     await refresh();
   }, [refresh]);
 
   const signUp = useCallback(async (name: string, email: string, password: string) => {
-    const res = await api<{ user: User; token: string }>('/auth/register', { body: { name, email, password } });
-    setToken(res.token);
+    const res = await api<{ user?: User; verifyEmail?: boolean }>('/auth/register', { body: { name, email, password } });
+    if (res.verifyEmail) return { verifyEmail: true };
     await refresh();
+    return { verifyEmail: false };
   }, [refresh]);
 
   const signInWithGoogle = useCallback(async (credential: string, nonce: string) => {
-    const res = await api<{ user: User; token: string }>('/auth/google', { body: { credential, nonce } });
-    setToken(res.token);
+    await api<{ user: User }>('/auth/google', { body: { credential, nonce } });
     await refresh();
   }, [refresh]);
 
   const signOut = useCallback(async () => {
     try { await api('/auth/logout', { body: {} }); } catch { /* the local session is cleared regardless */ }
-    setToken(null);
     localStorage.removeItem(LAST_COMPANY);
     setUser(null);
     setCompanies([]);

@@ -9,7 +9,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -33,7 +33,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { /* not JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, token: sessionCookie(res) };
 }
 
 async function upload(cid: string, token: string, name: string) {
@@ -45,7 +45,7 @@ async function upload(cid: string, token: string, name: string) {
   return (await res.json()) as { id: string; name: string };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'morgan@example.com', name: 'Morgan Hale', password: 'morgan-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'morgan@example.com', name: 'Morgan Hale', password: 'morgan-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Tidewater Labs' }, admin)).json.id as string;
 const other = (await call('POST', '/api/companies', { name: 'Elsewhere Works' }, admin)).json.id as string;
 const valuation = (await call('POST', `/api/c/${cid}/valuations`, {
@@ -124,7 +124,7 @@ test('a board member reads the report but cannot change it, and an employee reac
     const member = await call('POST', `/api/c/${cid}/members`, { email, name, role }, admin);
     const link = await call('POST', `/api/c/${cid}/members/${member.json.id}/reset-password`, { mode: 'link' }, admin);
     const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-    return (await call('POST', '/api/auth/reset', { token, password })).json.token as string;
+    return (await call('POST', '/api/auth/reset', { token, password })).token as string;
   };
   const director = await signIn('dana@example.com', 'Dana Wu', 'BOARD', 'dana-pass-1');
   assert.equal((await call('GET', `/api/c/${cid}/valuations/${valuation.id}/report`, undefined, director)).json.document.id, doc.id);
@@ -140,7 +140,7 @@ test('a viewer learns a report is on file, and nothing the vault keeps from them
   await call('PUT', `/api/c/${cid}/valuations/${valuation.id}/report`, { documentId: doc.id }, admin);
   const member = await call('POST', `/api/c/${cid}/members`, { email: 'vic@example.com', name: 'Vic Lane', role: 'VIEWER' }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${member.json.id}/reset-password`, { mode: 'link' }, admin);
-  const viewer = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'vic-pass-123' })).json.token as string;
+  const viewer = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'vic-pass-123' })).token as string;
 
   const detail = await call('GET', `/api/c/${cid}/valuations/${valuation.id}/detail`, undefined, viewer);
   assert.equal(detail.status, 200, JSON.stringify(detail.json));

@@ -6,7 +6,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -31,10 +31,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const type = res.headers.get('content-type') ?? '';
-  return { status: res.status, type, json: type.includes('json') ? ((await res.json()) as any) : null, text: type.includes('json') ? '' : await res.text() };
+  return { status: res.status, type, json: type.includes('json') ? ((await res.json()) as any) : null, text: type.includes('json') ? '' : await res.text(), token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Printco', legalName: 'Printco, Inc.' }, admin)).json.id as string;
 const now = new Date().toISOString();
 const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
@@ -72,7 +72,7 @@ test('class legends and company terms print on certificates; documents render as
   const priya = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'priya-pass-1',
-  })).json.token as string;
+  })).token as string;
   await call('GET', `/api/c/${cid}/portal`, undefined, priya);                                   // links the account
   assert.equal((await call('GET', `/api/c/${cid}/documents/${issued.json.document.id}/print`, undefined, priya)).status, 200);
   assert.equal((await call('GET', `/api/c/${cid}/certificates/print`, undefined, priya)).status, 403);   // the book is for company users

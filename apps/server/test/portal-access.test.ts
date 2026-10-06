@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -28,11 +28,11 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 test('an invited employee is linked by email, sees their own equity, and is refused the rest with a clear message', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Portal Co' }, admin)).json.id as string;
   const now = new Date().toISOString();
   await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'Priya@Example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', createdAt: now });
@@ -51,7 +51,7 @@ test('an invited employee is linked by email, sees their own equity, and is refu
   // Priya claims the account through an administrator reset link and signs in.
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const priya = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).json.token as string;
+  const priya = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).token as string;
 
   const me = await call('GET', '/api/auth/me', undefined, priya);
   assert.equal(me.json.companies[0].role, 'EMPLOYEE');
@@ -77,7 +77,7 @@ test('an invited employee is linked by email, sees their own equity, and is refu
 });
 
 test('an unlinked administrator is offered name matches and can link their own account; other roles are told to ask', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'rowan.founder@example.com', name: 'Rowan Adeyemi', password: 'founder-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'rowan.founder@example.com', name: 'Rowan Adeyemi', password: 'founder-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Self Link Co' }, admin)).json.id as string;
   const now = new Date().toISOString();
   // The record carries a different email (the one on the cap table export), so no automatic link.
@@ -103,7 +103,7 @@ test('an unlinked administrator is offered name matches and can link their own a
   const viewer = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${viewerInvite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'kestrel-pass-1',
-  })).json.token as string;
+  })).token as string;
   const asViewer = await call('GET', `/api/c/${cid}/portal`, undefined, viewer);
   assert.equal(asViewer.json.linked, false);
   assert.equal(asViewer.json.canLink, false);
@@ -115,14 +115,14 @@ test('an unlinked administrator is offered name matches and can link their own a
 });
 
 test('a member invited before their stakeholder record existed is linked the first time they open the portal', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'bao@example.com', name: 'Bao Nguyen', password: 'bao-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'bao@example.com', name: 'Bao Nguyen', password: 'bao-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Late Link Co' }, admin)).json.id as string;
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'marcus@example.com', name: 'Marcus Webb', role: 'INVESTOR' }, admin);
   assert.equal(invite.json.stakeholderId, null);
   const marcus = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'marcus-pass-1',
-  })).json.token as string;
+  })).token as string;
 
   const before = await call('GET', `/api/c/${cid}/portal`, undefined, marcus);
   assert.equal(before.json.linked, false);

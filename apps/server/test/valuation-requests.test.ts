@@ -19,7 +19,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // A fictional team inbox. Tests run with no mail transport, so the console
 // transport prints each message, and that output is read back below.
@@ -71,12 +71,12 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { /* not JSON */ }
-  return { status: res.status, json, headers: res.headers };
+  return { status: res.status, json, headers: res.headers, token: sessionCookie(res) };
 }
 const desk = (method: string, path: string, token: string, body?: unknown) =>
   call(method, `/api/valuation-desk${path}`, body, null, { 'X-Desk-Token': token });
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Harbor Robotics' }, admin)).json.id as string;
 await call('PATCH', `/api/c/${cid}/company`, { legalName: 'Harbor Robotics, Inc.' }, admin);
 const common = (await call('GET', `/api/c/${cid}/share-classes`, undefined, admin)).json[0];
@@ -508,7 +508,7 @@ test('the company fixes its contact details while the team works, and only edito
 
   const board = await call('POST', `/api/c/${other}/members`, { email: 'blair@example.com', name: 'Blair Kim', role: 'BOARD' }, admin);
   const link = await call('POST', `/api/c/${other}/members/${board.json.id}/reset-password`, { mode: 'link' }, admin);
-  const director = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'blair-pass-1' })).json.token as string;
+  const director = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'blair-pass-1' })).token as string;
   const theirView = (await call('GET', `/api/c/${other}/valuation-requests`, undefined, director)).json[0];
   assert.equal(theirView.contactPhone, null);
   assert.equal(theirView.contactEmail, null);
@@ -918,7 +918,7 @@ test('an employee reaches none of it', async () => {
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'priya@example.com', name: 'Priya Raman', role: 'EMPLOYEE', stakeholderId: priya.id }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const employee = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).json.token as string;
+  const employee = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).token as string;
 
   for (const path of ['valuation-refresh', 'valuation-requests', 'valuation-requests/package.xlsx', 'valuation-requests/checklist']) {
     const r = await fetch(`${base}/api/c/${cid}/${path}`, { headers: { Authorization: `Bearer ${employee}` } });
@@ -943,7 +943,7 @@ test('a board member reads requests but cannot make or change them, and the samp
   const board = await call('POST', `/api/c/${cid}/members`, { email: 'blake@example.com', name: 'Blake Ortiz', role: 'BOARD' }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${board.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const director = (await call('POST', '/api/auth/reset', { token, password: 'blake-pass-1' })).json.token as string;
+  const director = (await call('POST', '/api/auth/reset', { token, password: 'blake-pass-1' })).token as string;
   assert.equal((await call('GET', `/api/c/${cid}/valuation-requests`, undefined, director)).status, 200);
   assert.equal((await call('POST', `/api/c/${cid}/valuation-requests`, INTAKE, director)).status, 403);
 
@@ -1203,7 +1203,7 @@ test('a viewer sees a request’s documents only as far as the vault shows them 
   const made = await accepted(company, { ...body, documents: [...body.documents, { item: 'PITCH_DECK', documentId: shared.id }] });
   const member = await call('POST', `/api/c/${company}/members`, { email: 'drew@example.com', name: 'Drew Park', role: 'VIEWER' }, admin);
   const link = await call('POST', `/api/c/${company}/members/${member.json.id}/reset-password`, { mode: 'link' }, admin);
-  const viewer = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'drew-pass-1' })).json.token as string;
+  const viewer = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'drew-pass-1' })).token as string;
   const seen = (await call('GET', `/api/c/${company}/valuation-requests`, undefined, viewer)).json.find((r: any) => r.id === made.id);
   assert.deepEqual(seen.documents.map((d: any) => d.id), [shared.id]);
   assert.equal(seen.documentsHidden, new Set(body.documents.map((d) => d.documentId)).size, 'and is told how many others were sent, each once');
@@ -1502,7 +1502,7 @@ async function signedInMember(companyId: string, email: string, memberName: stri
   const link = await call('POST', `/api/c/${companyId}/members/${added.json.id}/reset-password`, { mode: 'link' }, admin);
   const reset = await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'member-pass-1' });
   assert.equal(reset.status, 200, JSON.stringify(reset.json));
-  return { token: reset.json.token as string, membershipId: added.json.id as string };
+  return { token: reset.token as string, membershipId: added.json.id as string };
 }
 
 /** A request made by whoever's token is given and sent to the team, with the team's link from the notice, and an empty outbox. */

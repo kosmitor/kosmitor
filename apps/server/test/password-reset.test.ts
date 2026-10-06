@@ -8,7 +8,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.SMTP_URL;                 // the console transport: links come back in the response
 delete process.env.NODE_ENV;
@@ -27,15 +27,15 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 const tokenFrom = (url: string): string => new URL(url).searchParams.get('token')!;
 
 test('a forgotten password is reset through a single-use link that signs the person in and out everywhere else', async () => {
   const reg = await call('POST', '/api/auth/register', { email: 'Priya@Example.com', name: 'Priya Raman', password: 'first-password' });
   assert.equal(reg.status, 200);
-  const oldSession = reg.json.token as string;
-  const secondSession = (await call('POST', '/api/auth/login', { email: 'priya@example.com', password: 'first-password' })).json.token as string;
+  const oldSession = reg.token as string;
+  const secondSession = (await call('POST', '/api/auth/login', { email: 'priya@example.com', password: 'first-password' })).token as string;
 
   // Unknown addresses get the same answer as known ones.
   const unknown = await call('POST', '/api/auth/forgot', { email: 'nobody@example.com' });
@@ -65,7 +65,7 @@ test('a forgotten password is reset through a single-use link that signs the per
   assert.equal(reset.status, 200);
   assert.equal(reset.json.user.email, 'priya@example.com');
   assert.equal(reset.json.user.mustChangePassword, false);
-  const newSession = reset.json.token as string;
+  const newSession = reset.token as string;
   assert.equal((await call('GET', '/api/auth/me', undefined, newSession)).status, 200);
   assert.equal((await call('GET', '/api/auth/me', undefined, oldSession)).status, 401);      // earlier sessions are gone
   assert.equal((await call('GET', '/api/auth/me', undefined, secondSession)).status, 401);
@@ -100,8 +100,8 @@ test('links expire, a new request replaces the old link, and requests are thrott
 });
 
 test('a signed-in person changes their password; other sessions end, this one stays', async () => {
-  const a = (await call('POST', '/api/auth/register', { email: 'marcus@example.com', name: 'Marcus Webb', password: 'marcus-pass-1' })).json.token as string;
-  const b = (await call('POST', '/api/auth/login', { email: 'marcus@example.com', password: 'marcus-pass-1' })).json.token as string;
+  const a = (await call('POST', '/api/auth/register', { email: 'marcus@example.com', name: 'Marcus Webb', password: 'marcus-pass-1' })).token as string;
+  const b = (await call('POST', '/api/auth/login', { email: 'marcus@example.com', password: 'marcus-pass-1' })).token as string;
 
   assert.equal((await call('POST', '/api/auth/change-password', { currentPassword: 'wrong', newPassword: 'marcus-pass-2' }, a)).status, 400);
   assert.equal((await call('POST', '/api/auth/change-password', { currentPassword: 'marcus-pass-1', newPassword: 'short' }, a)).status, 400);
@@ -116,11 +116,11 @@ test('a signed-in person changes their password; other sessions end, this one st
 });
 
 test('an administrator resets a member by link or temporary password; the member must then choose their own', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
   const company = (await call('POST', '/api/companies', { name: 'Reset Co' }, admin)).json;
   const cid = company.id as string;
-  const lena = (await call('POST', '/api/auth/register', { email: 'lena@example.com', name: 'Lena Fischer', password: 'lena-pass-1' })).json.token as string;
-  const legal = (await call('POST', '/api/auth/register', { email: 'legal@example.com', name: 'Legal Eagle', password: 'legal-pass-1' })).json.token as string;
+  const lena = (await call('POST', '/api/auth/register', { email: 'lena@example.com', name: 'Lena Fischer', password: 'lena-pass-1' })).token as string;
+  const legal = (await call('POST', '/api/auth/register', { email: 'legal@example.com', name: 'Legal Eagle', password: 'legal-pass-1' })).token as string;
   const member = (await call('POST', `/api/c/${cid}/members`, { email: 'lena@example.com', role: 'VIEWER' }, admin)).json;
   const legalMember = (await call('POST', `/api/c/${cid}/members`, { email: 'legal@example.com', role: 'LEGAL' }, admin)).json;
   const me = (await call('GET', `/api/c/${cid}/members`, undefined, admin)).json.find((m: any) => m.email === 'avery@example.com');
@@ -148,15 +148,15 @@ test('an administrator resets a member by link or temporary password; the member
   const temp = await call('POST', `/api/c/${cid}/members/${member.id}/reset-password`, { mode: 'temporary' }, admin);
   assert.equal(temp.status, 200);
   assert.match(temp.json.temporaryPassword, /^[A-Za-z2-9]{4}-[A-Za-z2-9]{4}-[A-Za-z2-9]{4}$/);
-  assert.equal((await call('GET', '/api/auth/me', undefined, viaLink.json.token)).status, 401);
+  assert.equal((await call('GET', '/api/auth/me', undefined, viaLink.token)).status, 401);
   assert.equal((await call('POST', '/api/auth/login', { email: 'lena@example.com', password: 'lena-pass-2' })).status, 401);
   const tempLogin = await call('POST', '/api/auth/login', { email: 'lena@example.com', password: temp.json.temporaryPassword });
   assert.equal(tempLogin.status, 200);
   assert.equal(tempLogin.json.user.mustChangePassword, true);
-  assert.equal((await call('GET', '/api/auth/me', undefined, tempLogin.json.token)).json.user.mustChangePassword, true);
-  const changed = await call('POST', '/api/auth/change-password', { currentPassword: temp.json.temporaryPassword, newPassword: 'lena-owns-this-1' }, tempLogin.json.token);
+  assert.equal((await call('GET', '/api/auth/me', undefined, tempLogin.token)).json.user.mustChangePassword, true);
+  const changed = await call('POST', '/api/auth/change-password', { currentPassword: temp.json.temporaryPassword, newPassword: 'lena-owns-this-1' }, tempLogin.token);
   assert.equal(changed.status, 200);
-  assert.equal((await call('GET', '/api/auth/me', undefined, tempLogin.json.token)).json.user.mustChangePassword, false);
+  assert.equal((await call('GET', '/api/auth/me', undefined, tempLogin.token)).json.user.mustChangePassword, false);
 
   // An administrator may also choose the temporary password, within the same rules.
   assert.equal((await call('POST', `/api/c/${cid}/members/${member.id}/reset-password`, { mode: 'temporary', password: 'short' }, admin)).status, 400);
@@ -212,7 +212,7 @@ test('password rules, link lifetimes and the product name in the email follow th
 
 test('an operator can turn off self-service sign-up and password sign-in; invitations keep working', async () => {
   const { configure, resetConfig } = await import('../src/config.ts');
-  const owner = (await call('POST', '/api/auth/register', { email: 'jo@example.com', name: 'Jo Marsh', password: 'jo-password-1' })).json.token as string;
+  const owner = (await call('POST', '/api/auth/register', { email: 'jo@example.com', name: 'Jo Marsh', password: 'jo-password-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Closed Doors' }, owner)).json.id as string;
   const defaults = (await call('GET', '/api/auth/config')).json;
   assert.equal(defaults.passwordSignIn, true);

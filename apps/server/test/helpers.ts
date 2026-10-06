@@ -15,6 +15,10 @@ process.on('warning', (warning) => {
   if (warning.name === 'DeprecationWarning' && /already executing a query/.test(warning.message)) throw warning;
 });
 
+/** The session a response signed in: the kosmitor_session cookie, which the API also takes as a bearer token. */
+export const sessionCookie = (res: Response): string | undefined =>
+  res.headers.get('set-cookie')?.match(/kosmitor_session=([^;]+)/)?.[1];
+
 export async function freshDatabase(): Promise<string> {
   const name = `kosmitor_test_${randomBytes(6).toString('hex')}`;
   const admin = new pg.Client({ connectionString: ADMIN_URL });

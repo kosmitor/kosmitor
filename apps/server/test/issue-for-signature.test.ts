@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -29,11 +29,11 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 test('shares issued for signature stay pending until both parties sign, then become outstanding', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Signing Co', legalName: 'Signing Co, Inc.' }, admin)).json.id as string;
   const now = new Date().toISOString();
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
@@ -73,7 +73,7 @@ test('shares issued for signature stay pending until both parties sign, then bec
   const priya = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'priya-pass-1',
-  })).json.token as string;
+  })).token as string;
   const portal = await call('GET', `/api/c/${cid}/portal`, undefined, priya);
   assert.equal(portal.json.pendingSignatures.length, 1);
   assert.equal(portal.json.pendingSignatures[0].id, holderBlock.id);

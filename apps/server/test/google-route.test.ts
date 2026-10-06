@@ -67,19 +67,21 @@ test('a nonce is issued and stored in the database', async () => {
   assert.ok(rows[0].expires_at > new Date().toISOString());
 });
 
-test('a valid Google ID token signs in: account created, cookie and bearer token issued, /auth/me works', async () => {
+test('a valid Google ID token signs in: account created, cookie issued and nothing else, /auth/me works', async () => {
   const nonce = await startNonce();
   const res = await post('/api/auth/google', { credential: mint({ nonce }), nonce });
   const text = await res.text();
   assert.equal(res.status, 200, text);
-  const body = JSON.parse(text) as { user: Record<string, unknown>; token: string };
+  const body = JSON.parse(text) as { user: Record<string, unknown>; token?: string };
+  assert.equal(body.token, undefined);                             // the session travels only in the HttpOnly cookie
   assert.equal(body.user.email, 'avery@example.com');
   assert.equal(body.user.name, 'Avery Stone');
   assert.equal(body.user.authProvider, 'GOOGLE');
   assert.equal(body.user.avatarUrl, 'https://lh3.googleusercontent.com/a/photo');
   assert.match(res.headers.get('set-cookie') ?? '', /^kosmitor_session=[^;]+; HttpOnly; SameSite=Lax; Path=\//);
 
-  const me = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${body.token}` } });
+  const session = res.headers.get('set-cookie')!.match(/kosmitor_session=([^;]+)/)![1];
+  const me = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${session}` } });
   assert.equal(me.status, 200);
   const meBody = await me.json() as { user: { id: string }; companies: unknown[] };
   assert.equal(meBody.user.id, body.user.id);

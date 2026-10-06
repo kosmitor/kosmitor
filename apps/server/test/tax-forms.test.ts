@@ -6,7 +6,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -30,10 +30,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const type = res.headers.get('content-type') ?? '';
-  return { status: res.status, type, json: type.includes('json') ? ((await res.json()) as any) : null, text: type.includes('json') ? '' : await res.text() };
+  return { status: res.status, type, json: type.includes('json') ? ((await res.json()) as any) : null, text: type.includes('json') ? '' : await res.text(), token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Taxco', legalName: 'Taxco, Inc.' }, admin)).json.id as string;
 await call('PATCH', `/api/c/${cid}`, { ein: '87-4410293', address: '1 Market St, San Francisco, CA 94105' }, admin);
 const now = new Date().toISOString();
@@ -74,7 +74,7 @@ test('the 83(b) statement is prefilled for restricted stock and only for its hol
   const noor = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'noor-pass-1',
-  })).json.token as string;
+  })).token as string;
   await call('GET', `/api/c/${cid}/portal`, undefined, noor);
   assert.equal((await call('GET', `/api/c/${cid}/compliance/83b/iss_restricted/print`, undefined, noor)).status, 403);   // someone else's certificate
   assert.equal((await call('GET', `/api/c/${cid}/compliance/form-3921/2026/statements`, undefined, noor)).status, 403);

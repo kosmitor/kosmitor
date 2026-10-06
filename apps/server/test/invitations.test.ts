@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // The console transport, and no Google unless a test turns it on. Empty values
 // win over apps/server/.env, which only fills in what is not set at all.
@@ -56,7 +56,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 const tokenFrom = (url: string): string => new URL(url).searchParams.get('token')!;
 const product = config().brand.productName;
@@ -67,9 +67,9 @@ const inviteRows = (email: string) => all<{ action: string; company_id: string }
     WHERE u.email = ? AND a.action LIKE 'INVITE_EMAIL%' ORDER BY a.created_at, a.id`, email);
 
 // Made-up people. Avery runs Harbor Lane; Morgan runs Tidewater Labs.
-const avery = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const avery = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Harbor Lane' }, avery)).json.id as string;
-const morgan = (await call('POST', '/api/auth/register', { email: 'morgan@example.com', name: 'Morgan Lee', password: 'morgan-pass-1' })).json.token as string;
+const morgan = (await call('POST', '/api/auth/register', { email: 'morgan@example.com', name: 'Morgan Lee', password: 'morgan-pass-1' })).token as string;
 const otherCid = (await call('POST', '/api/companies', { name: 'Tidewater Labs' }, morgan)).json.id as string;
 const members = async (company = cid, token = avery) => (await call('GET', `/api/c/${company}/members`, undefined, token)).json as any[];
 
@@ -118,7 +118,7 @@ test('a new address gets an invitation whose link chooses a password, signs them
   const accepted = await call('POST', '/api/auth/reset', { token, password: 'priya-chose-this' });
   assert.equal(accepted.status, 200, JSON.stringify(accepted.json));
   assert.equal(accepted.json.user.email, 'priya.raman@example.com');
-  const me = await call('GET', '/api/auth/me', undefined, accepted.json.token);
+  const me = await call('GET', '/api/auth/me', undefined, accepted.token);
   assert.deepEqual(me.json.companies.map((c: any) => [c.id, c.role]), [[cid, 'EMPLOYEE']]);
   assert.equal((await call('POST', '/api/auth/login', { email: 'priya.raman@example.com', password: 'priya-chose-this' })).status, 200);
   assert.equal((await members()).find((m) => m.email === 'priya.raman@example.com').neverSignedIn, false);
@@ -228,7 +228,7 @@ test('an administrator sends an invitation again to someone who has not signed i
   assert.equal((await call('GET', `/api/auth/reset/${tokenFrom(newLink)}`)).json.valid, true);
 
   // Administrators only, members of this company only, and only for someone still to sign in.
-  const lena = (await call('POST', '/api/auth/login', { email: 'lena@example.com', password: 'lena-pass-1' })).json.token as string;
+  const lena = (await call('POST', '/api/auth/login', { email: 'lena@example.com', password: 'lena-pass-1' })).token as string;
   assert.equal((await call('POST', `/api/c/${cid}/members/${memberId}/invite`, {}, lena)).status, 403, 'Lena is legal / finance, not an administrator');
   const tidewaterMember = (await members(otherCid, morgan)).find((m) => m.email === 'rowan@example.com');
   assert.equal((await call('POST', `/api/c/${cid}/members/${tidewaterMember.id}/invite`, {}, avery)).status, 404, 'another company’s member');

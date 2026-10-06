@@ -13,7 +13,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -33,10 +33,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'wren@example.com', name: 'Wren Ashby', password: 'wren-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'wren@example.com', name: 'Wren Ashby', password: 'wren-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Ledger Co', incorporationDate: '2020-01-01', authorizedCommon: 20_000_000 }, admin)).json.id as string;
 const post = async (path: string, body: unknown) => {
   const r = await call('POST', `/api/c/${cid}${path}`, body, admin);

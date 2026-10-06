@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Readable } from 'node:stream';
-import { freshDatabase } from './helpers.ts';
+import { createHash } from 'node:crypto';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.NODE_ENV;
 await freshDatabase();
@@ -31,7 +32,7 @@ after(() => api.close());
 
 async function post(path: string, body: string | Buffer, headers: Record<string, string> = {}) {
   const res = await fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : new Uint8Array(body) });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 /**
@@ -107,7 +108,8 @@ test('a sign-in lasts auth.sessionDays, in the cookie and in the database', asyn
 
   const user = await auth.createUser('session@example.com', 'Session Person', 'long-enough-password');
   const token = await auth.createSession(user.id);
-  const row = await one<{ created_at: string; expires_at: string }>('SELECT created_at, expires_at FROM sessions WHERE token = ?', token);
+  // The table holds the token's hash, never the token.
+  const row = await one<{ created_at: string; expires_at: string }>('SELECT created_at, expires_at FROM sessions WHERE token = ?', createHash('sha256').update(token).digest('hex'));
   assert.equal(Date.parse(row!.expires_at) - Date.parse(row!.created_at), 7 * 86_400_000);
 });
 

@@ -187,6 +187,7 @@ const ENV: { name: string; path: string; parse: (v: string) => Json }[] = [
   { name: 'TRUST_PROXY', path: 'server.trustProxy', parse: (v) => (/^(1|true|yes|on)$/i.test(v) ? true : /^(0|false|no|off)$/i.test(v) ? false : v) },
   { name: 'PG_POOL_MAX', path: 'database.poolMax', parse: Number },
   { name: 'MAIL_FROM', path: 'mail.from', parse: (v) => v },
+  { name: 'VERIFY_EMAIL', path: 'auth.verifyEmail', parse: (v) => (/^(1|true|yes|on)$/i.test(v) ? true : /^(0|false|no|off)$/i.test(v) ? false : v) },
   { name: 'GOOGLE_CLIENT_ID', path: 'auth.google.clientId', parse: (v) => v },
   { name: 'GOOGLE_ALLOWED_DOMAINS', path: 'auth.google.allowedDomains', parse: (v) => list(v).map((d) => d.toLowerCase().replace(/^@/, '')) },
   { name: 'VALUATION_DESK_EMAIL', path: 'valuationDesk.email', parse: (v) => v.toLowerCase() },

@@ -15,7 +15,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -36,10 +36,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'thea.morrow@example.com', name: 'Thea Morrow', password: 'thea-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'thea.morrow@example.com', name: 'Thea Morrow', password: 'thea-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Window Co', incorporationDate: '2022-11-07' }, admin)).json.id as string;
 const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
 const vestedAtGrant = (await one<{ id: string }>("SELECT id FROM vesting_schedules WHERE company_id = ? AND kind = 'FULLY_VESTED'", cid))!.id;

@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -30,11 +30,11 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 const cid = await createSampleCompany('founder@example.com');
-const owner = (await call('POST', '/api/auth/login', { email: 'founder@example.com', password: 'password123' })).json.token as string;
+const owner = (await call('POST', '/api/auth/login', { email: 'founder@example.com', password: 'password123' })).token as string;
 
 test('the sample company is flagged and fully readable', async () => {
   const flag = await one<{ is_sample: number }>('SELECT is_sample FROM companies WHERE id = ?', cid);

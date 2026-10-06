@@ -10,7 +10,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -28,10 +28,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Records Co' }, admin)).json.id as string;
 const common = (await call('GET', `/api/c/${cid}/share-classes`, undefined, admin)).json[0];
 const schedule = (await call('GET', `/api/c/${cid}/vesting-schedules`, undefined, admin)).json[0];
@@ -139,7 +139,7 @@ test('a holder opens their own records and no one else\'s', async () => {
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'priya@example.com', name: 'Priya Raman', role: 'EMPLOYEE', stakeholderId: priya.id }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const holder = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).json.token as string;
+  const holder = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).token as string;
 
   assert.equal((await call('GET', `/api/c/${cid}/awards/${award.id}/detail`, undefined, holder)).status, 200, 'their own grant');
   assert.equal((await call('GET', `/api/c/${cid}/convertibles/${safe.id}/detail`, undefined, holder)).status, 404, 'the fund\'s SAFE');

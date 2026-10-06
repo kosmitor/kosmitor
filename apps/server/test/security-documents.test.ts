@@ -11,7 +11,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -31,7 +31,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n', 'latin1');
@@ -40,10 +40,10 @@ async function attach(cid: string, query: Record<string, string>, token: string)
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/pdf' },
     body: new Uint8Array(PDF) as unknown as RequestInit['body'],
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Filing Co' }, admin)).json.id as string;
 const common = (await call('GET', `/api/c/${cid}/share-classes`, undefined, admin)).json[0];
 const schedule = (await call('GET', `/api/c/${cid}/vesting-schedules`, undefined, admin)).json[0];
@@ -90,7 +90,7 @@ test('a holder sees what was filed against them and not what was not', async () 
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'priya@example.com', name: 'Priya Raman', role: 'EMPLOYEE', stakeholderId: priya.id }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const holder = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).json.token as string;
+  const holder = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).token as string;
 
   const theirs = await call('GET', `/api/c/${cid}/securities/${certificate.id}/documents`, undefined, holder);
   assert.equal(theirs.status, 200, JSON.stringify(theirs.json));

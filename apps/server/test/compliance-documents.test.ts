@@ -12,7 +12,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -31,7 +31,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 const PDF = Buffer.from('%PDF-1.4\ntrailer << /Root 1 0 R >>\n%%EOF\n', 'latin1');
@@ -40,12 +40,12 @@ async function attach(cid: string, query: Record<string, string>, token: string)
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/pdf' },
     body: new Uint8Array(PDF) as unknown as RequestInit['body'],
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 const listSubject = (cid: string, kind: string, ref: string, token: string) =>
   call('GET', `/api/c/${cid}/compliance-documents?${new URLSearchParams({ kind, ref })}`, undefined, token);
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Compliance Co' }, admin)).json.id as string;
 const common = (await call('GET', `/api/c/${cid}/share-classes`, undefined, admin)).json[0];
 const priya = (await call('POST', `/api/c/${cid}/stakeholders`, { name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE' }, admin)).json;
@@ -131,7 +131,7 @@ test('a holder sees compliance paperwork meant for them and not the rest', async
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'priya@example.com', name: 'Priya Raman', role: 'EMPLOYEE', stakeholderId: priya.id }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
   const token = new URL(link.json.resetUrl).searchParams.get('token')!;
-  const holder = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).json.token as string;
+  const holder = (await call('POST', '/api/auth/reset', { token, password: 'priya-pass-1' })).token as string;
 
   const theirs = await listSubject(cid, 'RULE_701', '2025-01-01:2025-12-31', holder);
   assert.equal(theirs.status, 200, JSON.stringify(theirs.json));

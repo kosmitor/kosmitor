@@ -16,7 +16,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { createServer, type Server, type Socket, type AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { createHash, randomBytes } from 'node:crypto';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // --- A mail server that holds each message until it is let through --------------
 
@@ -73,7 +74,8 @@ await freshDatabase();
 const { handle } = await import('../src/http.ts');
 const { welcomesSent } = await import('../src/routes/auth.ts');
 const { configure, resetConfig } = await import('../src/config.ts');
-const { one, all, transaction } = await import('../src/db.ts');
+configure({ auth: { verifyEmail: true } });   // signing up sends a link to open first, as on a public server
+const { one, all, insert, transaction } = await import('../src/db.ts');
 
 const api: HttpServer = createHttpServer((req, res) => { void handle(req, res); });
 await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));
@@ -85,7 +87,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 /** Waits for something the server does in its own time, for up to five seconds. */
@@ -101,8 +103,28 @@ const welcomeLogOf = async (email: string) => (await all<{ action: string }>(
 const logOf = (email: string) => all<{ action: string }>(
   `SELECT a.action FROM audit_log a JOIN users u ON u.id = a.entity_id WHERE u.email = ? AND a.action LIKE 'INVITE_EMAIL%' ORDER BY a.created_at, a.id`, email);
 
+
+/**
+ * Signs up through the API and opens the confirmation link, the way the person
+ * would from the email. The stand-in keeps no message bodies, so the link's token
+ * is minted here into the same table the server reads it from.
+ */
+async function signUp(email: string, name: string, password: string): Promise<string> {
+  const answer = await call('POST', '/api/auth/register', { email, name, password });
+  assert.equal(answer.json.verifyEmail, true, JSON.stringify(answer.json));
+  const user = (await one<{ id: string }>('SELECT id FROM users WHERE email = ?', email))!;
+  const token = randomBytes(32).toString('base64url');
+  await insert('password_resets', {
+    tokenHash: createHash('sha256').update(token).digest('hex'), userId: user.id, createdBy: null, purpose: 'VERIFY',
+    createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), usedAt: null,
+  });
+  const verified = await call('POST', '/api/auth/verify', { token });
+  assert.equal(verified.status, 200, JSON.stringify(verified.json));
+  return verified.token as string;
+}
+
 // Made-up people: Avery runs four companies and invites people to them.
-const avery = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const avery = await signUp('avery@example.com', 'Avery Stone', 'avery-pass-1');
 // Signing up sends a welcome email without waiting for it; it is let through before any test counts what arrives.
 await until(() => received.includes('avery@example.com'), 'Avery’s welcome email');
 const companies: string[] = [];

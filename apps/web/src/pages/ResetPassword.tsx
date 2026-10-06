@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useSession, type AuthConfig } from '../session.tsx';
-import { api, setToken, useQuery } from '../api.ts';
+import { api, useQuery } from '../api.ts';
 import { Button, Input, Field, ErrorNote, Loading } from '../ui.tsx';
 import { Logo } from '../icons.tsx';
 import { passwordProblem } from '../account.tsx';
@@ -65,8 +65,7 @@ export default function ResetPassword() {
     setBusy(true);
     setError(null);
     try {
-      const res = await api<{ token: string }>('/auth/reset', { body: { token, password } });
-      setToken(res.token);
+      await api('/auth/reset', { body: { token, password } });
       await refresh();
       enter();
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }

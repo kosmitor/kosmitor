@@ -227,6 +227,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL
 -- A reading preference that follows the person rather than the browser: whether the
 -- explanation at the top of each page starts open.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS explanations_open INTEGER NOT NULL DEFAULT 0;
+-- When the address was shown to be the person's. Signing up now sends a link to open first,
+-- and an account nobody has opened one from cannot sign in with its password.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TEXT;
 
 -- Single-use, hashed links for "forgot password" and administrator resets.
 CREATE TABLE IF NOT EXISTS password_resets (
@@ -1011,6 +1014,11 @@ UPDATE users SET last_login_at = created_at
  WHERE last_login_at IS NULL AND google_sub IS NULL
    AND (EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = users.id)
      OR EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = users.id AND a.action <> 'PASSWORD_RESET_REQUESTED'));
+
+-- Addresses were not verified before; an account someone has signed in to is taken as
+-- theirs. Every sign-in since records the verification too, so nothing matches a second time.
+UPDATE users SET email_verified_at = COALESCE(last_login_at, created_at)
+ WHERE email_verified_at IS NULL AND (last_login_at IS NOT NULL OR google_sub IS NOT NULL);
 `;
 
 /** Creates anything missing. Safe to run on every start; concurrent starts are serialised by an advisory lock. */

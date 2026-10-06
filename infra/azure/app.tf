@@ -74,6 +74,8 @@ locals {
     WEB_DIST        = "/app/apps/web/dist"
     PG_POOL_MAX     = tostring(var.pg_pool_max)
     TRUST_PROXY     = "true"
+    # Strangers can sign up here, so an address is confirmed before its account works.
+    VERIFY_EMAIL    = "true"
     },
     { MAIL_FROM = local.mail_from },
     var.google_client_id != "" ? { GOOGLE_CLIENT_ID = var.google_client_id } : {},

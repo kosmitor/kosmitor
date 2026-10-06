@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const TOKEN_KEY = 'kosmitor_token';
-
-export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
-export const setToken = (t: string | null): void => {
-  if (t) localStorage.setItem(TOKEN_KEY, t);
-  else localStorage.removeItem(TOKEN_KEY);
-};
-
 export class ApiError extends Error {
   status: number;
   detail: unknown;
@@ -22,13 +14,10 @@ export async function api<T = any>(
   path: string,
   options: { method?: string; body?: unknown; raw?: boolean } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-
+  // The session is the HttpOnly cookie the server set; nothing here can read it, or leak it.
   const res = await fetch(`/api${path}`, {
     method: options.method ?? (options.body !== undefined ? 'POST' : 'GET'),
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
@@ -40,7 +29,6 @@ export async function api<T = any>(
   try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: text }; }
 
   if (!res.ok) {
-    if (res.status === 401) setToken(null);
     throw new ApiError(res.status, payload?.error ?? `Request failed (${res.status})`, payload?.detail);
   }
   return payload as T;
@@ -48,11 +36,7 @@ export async function api<T = any>(
 
 /** Downloads any authenticated endpoint as a file, using the browser's save flow. */
 export async function downloadFile(path: string, filename: string): Promise<void> {
-  const token = getToken();
-  const res = await fetch(`/api${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    credentials: 'include',
-  });
+  const res = await fetch(`/api${path}`, { credentials: 'include' });
   if (!res.ok) {
     let message = 'That file could not be downloaded.';
     try { message = (await res.json()).error ?? message; } catch { /* keep the default */ }
@@ -80,15 +64,11 @@ export function downloadReport(companyId: string, report: string, asOf?: string)
  * query string, so no multipart parsing is needed on either side.
  */
 export async function uploadFile<T = any>(path: string, file: File, meta: Record<string, string> = {}): Promise<T> {
-  const token = getToken();
   const qs = new URLSearchParams({ name: file.name, ...meta }).toString();
   const res = await fetch(`/api${path}?${qs}`, {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      'Content-Type': file.type || 'application/octet-stream',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
     body: file,
   });
   const text = await res.text();

@@ -12,7 +12,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -34,19 +34,19 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n', 'latin1');
 async function upload(companyId: string, query: Record<string, string>, token: string) {
   const res = await fetch(`${base}/api/c/${companyId}/documents/upload?${new URLSearchParams(query)}`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/pdf' }, body: new Uint8Array(PDF) as unknown as RequestInit['body'],
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 const count = async (companyId: string) =>
   Number((await one<{ n: string }>('SELECT COUNT(*) AS n FROM documents WHERE company_id = ?', companyId))!.n);
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Marlowe Systems' }, admin)).json.id as string;
 const other = (await call('POST', '/api/companies', { name: 'Elsewhere Inc' }, admin)).json.id as string;
 
@@ -173,7 +173,7 @@ async function viewer(): Promise<string> {
   if (viewerToken) return viewerToken;
   const member = await call('POST', `/api/c/${cid}/members`, { email: 'vic@example.com', name: 'Vic Lane', role: 'VIEWER' }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${member.json.id}/reset-password`, { mode: 'link' }, admin);
-  viewerToken = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'vic-pass-123' })).json.token as string;
+  viewerToken = (await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'vic-pass-123' })).token as string;
   return viewerToken;
 }
 

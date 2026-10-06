@@ -173,7 +173,7 @@ export default function SignIn() {
   const { passwordSignIn, selfSignup } = config.auth;
   const demo = config.demo.enabled ? config.demo : null;
   const [params, setParams] = useSearchParams();
-  const [mode, setMode] = useState<'in' | 'up' | 'forgot'>(passwordSignIn && params.get('forgot') ? 'forgot' : 'in');
+  const [mode, setMode] = useState<'in' | 'up' | 'forgot' | 'check'>(passwordSignIn && params.get('forgot') ? 'forgot' : 'in');
   const [name, setName] = useState('');
   const [email, setEmail] = useState(demo?.email ?? '');
   const [password, setPassword] = useState(demo?.password ?? '');
@@ -186,7 +186,7 @@ export default function SignIn() {
     setError(null);
     try {
       if (mode === 'in') await signIn(email, password);
-      else await signUp(name, email, password);
+      else if ((await signUp(name, email, password)).verifyEmail) setMode('check');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -197,6 +197,29 @@ export default function SignIn() {
   const googleConfigured = !!auth?.googleClientId;
   const { signIn: words } = config.brand;
   const backToSignIn = () => { setMode('in'); setError(null); if (params.get('forgot')) setParams({}, { replace: true }); };
+
+  // Signing up sent a link to the address; the account opens from it.
+  if (mode === 'check') {
+    return (
+      <div className="grid min-h-screen lg:grid-cols-2">
+        <div className="flex items-center justify-center px-6 py-12">
+          <div className="w-full max-w-sm">
+            <div className="mb-8 flex items-center gap-2.5">
+              <Logo className="size-9 text-brand-600" />
+              <span className="text-lg font-semibold tracking-tight">{PRODUCT}</span>
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight text-ink-900">Check your email</h1>
+            <p className="mt-1.5 text-sm text-ink-500">
+              We sent a link to <span className="font-medium text-ink-700">{email}</span>. Open it to confirm the address and sign in.
+              It works once and expires in 24 hours. Signing in with your password sends a new one.
+            </p>
+            <Button size="lg" className="mt-7 w-full" onClick={backToSignIn}>Back to sign in</Button>
+          </div>
+        </div>
+        <Showcase />
+      </div>
+    );
+  }
 
   if (mode === 'forgot') {
     return (

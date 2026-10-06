@@ -9,7 +9,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -27,13 +27,13 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 // Mara runs Harbor Labs. Ines runs Quill Works, and invites Mara into it.
-const mara = (await call('POST', '/api/auth/register', { email: 'mara@example.com', name: 'Mara Quint', password: 'mara-pass-1' })).json.token as string;
+const mara = (await call('POST', '/api/auth/register', { email: 'mara@example.com', name: 'Mara Quint', password: 'mara-pass-1' })).token as string;
 await call('POST', '/api/companies', { name: 'Harbor Labs' }, mara);
-const ines = (await call('POST', '/api/auth/register', { email: 'ines@example.com', name: 'Ines Tarrow', password: 'ines-pass-1' })).json.token as string;
+const ines = (await call('POST', '/api/auth/register', { email: 'ines@example.com', name: 'Ines Tarrow', password: 'ines-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Quill Works' }, ines)).json.id as string;
 
 const invited = await call('POST', `/api/c/${cid}/members`, { email: 'mara@example.com', role: 'VIEWER' }, ines);

@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -23,10 +23,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const token = (await call('POST', '/api/auth/register', { email: 'rae@example.com', name: 'Rae Lindqvist', password: 'rae-pass-123' })).json.token as string;
+const token = (await call('POST', '/api/auth/register', { email: 'rae@example.com', name: 'Rae Lindqvist', password: 'rae-pass-123' })).token as string;
 
 test('explanations start closed, and the choice to open them follows the person', async () => {
   const before = await call('GET', '/api/auth/me', undefined, token);
@@ -37,7 +37,7 @@ test('explanations start closed, and the choice to open them follows the person'
   assert.equal(saved.json.explanationsOpen, true);
 
   // A second sign-in, as from another browser, sees the same choice.
-  const again = (await call('POST', '/api/auth/login', { email: 'rae@example.com', password: 'rae-pass-123' })).json.token as string;
+  const again = (await call('POST', '/api/auth/login', { email: 'rae@example.com', password: 'rae-pass-123' })).token as string;
   assert.equal((await call('GET', '/api/auth/me', undefined, again)).json.user.explanationsOpen, true);
 });
 

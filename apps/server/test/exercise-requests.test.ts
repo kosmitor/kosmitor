@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -24,11 +24,11 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
 test('an option holder requests an exercise; the company approves, takes payment and completes it', async () => {
-  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+  const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
   const cid = (await call('POST', '/api/companies', { name: 'Exercise Co' }, admin)).json.id as string;
   const now = new Date().toISOString();
   const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
@@ -47,7 +47,7 @@ test('an option holder requests an exercise; the company approves, takes payment
     return (await call('POST', '/api/auth/reset', {
       token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
       password: 'holder-pass-1',
-    })).json.token as string;
+    })).token as string;
   };
   const priya = await signIn('priya@example.com', 'Priya Raman');
   const marcus = await signIn('marcus@example.com', 'Marcus Webb');

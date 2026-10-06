@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -37,10 +37,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const owner = (await call('POST', '/api/auth/register', { email: 'rosa.lindqvist@example.com', name: 'Rosa Lindqvist', password: 'rosa-pass-1' })).json.token as string;
+const owner = (await call('POST', '/api/auth/register', { email: 'rosa.lindqvist@example.com', name: 'Rosa Lindqvist', password: 'rosa-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Northlight Ceramics', jurisdiction: 'Ontario', incorporationDate: '2021-10-04' }, owner)).json.id as string;
 const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
 const holder = (await call('POST', `/api/c/${cid}/stakeholders`, { name: 'Rosa Lindqvist', type: 'INDIVIDUAL', relation: 'EMPLOYEE' }, owner)).json.id as string;

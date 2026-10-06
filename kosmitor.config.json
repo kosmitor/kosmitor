@@ -78,6 +78,7 @@
     "inviteEmailsPerAddressPerDay": 5,
     "passwordSignIn": true,
     "selfSignup": true,
+    "verifyEmail": false,
     "google": {
       "clientId": "",
       "allowedDomains": []

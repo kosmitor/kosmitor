@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 await freshDatabase();
 const { handle } = await import('../src/http.ts');
@@ -32,12 +32,12 @@ async function call(method: string, path: string, body?: unknown, token?: string
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const type = res.headers.get('content-type') ?? '';
-  if (type.includes('json')) return { status: res.status, type, json: (await res.json()) as any, buffer: Buffer.alloc(0), disposition: res.headers.get('content-disposition') };
+  if (type.includes('json')) return { status: res.status, type, json: (await res.json()) as any, buffer: Buffer.alloc(0), disposition: res.headers.get('content-disposition'), token: sessionCookie(res) };
   return { status: res.status, type, json: null, buffer: Buffer.from(await res.arrayBuffer()), disposition: res.headers.get('content-disposition') };
 }
 const encode = (spec: unknown) => Buffer.from(JSON.stringify(spec)).toString('base64url');
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Reportco' }, admin)).json.id as string;
 const now = new Date().toISOString();
 const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;

@@ -1,4 +1,4 @@
-import { route, newId, nowISO, audit, badRequest, notFound, forbidden, unauthorized,
+import { route, newId, nowISO, audit, badRequest, notFound, forbidden, unauthorized, HttpError,
          setSessionCookie, clearSessionCookie, str, personName, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll, afterCommit, transaction, inTransaction } from '../db.ts';
 import { deleteCompany } from '../company-admin.ts';
@@ -9,6 +9,7 @@ import {
 } from '../auth.ts';
 import { verifyGoogleIdToken, GoogleAuthError } from '../google.ts';
 import { issueNonce, consumeNonce } from '../nonces.ts';
+import { tooManyAttempts } from '../rate-limit.ts';
 import { sendMail, mailConfigured, appUrl, SINGLE_ADDRESS, type Message } from '../mail.ts';
 import { renderEmail, type EmailContent } from '../email.ts';
 import { config, deskName, mailSignature, vestingTemplates } from '../config.ts';
@@ -47,32 +48,84 @@ route.post('/api/auth/register', 'public', async (ctx) => {
   if (await findUserByEmail(email)) throw badRequest('An account with that email already exists.');
 
   const user = await createUser(email, name, password);
-  // Signing up signs the person in, so the account is never mistaken for one an invitation made and nobody has claimed.
-  await update('users', user.id, { lastLoginAt: nowISO() });
-  const token = await createSession(user.id);
-  setSessionCookie(ctx.res, token);
   ctx.user = user;
+  if (verifyingEmail()) {
+    // The address is shown to be the person's before the account can be used: the
+    // welcome carries a link to open, and signing in waits for it.
+    await welcomeNewAccount(ctx, user, 'password', await issueVerification(user.id));
+    return { verifyEmail: true, email: user.email };
+  }
+  // Not confirming addresses (or no mail server to send a link with): the address is taken
+  // as given. Signing up signs the person in, so the account is never mistaken for one an
+  // invitation made and nobody has claimed.
+  await update('users', user.id, { lastLoginAt: nowISO(), emailVerifiedAt: nowISO() });
+  setSessionCookie(ctx.res, await createSession(user.id));
   await welcomeNewAccount(ctx, user, 'password');
-  return { user, token };
+  return { user };
 });
 
 route.post('/api/auth/login', 'public', async (ctx) => {
   assertPasswordSignIn();
-  const email = str(ctx.body.email, 'Email').toLowerCase();
+  const email = str(ctx.body.email, 'Email', { max: 200 }).toLowerCase();
   const password = str(ctx.body.password, 'Password');
+  // Ten tries at one address from one place, or fifty at it from anywhere, in a quarter of an hour.
+  if (tooManyAttempts(`${ctx.ip}|${email}`, 10, QUARTER_HOUR_MS) || tooManyAttempts(email, 50, QUARTER_HOUR_MS)) {
+    throw new HttpError(429, 'Too many sign-in attempts. Wait fifteen minutes and try again.');
+  }
   const found = await findUserByEmail(email);
   if (!found || !verifyPassword(password, found.passwordHash)) {
     throw unauthorized('That email and password do not match.');
   }
+  if (!found.emailVerifiedAt) {
+    if (verifyingEmail()) {
+      // The password is right, so the person has the account; the link shows the address is
+      // theirs too, and goes again in case the first never arrived.
+      const link = await issueVerification(found.id);
+      let sent = false;
+      if (link) {
+        try { sent = (await sendMail(composeWelcomeEmail({ to: found, via: 'password', verifyLink: link }))).delivered; }
+        catch (err) { console.error('Verification email failed:', (err as Error).message); }
+      }
+      throw forbidden(`Confirm your email address first: ${sent ? 'we have just sent a new link to' : 'open the link sent to'} ${found.email}.`);
+    }
+    await update('users', found.id, { emailVerifiedAt: nowISO() });   // not confirming addresses, or nothing to send a link with
+  }
   await update('users', found.id, { lastLoginAt: nowISO() });
-  const token = await createSession(found.id);
-  setSessionCookie(ctx.res, token);
-  return { user: publicUser(found), token };
+  setSessionCookie(ctx.res, await createSession(found.id));
+  return { user: publicUser(found) };
+});
+
+/** Opens the link in the welcome email: the address is the person's, and they are signed in. */
+route.post('/api/auth/verify', 'public', async (ctx) => {
+  const token = str(ctx.body.token, 'Link', { max: 200 });
+  const link = await readPasswordReset(token);
+  if (!link || link.purpose !== 'VERIFY' || !await consumePasswordReset(token)) {
+    throw badRequest('This link is not valid any more. Sign in with your password to get a new one.');
+  }
+  const now = nowISO();
+  await update('users', link.user.id, { emailVerifiedAt: now, lastLoginAt: now });
+  setSessionCookie(ctx.res, await createSession(link.user.id));
+  const user = publicUser(link.user);
+  ctx.user = user;
+  await audit(ctx, 'EMAIL_VERIFIED', 'users', user.id, `${user.email} confirmed their email address`);
+  return { user };
 });
 
 // --- Passwords -------------------------------------------------------------
 
 const isProduction = (): boolean => process.env.NODE_ENV === 'production';
+const QUARTER_HOUR_MS = 15 * 60_000;
+/** How long the link that confirms an address works. */
+const VERIFY_LINK_HOURS = 24;
+
+/** Whether signing up waits for the address to be confirmed: auth.verifyEmail, and a mail transport to send the link with. */
+const verifyingEmail = (): boolean => config().auth.verifyEmail && mailConfigured();
+
+/** Issues the link that shows an address is the person's, or null once they have had auth.resetEmailsPerHour of them. */
+async function issueVerification(userId: string): Promise<string | null> {
+  const issued = await issuePasswordReset(userId, { purpose: 'VERIFY', ttlMinutes: VERIFY_LINK_HOURS * 60 });
+  return issued && `${config().app.url}/verify-email?token=${encodeURIComponent(issued.token)}`;
+}
 
 /** The session token behind a request, however it was sent. */
 function sessionTokenOf(ctx: { req: { headers: Record<string, string | string[] | undefined> } }): string | null {
@@ -234,7 +287,8 @@ route.post('/api/auth/reset', 'public', async (ctx) => {
   const userId = await consumePasswordReset(token);
   if (!userId) throw badRequest('This reset link is not valid any more. Ask for a new one.');
   await setPassword(userId, password, { mustChange: false });
-  await update('users', userId, { lastLoginAt: nowISO() });
+  // The link came from the address (or from an administrator who vouches for it), so the address is the person's.
+  await update('users', userId, { lastLoginAt: nowISO(), emailVerifiedAt: nowISO() });
   const user = toCamel<{ email: string }>(await one('SELECT * FROM users WHERE id = ?', userId))!;
   const found = (await findUserByEmail(user.email))!;
   const session = await createSession(userId);
@@ -247,7 +301,7 @@ route.post('/api/auth/reset', 'public', async (ctx) => {
   } else {
     await audit(ctx, 'PASSWORD_RESET', 'users', userId, 'Password set from a reset link');
   }
-  return { user: publicUser(found), token: session };
+  return { user: publicUser(found) };
 });
 
 /** Signed-in password change; keeps this session and signs out the others. */
@@ -275,6 +329,8 @@ export interface WelcomeEmailInput {
   via: SignUpWay;
   /** Whether the first steps offer a 409A from the valuation team; valuationDesk.enabled when not given. */
   valuationDesk?: boolean;
+  /** The link that confirms the address, when signing in waits for it: the email asks for that first. */
+  verifyLink?: string | null;
 }
 
 /**
@@ -285,19 +341,24 @@ export interface WelcomeEmailInput {
  * made with a password nobody checked belongs to whoever chose it, so that person
  * is told to take it back rather than to ignore it.
  */
-export function composeWelcomeEmail({ to, via, valuationDesk = config().valuationDesk.enabled }: WelcomeEmailInput): Message {
+export function composeWelcomeEmail({ to, via, valuationDesk = config().valuationDesk.enabled, verifyLink = null }: WelcomeEmailInput): Message {
   const product = config().brand.productName;
   const app = appUrl();
   // A Google profile with no name leaves the account named after its address, which reads oddly as a greeting.
   const greeting = to.name && to.name !== to.email.split('@')[0] ? `Hi ${to.name},` : 'Hello,';
-  const subject = `Welcome to ${product}`;
+  const about = `${product} keeps a company’s cap table in one place: who owns what, the grants and SAFEs behind it, and the filings that go with them.`;
+  const subject = verifyLink ? `Confirm your email for ${product}` : `Welcome to ${product}`;
   const { html, text } = renderEmail({
-    preview: `Your ${product} account is ready. Start by setting up your company.`,
-    heading: `Welcome to ${product}`,
+    preview: verifyLink ? `Open the link to confirm ${to.email} and finish creating your account.` : `Your ${product} account is ready. Start by setting up your company.`,
+    heading: verifyLink ? 'Confirm your email address' : `Welcome to ${product}`,
     greeting,
-    intro: [`Your ${product} account is ready. ${product} keeps a company’s cap table in one place: who owns what, the grants and SAFEs behind it, and the filings that go with them.`],
-    action: { label: `Open ${product}`, url: app },
-    actionNote: via === 'google' ? `Sign in with Google as ${to.email}.` : `Sign in as ${to.email} with the password you chose.`,
+    intro: verifyLink
+      ? [`Open the link below to confirm that ${to.email} is yours. That signs you in, and your ${product} account is ready.`, about]
+      : [`Your ${product} account is ready. ${about}`],
+    action: verifyLink ? { label: 'Confirm email address', url: verifyLink } : { label: `Open ${product}`, url: app },
+    actionNote: verifyLink
+      ? `The link works once and expires in ${VERIFY_LINK_HOURS} hours. Anyone who has it can sign in to the account, so do not forward this email.`
+      : via === 'google' ? `Sign in with Google as ${to.email}.` : `Sign in as ${to.email} with the password you chose.`,
     sections: [{
       title: 'First steps',
       steps: [
@@ -311,9 +372,11 @@ export function composeWelcomeEmail({ to, via, valuationDesk = config().valuatio
       ],
     }],
     signoff: `— ${mailSignature()}`,
-    footer: via === 'google'
-      ? `You are receiving this because ${to.email} signed in to ${product} with Google for the first time, which created an account. This is a one-time email. If you do not remember signing in, you can ignore it: nobody can sign in to the account without your Google sign-in or a link sent to this address.`
-      : `You are receiving this because an account was created on ${product} with ${to.email}. This is a one-time email. If you did not create it, take the account back with "Forgot your password?" on the sign-in page: the link comes only to this address, and choosing a new password signs everyone else out.`,
+    footer: verifyLink
+      ? `You are receiving this because an account was created on ${product} with ${to.email}. If you did not create it, ignore this email: nobody can sign in to the account until this link is opened.`
+      : via === 'google'
+        ? `You are receiving this because ${to.email} signed in to ${product} with Google for the first time, which created an account. This is a one-time email. If you do not remember signing in, you can ignore it: nobody can sign in to the account without your Google sign-in or a link sent to this address.`
+        : `You are receiving this because an account was created on ${product} with ${to.email}. This is a one-time email. If you did not create it, take the account back with "Forgot your password?" on the sign-in page: the link comes only to this address, and choosing a new password signs everyone else out.`,
   }, subject);
   return { to: to.email, toName: to.name, subject, text, html };
 }
@@ -343,9 +406,9 @@ export async function welcomesSent(): Promise<void> {
  * Inside a transaction it waits for the commit, so a sign-up that is rolled back
  * welcomes nobody. It never throws, and the sign-up never waits for the email.
  */
-export async function welcomeNewAccount(ctx: Ctx, user: AuthUser, via: SignUpWay): Promise<void> {
-  if (inTransaction()) afterCommit(() => welcome(ctx, user, via));
-  else await welcome(ctx, user, via);
+export async function welcomeNewAccount(ctx: Ctx, user: AuthUser, via: SignUpWay, verifyLink: string | null = null): Promise<void> {
+  if (inTransaction()) afterCommit(() => welcome(ctx, user, via, verifyLink));
+  else await welcome(ctx, user, via, verifyLink);
 }
 
 /**
@@ -362,10 +425,11 @@ export async function welcomeNewAccount(ctx: Ctx, user: AuthUser, via: SignUpWay
  * is killed cannot, so an attempt still on its way after the hour is closed here
  * as failed: no delivery takes that long.
  */
-async function welcome(ctx: Ctx, user: AuthUser, via: SignUpWay): Promise<void> {
+async function welcome(ctx: Ctx, user: AuthUser, via: SignUpWay, verifyLink: string | null): Promise<void> {
   const { welcomeEmail, welcomeEmailsPerHour: limit } = config().mail;
   // The demo account is shared by everyone the sign-in card hands it to: it is nobody's to welcome.
-  if (!welcomeEmail || limit === 0 || isDemoAccount(user.email)) return;
+  // A welcome that carries the link to confirm the address goes even with welcomes turned off: without it nobody could sign in.
+  if ((!welcomeEmail && !verifyLink) || limit === 0 || isDemoAccount(user.email)) return;
   try {
     const attempt = await transaction(async () => {
       await run("SELECT pg_advisory_xact_lock(hashtext('kosmitor:welcome-emails'))");
@@ -384,7 +448,7 @@ async function welcome(ctx: Ctx, user: AuthUser, via: SignUpWay): Promise<void> 
       return audit(ctx, 'WELCOME_EMAIL_PENDING', 'users', user.id, `Emailing a welcome to ${user.email}`);
     });
     if (attempt) {
-      const sending = deliverWelcome(attempt, composeWelcomeEmail({ to: { email: user.email, name: user.name }, via }));
+      const sending = deliverWelcome(attempt, composeWelcomeEmail({ to: { email: user.email, name: user.name }, via, verifyLink }));
       delivering.add(sending);
       void sending.finally(() => delivering.delete(sending));
     }
@@ -460,13 +524,12 @@ route.post('/api/auth/google', 'public', async (ctx) => {
   }
   const { user, created } = await upsertGoogleAccount(profile);
   await update('users', user.id, { lastLoginAt: nowISO() });
-  const token = await createSession(user.id);
-  setSessionCookie(ctx.res, token);
+  setSessionCookie(ctx.res, await createSession(user.id));
   ctx.user = user;
   await audit(ctx, 'LOGIN', 'users', user.id, 'Signed in with Google');
   // Only an account this sign-in created is new; one it found or linked (an invitation claimed) is not.
   if (created) await welcomeNewAccount(ctx, user, 'google');
-  return { user, token };
+  return { user };
 });
 
 route.post('/api/auth/logout', 'public', async (ctx) => {

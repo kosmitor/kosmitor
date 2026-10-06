@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -30,10 +30,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Offerco', legalName: 'Offerco, Inc.' }, admin)).json.id as string;
 const now = new Date().toISOString();
 const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE company_id = ?', cid))!.id;
@@ -54,7 +54,7 @@ test('an offer is drafted from the template, sent as a link, accepted by the can
   assert.equal(created.json.candidateEmail, 'priya@example.com');
   assert.equal(created.json.poolName, '2026 Stock Plan');
   assert.equal(created.json.link, null);
-  assert.equal(created.json.token, undefined);                                                   // the accept token never leaves the server through the list
+  assert.equal(created.json.token, undefined);                                                 // the accept token never leaves the server through the list
   assert.match(created.json.body, /Dear Priya Raman,/);
   assert.match(created.json.body, /position of VP Engineering at Offerco, starting 2026-11-02/);
   assert.match(created.json.body, /\$185,000\.00 per year/);

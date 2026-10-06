@@ -25,7 +25,7 @@ import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // No mail transport, whatever apps/server/.env says: an empty value wins over the file.
 process.env.SMTP_URL = '';
@@ -76,7 +76,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { /* not JSON */ }
-  return { status: res.status, json, headers: res.headers };
+  return { status: res.status, json, headers: res.headers, token: sessionCookie(res) };
 }
 const desk = (method: string, path: string, token: string, body?: unknown) =>
   call(method, `/api/valuation-desk${path}`, body, null, { 'X-Desk-Token': token });
@@ -91,14 +91,14 @@ async function upload(token: string | null, content: Buffer, fileName = 'Ledgerl
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { /* not JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, token: sessionCookie(res) };
 }
 
 // --- A company with holders on its cap table ---------------------------------------
 
-const avery = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json;
+const avery = await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' });
 const admin = avery.token as string;
-const averyId = avery.user.id as string;
+const averyId = avery.json.user.id as string;
 
 const HOLDERS = ['Priya Raman', 'priya@example.com', 'Northwind Ventures', 'northwind.example.com'];
 
@@ -644,14 +644,14 @@ test('a reader the vault keeps the report from sees the team’s figures, but no
   const link = await call('POST', `/api/c/${harbor}/members/${added.json.id}/reset-password`, { mode: 'link' }, admin);
   const reset = await call('POST', '/api/auth/reset', { token: new URL(link.json.resetUrl).searchParams.get('token')!, password: 'member-pass-1' });
   assert.equal(reset.status, 200, JSON.stringify(reset.json));
-  const seen = await companyRequest(harbor, id, reset.json.token);
+  const seen = await companyRequest(harbor, id, reset.token);
   assert.deepEqual(seen.report, { document: null, detected: null, fairMarketValue: 420_000, method: null });
   const docId = (await companyRequest(harbor, id)).report.document?.id as string;
   assert.ok(docId, 'an administrator sees it');
 
   // Shared with everyone from the vault, it is the viewer's to read too, and the page is told so.
   assert.equal((await call('PATCH', `/api/c/${harbor}/documents/${docId}`, { visibility: 'ALL' }, admin)).status, 200);
-  const shared = (await companyRequest(harbor, id, reset.json.token)).report;
+  const shared = (await companyRequest(harbor, id, reset.token)).report;
   assert.deepEqual([shared.document?.id, shared.document?.visibility, shared.detected?.fairMarketValue?.value], [docId, 'ALL', 420_000]);
   await run(`UPDATE valuation_requests SET status = 'CANCELLED', closed_at = ? WHERE id = ?`, new Date().toISOString(), id);
 });

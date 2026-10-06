@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { createServer, type Server, type Socket, type AddressInfo } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // --- A mail server that holds each message until it is let through --------------
 
@@ -69,7 +69,8 @@ const { handle } = await import('../src/http.ts');
 await import('../src/routes/auth.ts');
 await import('../src/routes/valuation-requests.ts');
 const { configure, resetConfig, deskName } = await import('../src/config.ts');
-const { run, one, all } = await import('../src/db.ts');
+configure({ auth: { verifyEmail: true } });   // signing up sends a link to open first, as on a public server
+const { run, one, all, insert } = await import('../src/db.ts');
 
 const api: HttpServer = createHttpServer((req, res) => { void handle(req, res); });
 await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));
@@ -84,7 +85,7 @@ async function call(method: string, path: string, body?: unknown, token?: string
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { /* not JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, token: sessionCookie(res) };
 }
 const desk = (token: string, body: unknown) => call('POST', '/api/valuation-desk/status', body, null, { 'X-Desk-Token': token });
 
@@ -97,11 +98,32 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
   }
 }
 
+
+/**
+ * Signs up through the API and opens the confirmation link, the way the person
+ * would from the email. The stand-in keeps no message bodies, so the link's token
+ * is minted here into the same table the server reads it from.
+ */
+async function signUp(email: string, name: string, password: string): Promise<string> {
+  const answer = await call('POST', '/api/auth/register', { email, name, password });
+  assert.equal(answer.json.verifyEmail, true, JSON.stringify(answer.json));
+  const user = (await one<{ id: string }>('SELECT id FROM users WHERE email = ?', email))!;
+  const token = randomBytes(32).toString('base64url');
+  await insert('password_resets', {
+    tokenHash: createHash('sha256').update(token).digest('hex'), userId: user.id, createdBy: null, purpose: 'VERIFY',
+    createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3_600_000).toISOString(), usedAt: null,
+  });
+  const verified = await call('POST', '/api/auth/verify', { token });
+  assert.equal(verified.status, 200, JSON.stringify(verified.json));
+  return verified.token as string;
+}
+
+const userIdOf = async (email: string) => (await one<{ id: string }>('SELECT id FROM users WHERE email = ?', email))!.id;
 // Made-up people: Avery asks for the 409A, Morgan is a colleague who can close it.
-const avery = await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' });
-const cid = (await call('POST', '/api/companies', { name: 'Slow Mail Harbor' }, avery.json.token)).json.id as string;
-const morgan = (await call('POST', '/api/auth/register', { email: 'morgan.lee@example.com', name: 'Morgan Lee', password: 'morgan-pass-1' })).json.token as string;
-assert.equal((await call('POST', `/api/c/${cid}/members`, { email: 'morgan.lee@example.com', role: 'LEGAL' }, avery.json.token)).status, 200);
+const avery = { token: await signUp('avery@example.com', 'Avery Stone', 'avery-pass-1'), json: { user: { id: await userIdOf('avery@example.com') } } };
+const cid = (await call('POST', '/api/companies', { name: 'Slow Mail Harbor' }, avery.token)).json.id as string;
+const morgan = await signUp('morgan.lee@example.com', 'Morgan Lee', 'morgan-pass-1');
+assert.equal((await call('POST', `/api/c/${cid}/members`, { email: 'morgan.lee@example.com', role: 'LEGAL' }, avery.token)).status, 200);
 
 /**
  * A request the team has started on, with a link it can use. Written straight to

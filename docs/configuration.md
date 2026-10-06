@@ -37,6 +37,7 @@ Each of these sets one entry and wins over both files. An empty variable counts 
 | `TRUST_PROXY` | `server.trustProxy` |
 | `PG_POOL_MAX` | `database.poolMax` |
 | `MAIL_FROM` | `mail.from` |
+| `VERIFY_EMAIL` | `auth.verifyEmail` |
 | `GOOGLE_CLIENT_ID` | `auth.google.clientId` |
 | `GOOGLE_ALLOWED_DOMAINS` | `auth.google.allowedDomains` |
 | `VALUATION_DESK_EMAIL` | `valuationDesk.email` |
@@ -176,6 +177,7 @@ Accounts, passwords and sign-in.
 | `auth.inviteEmailsPerAddressPerDay` | `5` | Invitation emails one address can receive in a day, from every company together, resends included. From 1 to 50. |
 | `auth.passwordSignIn` | `true` | Offer email-and-password sign-in. Turn it off to allow Google sign-in only. |
 | `auth.selfSignup` | `true` | Let anyone create an account from the sign-in page. Turn it off so only invited people and existing accounts get in. |
+| `auth.verifyEmail` | `false` | Make someone who signs up open a link sent to their address before they can sign in. Needs a mail transport (SMTP_URL or ACS_CONNECTION_STRING); without one the address is taken as given. Environment variable VERIFY_EMAIL wins over it. |
 | `auth.google` |  | Sign in with Google. |
 | `auth.google.clientId` | `""` | OAuth client ID of type "Web application". Empty turns Google sign-in off. Environment variable GOOGLE_CLIENT_ID wins over it. |
 | `auth.google.allowedDomains` | `[]` | Only accept Google accounts on these email domains. Empty accepts any. Environment variable GOOGLE_ALLOWED_DOMAINS (comma separated) wins over it. |

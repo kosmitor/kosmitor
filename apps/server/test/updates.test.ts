@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { freshDatabase } from './helpers.ts';
+import { freshDatabase, sessionCookie } from './helpers.ts';
 
 delete process.env.SMTP_URL;
 await freshDatabase();
@@ -30,10 +30,10 @@ async function call(method: string, path: string, body?: unknown, token?: string
     method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, json: (await res.json()) as any };
+  return { status: res.status, json: (await res.json()) as any, token: sessionCookie(res) };
 }
 
-const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).json.token as string;
+const admin = (await call('POST', '/api/auth/register', { email: 'avery@example.com', name: 'Avery Stone', password: 'avery-pass-1' })).token as string;
 const cid = (await call('POST', '/api/companies', { name: 'Updateco' }, admin)).json.id as string;
 const now = new Date().toISOString();
 await insert('stakeholders', { id: 'stk_halcyon', companyId: cid, name: 'Halcyon Ventures', email: 'deals@halcyon.example.com', type: 'FUND', relation: 'INVESTOR', createdAt: now });
@@ -80,7 +80,7 @@ test('an update is drafted, sent to its audience, read from the portal and track
   const halcyon = (await call('POST', '/api/auth/reset', {
     token: new URL((await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin)).json.resetUrl).searchParams.get('token'),
     password: 'halcyon-pass-1',
-  })).json.token as string;
+  })).token as string;
   assert.equal((await call('GET', `/api/c/${cid}/updates`, undefined, halcyon)).status, 403);                      // limited roles do not see the hub
   const portal = await call('GET', `/api/c/${cid}/portal`, undefined, halcyon);
   assert.equal(portal.json.updates.length, 1);

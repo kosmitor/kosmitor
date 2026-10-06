@@ -138,8 +138,10 @@ test('Google identities link to an existing account by verified email, else crea
   assert.equal(bySub.id, invited.id);
   assert.equal(bySub.avatarUrl, 'https://p/2');
 
-  // A password user keeps their chosen name when they link Google.
+  // A password user whose address was confirmed keeps their chosen name, and their password, when they link Google.
+  const { run } = await import('../src/db.ts');
   const bao = await auth.createUser('bao@example.com', 'Bao Nguyen', 'password123');
+  await run('UPDATE users SET email_verified_at = created_at WHERE id = ?', bao.id);
   const baoLinked = await auth.upsertGoogleUser(profile({ sub: 'g-2', email: 'bao@example.com', name: 'B. Nguyen' }));
   assert.equal(baoLinked.id, bao.id);
   assert.equal(baoLinked.name, 'Bao Nguyen');
