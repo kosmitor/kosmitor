@@ -23,8 +23,12 @@ import { roundShares } from './util.ts';
  * own date, it says the record was wrong all along and holds for every date.
  */
 
-/** Statuses the transfer and repurchase routes close a certificate with, by entry type. */
-const CLOSES: Partial<Record<LedgerEntry['type'], Issuance['status']>> = { TRANSFER: 'TRANSFERRED', REPURCHASE: 'REPURCHASED' };
+/** Statuses the transfer, repurchase and cancel routes close a certificate with, by entry type. */
+const CLOSES: Partial<Record<LedgerEntry['type'], Issuance['status']>> = { TRANSFER: 'TRANSFERRED', REPURCHASE: 'REPURCHASED', CANCELLATION: 'CANCELLED' };
+/** Statuses the cancel route closes a warrant with, by entry type. */
+const ENDS_WARRANT: Partial<Record<LedgerEntry['type'], Warrant['status']>> = { CANCELLATION: 'CANCELLED', EXPIRATION: 'EXPIRED' };
+/** Statuses the convert, repay and cancel routes settle a convertible with, by entry type. */
+const SETTLES: Partial<Record<LedgerEntry['type'], Convertible['status']>> = { CONVERSION: 'CONVERTED', REPAYMENT: 'REPAID', CANCELLATION: 'CANCELLED' };
 /** Entries that take options off a grant: the cancel route's, and an import's dated forfeitures. */
 const CANCELS = new Set<LedgerEntry['type']>(['CANCELLATION', 'FORFEITURE', 'EXPIRATION']);
 /** Statuses the exercise and cancel routes give a grant with nothing left outstanding. */
@@ -100,7 +104,7 @@ function rewindCertificate(data: CompanyData, i: Issuance, entries: LedgerEntry[
   if (i.status === 'OUTSTANDING') held = i.quantity;
   else if (undone.length > 0 && Object.values(CLOSES).includes(i.status) && moves.some((e) => CLOSES[e.type] === i.status && near(units(e), i.quantity))) held = 0;
   // Closed with no entry for what it last held (an edit, a row older than the ledger), or
-  // cancelled or converted by an edit, which the ledger does not date: today's state.
+  // converted, which the ledger does not date on the certificate: today's state.
   else return i;
 
   held = roundShares(held + undone.reduce((s, e) => s + units(e), 0) - uncorrected.reduce((s, e) => s + units(e), 0));
@@ -128,11 +132,15 @@ function rewindGrant(data: CompanyData, a: Award, entries: LedgerEntry[], asOf: 
   return { ...a, quantity, exercisedQuantity, cancelledQuantity, status: reopens ? 'OUTSTANDING' : a.status };
 }
 
-/** A warrant before the exercises and corrections dated after `asOf`, as a grant is rewound. */
+/**
+ * A warrant before the exercises and corrections dated after `asOf`, as a grant is
+ * rewound, and still open if the cancel route closed it after `asOf`.
+ */
 function rewindWarrant(data: CompanyData, w: Warrant, entries: LedgerEntry[], asOf: ISODate): Warrant {
   const undo = counter(data, w.issueDate, entries, asOf);
   const quantity = undo(fixes('quantity'), w.quantity);
   const exercisedQuantity = undo((e) => e.type === 'EXERCISE' || fixes('exercisedQuantity')(e), w.exercisedQuantity);
+  if (entries.some((e) => e.date > asOf && ENDS_WARRANT[e.type] === w.status)) return { ...w, quantity, exercisedQuantity, status: 'OUTSTANDING' };
   if (quantity === w.quantity && exercisedQuantity === w.exercisedQuantity) return w;
   const usedUpByCounts = w.status === 'EXERCISED' && roundShares(w.quantity - w.exercisedQuantity) <= 0;
   const reopens = usedUpByCounts && roundShares(quantity - exercisedQuantity) > 0;
@@ -159,12 +167,14 @@ function counter(data: CompanyData, on: ISODate, entries: LedgerEntry[], asOf: I
 }
 
 /**
- * A convertible that converted after `asOf` was still outstanding then. The
- * convert route dates the conversion on the instrument and in the ledger; an
- * edit can give either, or neither, and then nothing says when.
+ * A convertible that converted, was repaid or was cancelled after `asOf` was still
+ * outstanding then. The convert route dates the conversion on the instrument and in
+ * the ledger, the repay and cancel routes in the ledger; a row older than the
+ * ledger may have neither, and then nothing says when.
  */
 function rewindConvertible(c: Convertible, entries: LedgerEntry[], asOf: ISODate): Convertible {
-  if (c.status !== 'CONVERTED') return c;
-  const on = c.convertedOn ?? entries.filter((e) => e.type === 'CONVERSION').map((e) => e.date).sort()[0] ?? null;
+  if (c.status === 'OUTSTANDING' || !Object.values(SETTLES).includes(c.status)) return c;
+  const on = (c.status === 'CONVERTED' ? c.convertedOn : null)
+    ?? entries.filter((e) => SETTLES[e.type] === c.status).map((e) => e.date).sort()[0] ?? null;
   return on != null && on > asOf ? { ...c, status: 'OUTSTANDING', convertedOn: null, convertedIntoShareClassId: null } : c;
 }
