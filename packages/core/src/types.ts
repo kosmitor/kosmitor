@@ -306,8 +306,19 @@ export const REWOUND_TYPES: readonly TransactionType[] = [
 
 /** The counts a CORRECTION entry changes by a signed `quantity`. */
 export const CORRECTED_COUNTS = ['quantity', 'exercisedQuantity', 'cancelledQuantity'] as const;
-/** A convertible's terms: the entry carries the value `before` and `after`, and the rewind restores `before` on earlier dates. */
-export const CORRECTED_TERMS = ['principal', 'valuationCap', 'discount', 'interestRate', 'compounding', 'instrument', 'maturityDate', 'mfn', 'qualifiedFinancingMinimum'] as const;
+/**
+ * The terms of each kind of security that the views read as of a date: a convertible's
+ * conversion terms, a grant's strike, vesting and expiry, a warrant's strike and expiry,
+ * a certificate's price and vesting. A CORRECTION of one carries the value `before` and
+ * `after`, and the rewind restores `before` on earlier dates. Keyed by table.
+ */
+export const CORRECTED_TERMS = {
+  issuances: ['pricePerShare', 'vestingScheduleId', 'vestingStartDate'],
+  awards: ['type', 'strikePrice', 'vestingStartDate', 'vestingScheduleId', 'expirationDate', 'ptepMonths', 'fmvAtGrant'],
+  warrants: ['strikePrice', 'expirationDate'],
+  convertibles: ['principal', 'valuationCap', 'discount', 'interestRate', 'compounding', 'instrument', 'maturityDate', 'mfn', 'qualifiedFinancingMinimum'],
+} as const;
+type CorrectedTerm = typeof CORRECTED_TERMS[keyof typeof CORRECTED_TERMS][number];
 /**
  * A typo in who holds a security, its class or plan, or its own date: the record always
  * should have read `after`, so the rewind applies it on every date. Never a transfer.
@@ -315,7 +326,7 @@ export const CORRECTED_TERMS = ['principal', 'valuationCap', 'discount', 'intere
  */
 export const CORRECTED_IDENTITY = ['stakeholderId', 'shareClassId', 'poolId', 'issueDate', 'grantDate'] as const;
 /** What a CORRECTION entry changes. `deleted`: a security entered by mistake was removed. */
-export type CorrectedField = typeof CORRECTED_COUNTS[number] | typeof CORRECTED_TERMS[number] | typeof CORRECTED_IDENTITY[number] | 'deleted';
+export type CorrectedField = typeof CORRECTED_COUNTS[number] | CorrectedTerm | typeof CORRECTED_IDENTITY[number] | 'deleted';
 
 export interface Transaction {
   id: string;

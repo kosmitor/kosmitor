@@ -1,6 +1,7 @@
 import type { CompanyData, Convertible, ISODate, Cents, PricePerShare, ConvertibleInstrument } from './types.ts';
 import { daysBetween, monthsBetween, addMonths, sharesForAmount, roundShares } from './util.ts';
 import { MICRO, CENTS } from './types.ts';
+import { rewindTerms } from './ledger.ts';
 
 /** What each instrument is called, as a title or at the start of a sentence. */
 export const INSTRUMENT_NAMES: Readonly<Record<string, string>> = {
@@ -175,18 +176,20 @@ export function mfnElections(data: Pick<CompanyData, 'convertibles' | 'ledger'>,
 
 /**
  * The terms every view converts each elected MFN instrument on as of `asOf`: the
- * adopted instrument's, as amended by its own election if it has one. An
- * instrument not in the map is on its own.
+ * adopted instrument's as they stood on the election date, as amended by its own
+ * election in force then if it has one. A later correction of the adopted
+ * instrument's terms is not what the holder elected. An instrument not in the map
+ * is on its own.
  */
 export function electedTerms(data: Pick<CompanyData, 'convertibles' | 'ledger'>, asOf: ISODate): Map<string, ConversionTerms> {
   const byId = new Map(data.convertibles.map((c) => [c.id, c]));
-  const elections = mfnElections(data, asOf);
-  const termsOf = (id: string, seen: Set<string>): ConversionTerms => {
-    const e = elections.get(id);
+  const termsOn = (id: string, on: ISODate, seen: Set<string>): ConversionTerms => {
+    const e = mfnElections(data, on).get(id);
     // Two same-day MFN instruments electing each other would loop; the second keeps its own terms.
-    return e && !seen.has(e.adoptedId) ? termsOf(e.adoptedId, seen.add(id)) : ownTerms(byId.get(id)!);
+    if (e && !seen.has(e.adoptedId)) return termsOn(e.adoptedId, e.date, seen.add(id));
+    return ownTerms(rewindTerms(byId.get(id)!, (data.ledger ?? []).filter((x) => x.securityId === id), on));
   };
-  return new Map([...elections.keys()].map((id) => [id, termsOf(id, new Set())]));
+  return new Map([...mfnElections(data, asOf).keys()].map((id) => [id, termsOn(id, asOf, new Set())]));
 }
 
 export interface MFNSuggestion { adoptedId: string; shares: number }
