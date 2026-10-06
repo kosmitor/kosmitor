@@ -5,7 +5,7 @@ Read README.md for the layout and setup. This file only holds rules that the cod
 ## Running things
 
 - Node runs the TypeScript directly. There is no build step for the server or for `packages/core`. Use Node 26, the same version as the Dockerfile.
-- Server tests need a running PostgreSQL. Each test file creates and then drops its own database through `PG_ADMIN_URL` (default `postgres://localhost:5432/postgres`).
+- Server tests need a running PostgreSQL. Each test file creates and then drops its own database through `PG_ADMIN_URL` (default `postgres://localhost:5432/postgres`). With `docker compose up -d`, use `PG_ADMIN_URL=postgres://postgres@localhost:55432/postgres`.
 - In a server test, call `await freshDatabase()` (`apps/server/test/helpers.ts`) at the top level before you import anything from `src/`. Otherwise the code binds to the wrong database.
 - `docs/configuration.md` is generated. Edit `kosmitor.config.schema.json` or `kosmitor.config.json`, then run `npm run config:docs`. Local overrides go in `kosmitor.config.local.json` (ignored by git). Secrets go only in `apps/server/.env`.
 

@@ -1,0 +1,19 @@
+# Local PostgreSQL for development and tests. It listens on 55432, not 5432,
+# so it can run next to another PostgreSQL. Start it with `docker compose up -d`,
+# then point the server and the tests at it (see README.md, "Running it").
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 15
+
+volumes:
+  pgdata:

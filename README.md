@@ -19,6 +19,13 @@ the underlying rules rather than from the code.
 
 You need PostgreSQL 14 or newer running locally (Homebrew: `brew install postgresql@17 && brew services start postgresql@17`).
 
+Or use Docker: `docker compose up -d` starts PostgreSQL on port 55432, so it does not conflict with another server on 5432. Then point the server and the tests at it:
+
+```bash
+echo 'DATABASE_URL=postgres://postgres@localhost:55432/kosmitor' >> apps/server/.env
+export PG_ADMIN_URL=postgres://postgres@localhost:55432/postgres   # for npm test
+```
+
 ```bash
 npm install
 npm run db:create     # creates the "kosmitor" database (set DATABASE_URL to use another)
