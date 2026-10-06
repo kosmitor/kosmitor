@@ -15,7 +15,7 @@ import { shares, pps, money, date, dateTime, today, parseShares, parsePPS } from
 
 const blank = {
   stakeholderId: '', shareClassId: '', quantity: '', strikePrice: '',
-  issueDate: today(), expirationDate: '', netExercise: true, notes: '', effectiveDate: '',
+  issueDate: today(), expirationDate: '', netExercise: true, notes: '', effectiveDate: '', reason: '',
 };
 
 export default function Warrants() {
@@ -71,10 +71,13 @@ export default function Warrants() {
     setForm({
       stakeholderId: w.stakeholderId, shareClassId: w.shareClassId, quantity: String(w.quantity),
       strikePrice: String(w.strikePrice / 1e6), issueDate: w.issueDate,
-      expirationDate: w.expirationDate ?? '', netExercise: !!w.netExercise, notes: w.notes ?? '', effectiveDate: w.issueDate,
+      expirationDate: w.expirationDate ?? '', netExercise: !!w.netExercise, notes: w.notes ?? '', effectiveDate: w.issueDate, reason: '',
     });
     setEditing(w);
   };
+  /** A warrant whose holder, class or issue date is being changed: a correction that needs a reason. */
+  const retyped = !!editing?.id
+    && (form.stakeholderId !== editing.stakeholderId || form.shareClassId !== editing.shareClassId || form.issueDate !== editing.issueDate);
 
   const save = async () => {
     const payload = {
@@ -85,7 +88,7 @@ export default function Warrants() {
     };
     const ok = editing?.id
       // A changed share count is a correction, dated in the ledger (docs/design/dated-ledger.md).
-      ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate }, 'Warrant updated')
+      ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate, reason: form.reason || undefined }, 'Warrant updated')
       : await crud.create(payload, 'Warrant issued');
     if (ok) setEditing(null);
   };
@@ -224,6 +227,11 @@ export default function Warrants() {
           {editing?.id && parseShares(form.quantity) !== Number(editing.quantity) && (
             <Field label="Correct from" hint="The ledger dates the change. Keep the issue date if the old count was always wrong.">
               <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            </Field>
+          )}
+          {retyped && (
+            <Field label="Reason for the correction" required hint="A changed holder, class or issue date says the record was always wrong, on every date.">
+              <Input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Entered against the wrong holder" required />
             </Field>
           )}
           <Field label="Strike price" required>

@@ -22,7 +22,7 @@ const PAR = String(config.company.commonClass.parValue);
 const blank = {
   certificateNo: '', stakeholderId: '', shareClassId: '', quantity: '',
   pricePerShare: PAR, issueDate: today(), vestingScheduleId: '', vestingStartDate: '',
-  earlyExercised: false, election83bFiledOn: '', boardApprovalDate: '', notes: '', effectiveDate: '',
+  earlyExercised: false, election83bFiledOn: '', boardApprovalDate: '', notes: '', effectiveDate: '', reason: '',
 };
 
 export default function Certificates() {
@@ -156,10 +156,15 @@ export default function Certificates() {
       quantity: String(i.quantity), pricePerShare: String(i.pricePerShare / 1e6), issueDate: i.issueDate,
       vestingScheduleId: i.vestingScheduleId ?? '', vestingStartDate: i.vestingStartDate ?? '',
       earlyExercised: !!i.earlyExercised, election83bFiledOn: i.election83bFiledOn ?? '',
-      boardApprovalDate: i.boardApprovalDate ?? '', notes: i.notes ?? '', effectiveDate: i.issueDate,
+      boardApprovalDate: i.boardApprovalDate ?? '', notes: i.notes ?? '', effectiveDate: i.issueDate, reason: '',
     });
     setEditing(i);
   };
+
+  /** An issued certificate whose holder, class or date is being changed: a correction that needs a reason. */
+  const retyped = !!editing?.id && editing.status !== 'PENDING_SIGNATURE'
+    && (form.stakeholderId !== editing.stakeholderId || form.shareClassId !== editing.shareClassId || form.issueDate !== editing.issueDate);
+  const signedCertificate = (i: any) => (documentsOf.get(i.id) ?? []).some((d: any) => d.category === 'CERTIFICATE' && d.status === 'EXECUTED');
 
   const save = async () => {
     const payload = {
@@ -198,7 +203,7 @@ export default function Certificates() {
     }
     const ok = editing?.id
       // A changed share count is a correction, dated in the ledger (docs/design/dated-ledger.md).
-      ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate }, 'Certificate updated')
+      ? await crud.update(editing.id, { ...payload, effectiveDate: form.effectiveDate || form.issueDate, reason: form.reason || undefined }, 'Certificate updated')
       : await crud.create(payload, 'Shares issued');
     if (ok) setEditing(null);
   };
@@ -345,7 +350,8 @@ export default function Certificates() {
                     </TD>
                     <TD>
                       <StatusBadge status={i.status} />
-                      {i.status === 'PENDING_SIGNATURE' && blocksOf(i).length > 0 && (
+                      {certificate?.resign && <Badge tone="warning" className="ml-1">Corrected: awaiting re-signing</Badge>}
+                      {(i.status === 'PENDING_SIGNATURE' || certificate?.resign) && blocksOf(i).length > 0 && (
                         <span className="mt-1 block text-[11px] text-ink-500">
                           {blocksOf(i).filter((s) => s.status === 'SIGNED').length} of {blocksOf(i).length} signed
                           {blocksOf(i).some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocksOf(i).filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
@@ -402,6 +408,9 @@ export default function Certificates() {
                             </>
                           ) : (
                             <>
+                              {certificate?.resign && companyBlock(i)?.status === 'PENDING' && (
+                                <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(i), document: certificate }); }}>Countersign</Button>
+                              )}
                               <Button size="sm" variant="ghost" onClick={() => openEdit(i)} aria-label="Edit" title="Edit">
                                 <Icon name="edit" className="size-4" />
                               </Button>
@@ -489,7 +498,16 @@ export default function Certificates() {
           <Field label="Issue date" required>
             <Input type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} required />
           </Field>
+          {retyped && (
+            <Field label="Reason for the correction" required
+              hint="A changed holder, class or issue date says the record was always wrong, on every date. To move shares to someone else, transfer them instead.">
+              <Input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Entered against the wrong holder" required />
+            </Field>
+          )}
         </FormGrid>
+        {editing?.id && signedCertificate(editing) && (retyped || parseShares(form.quantity) !== Number(editing.quantity) || parsePPS(form.pricePerShare) !== Number(editing.pricePerShare)) && (
+          <Banner tone="warning">The signed certificate will no longer match. Saving voids it, keeps it with its signatures, and sends a corrected certificate to the holder and the Company to sign.</Banner>
+        )}
 
         <div className="border-t border-ink-100 pt-4">
           <p className="mb-3 text-[13px] font-semibold text-ink-800">Restrictions</p>

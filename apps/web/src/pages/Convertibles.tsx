@@ -24,8 +24,10 @@ type Approval = 'APPROVED' | 'REQUEST' | 'NONE';
 const blank = {
   stakeholderId: '', instrument: config.equity.convertibleInstrument as string, principal: '', issueDate: today(),
   valuationCap: '', discount: '', interestRate: '', compounding: config.equity.noteCompounding as string,
-  maturityDate: '', mfn: false, proRataRight: true, qualifiedFinancingMinimum: '', notes: '',
+  maturityDate: '', mfn: false, proRataRight: true, qualifiedFinancingMinimum: '', notes: '', effectiveDate: '', reason: '',
 };
+/** The terms a correction of an issued instrument dates in the ledger (CORRECTION, docs/design/dated-ledger.md). */
+const TERMS = ['instrument', 'principal', 'valuationCap', 'discount', 'interestRate', 'compounding', 'maturityDate', 'mfn', 'qualifiedFinancingMinimum'];
 const blankTerms = {
   instrument: config.equity.convertibleInstrument as string, valuationCap: '', discount: '', interestRate: '',
   compounding: config.equity.raiseNoteCompounding as string, maturityDate: '',
@@ -114,14 +116,14 @@ export default function Convertibles() {
       compounding: c.compounding, maturityDate: c.maturityDate ?? '', mfn: !!c.mfn,
       proRataRight: !!c.proRataRight,
       qualifiedFinancingMinimum: c.qualifiedFinancingMinimum ? String(c.qualifiedFinancingMinimum / 100) : '',
-      notes: c.notes ?? '',
+      notes: c.notes ?? '', effectiveDate: c.issueDate, reason: '',
     });
     setEditing(c);
   };
 
-  const save = async () => {
+  const payloadOf = (): Record<string, unknown> => {
     const safe = form.instrument === 'SAFE_PRE' || form.instrument === 'SAFE_POST';
-    const payload = {
+    return {
       stakeholderId: form.stakeholderId, instrument: form.instrument,
       principal: parseMoney(form.principal), issueDate: form.issueDate,
       valuationCap: form.valuationCap ? parseMoney(form.valuationCap) : null,
@@ -132,8 +134,17 @@ export default function Convertibles() {
       qualifiedFinancingMinimum: form.qualifiedFinancingMinimum ? parseMoney(form.qualifiedFinancingMinimum) : null,
       notes: form.notes || null,
     };
+  };
+  // An issued instrument's terms change from a date, and its holder or issue date only with a reason.
+  const issued = !!editing?.id && !IN_FLIGHT.has(editing.status);
+  const draft = issued ? payloadOf() : {};
+  const reterms = issued && TERMS.some((k) => (k === 'mfn' ? !!draft.mfn !== !!editing.mfn : String(draft[k] ?? '') !== String(editing[k] ?? '')));
+  const retyped = issued && (form.stakeholderId !== editing.stakeholderId || form.issueDate !== editing.issueDate);
+
+  const save = async () => {
+    const payload = payloadOf();
     const ok = editing?.id
-      ? await crud.update(editing.id, payload, 'Instrument updated')
+      ? await crud.update(editing.id, { ...payload, ...(reterms ? { effectiveDate: form.effectiveDate || form.issueDate } : {}), reason: form.reason || undefined }, 'Instrument updated')
       : await crud.create(payload, 'Instrument recorded');
     if (ok) { setEditing(null); reloadStack(); }
   };
@@ -665,6 +676,17 @@ export default function Convertibles() {
             <Input value={form.qualifiedFinancingMinimum}
               onChange={(e) => setForm({ ...form, qualifiedFinancingMinimum: e.target.value })} placeholder={amountHint(3_000_000)} />
           </Field>
+          {reterms && (
+            <Field label="New terms apply from" hint="The ledger dates the change, and earlier dates keep the old terms. Keep the issue date if the old terms were always wrong.">
+              <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            </Field>
+          )}
+          {(retyped || reterms) && (
+            <Field label="Reason for the correction" required={retyped}
+              hint={retyped ? 'A changed holder or issue date says the record was always wrong, on every date.' : 'Recorded with the correction, for example the side letter that amended the terms.'}>
+              <Input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="Amended by side letter" required={retyped} />
+            </Field>
+          )}
         </FormGrid>
         <div className="space-y-2">
           <Checkbox label="Most favoured nation (MFN)"

@@ -423,6 +423,7 @@ export default function Documents() {
         <StatusBadge status={d.status} />
         {/* The server found text that no longer matches what a signer signed. */}
         {d.tampered && <Badge tone="danger">Changed after signing</Badge>}
+        {d.resign && <Badge tone="warning">Replaces a voided signed certificate</Badge>}
       </span>,
       actionsFor(d),
     ];
