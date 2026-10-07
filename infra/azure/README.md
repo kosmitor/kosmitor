@@ -55,18 +55,22 @@ done
 
 Copy `terraform.tfvars.example` to `terraform.tfvars` (ignored by git) and fill in
 at least `subscription_id` and `alert_email`; every other variable is listed there
-with its default. To keep the state in Azure Storage from the start, follow
-`backend.tf.example` first (it uses `backend.hcl.example` for the account details).
+with its default. The Terraform state will hold the database password and the
+app's other secrets, so keep it in Azure Storage from the start: run
+`./state-storage.sh` once per subscription (it creates the storage and prints the
+account details), then follow `backend.tf.example`. Operations, below, says how
+that storage is protected.
 
 ```bash
 cd infra/azure
 cp terraform.tfvars.example terraform.tfvars                         # then edit it
 az login --scope https://management.azure.com//.default
 export TF_VAR_smtp_url='smtps://user:password@smtp.example.com:465'   # optional; leave unset to disable SMTP
-terraform init                                                       # or: terraform init -backend-config=backend.hcl
+terraform init -backend-config=backend.hcl                           # plain terraform init for local state
 terraform validate
 terraform plan -out tfplan
 terraform apply tfplan
+rm tfplan                                                            # a saved plan holds the whole state, secrets included
 ```
 
 The first apply takes 20 to 30 minutes, most of it the HA database. It ends
@@ -157,7 +161,8 @@ apply or destroy, and it is not free:
 `./rebuild.sh` does all of this, asking you to type the resource group's name before
 it deletes anything. It takes the group from `terraform output resource_group`; pass
 the name (`./rebuild.sh rg-<name>-<environment>`) when the state no longer knows it.
-By hand:
+Remote state is not affected: its storage account lives in a resource group of its
+own, which neither the script nor the commands below touch. By hand:
 
 ```bash
 cd infra/azure
@@ -165,7 +170,8 @@ rg=$(terraform output -raw resource_group)                   # rg-<name>-<enviro
 az group delete -n "$rg" --yes                               # ~10 min
 az group show -n "$rg-cae-infra" >/dev/null 2>&1 \
   && az group delete -n "$rg-cae-infra" --yes                # only if Azure left it behind
-rm -f terraform.tfstate terraform.tfstate.backup             # local state only; skip with a remote backend
+rm -f terraform.tfstate terraform.tfstate.backup             # local state
+terraform state list | tr '\n' '\0' | xargs -0 -r terraform state rm   # remote state, instead of the line above
 ```
 
 Wait until `az group list -o table` shows neither group: a new environment cannot take
@@ -173,7 +179,7 @@ the name of an infrastructure resource group that still exists. Then empty
 `custom_hostnames` in `terraform.tfvars` (the new address is not in DNS yet) and apply:
 
 ```bash
-terraform init -upgrade
+terraform init -upgrade                                      # remote state: add -backend-config=backend.hcl
 terraform apply
 ```
 
@@ -211,9 +217,47 @@ the outputs too.
   `log_retention_days` (`ContainerAppConsoleLogs_CL` for the app and jobs,
   `AzureDiagnostics` for Postgres).
 - Run a backup by hand: `az containerapp job start -g "$rg" -n <name>-<environment>-backup`.
-- State: `terraform.tfstate` contains the database password in clear. Keep it in Azure
-  Storage rather than on a laptop; `backend.tf.example` has the commands and
-  `backend.hcl.example` the settings.
+- State: `terraform.tfstate` holds the app's secrets in clear (the database password,
+  the secret key, the email service's connection string, and `smtp_url` when set) and
+  is the only record of what the stack owns, so keep it in Azure Storage rather than on
+  a laptop. `./state-storage.sh` creates that storage, and is safe to run again: a GZRS
+  account with one `tfstate` container that every stack shares under its own key, in a
+  resource group of its own (`rg-terraform-state` in East US 2 unless `STATE_RG` and
+  `STATE_LOCATION` say otherwise; the header of the script lists every setting), out of
+  `rebuild.sh`'s reach. Only Entra ID sign-in works on it: account keys and SAS are
+  disabled, and Terraform reaches the blob as you (`use_azuread_auth`) through the
+  Storage Blob Data Contributor role the script grants you on the container. It takes
+  HTTPS with TLS 1.2 or later only, allows no public access and encrypts twice at rest
+  (infrastructure encryption). Versioning keeps each earlier state, a deleted one
+  included, for 90 days after it was written, and soft delete keeps whatever is
+  deleted, a version or the container, for 30 days more. Old versions keep the secrets
+  they held, which is why they do not stay for ever. A delete lock on the group refuses
+  `az group delete` until someone removes the lock. If it also refuses removing
+  someone's role on the container, lift it with
+  `az lock delete -n terraform-state -g rg-terraform-state`, remove the role, and run
+  the script again to put the lock back. `backend.tf.example` has the migration steps
+  and `backend.hcl.example` the settings.
+- Local copies of the state: the migration empties `terraform.tfstate` and leaves the
+  old state, secrets included, in `terraform.tfstate.backup`. Once
+  `terraform state list` lists what it did before and `terraform plan` reports what it
+  did before, delete both. A saved plan (`terraform plan -out`) holds the whole state,
+  remote backend or not, so delete it once applied. When an apply cannot save its state
+  to the backend, Terraform writes it to `errored.tfstate` here: push it with
+  `terraform state push errored.tfstate`, then delete the file.
+- A terraform killed mid-run leaves the remote state locked (an Azure blob lease does
+  not expire), and every later plan or apply fails with
+  `Error acquiring the state lock`. When no other terraform is running, release it with
+  `terraform force-unlock <ID>`, the ID being the one in that error, or with
+  `az storage blob lease break --account-name <account> -c tfstate -b <key> --auth-mode login`.
+  `rebuild.sh` checks for a held lock before it deletes anything.
+- To bring back an earlier state, list its versions with
+  `az storage blob list --account-name <account> -c tfstate --prefix <key> --include v --auth-mode login --query "[].[versionId, properties.lastModified]" -o tsv`,
+  download one with
+  `az storage blob download --account-name <account> -c tfstate -n <key> --version-id <id> -f old.tfstate --auth-mode login`
+  and `terraform state push -force old.tfstate` (`-force` because its serial is older
+  than the current one's). Each lock and unlock also makes a version, so neighbouring
+  versions often hold the same state. Run `terraform plan` before anything else, then
+  delete `old.tfstate`: it holds the same secrets.
 - `protect_database = true` locks the database server so no portal click or
   `az group delete` can remove it. Set it back to false and apply before a deliberate
   teardown, otherwise the lock blocks it.

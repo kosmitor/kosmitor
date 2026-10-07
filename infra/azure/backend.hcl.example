@@ -1,8 +1,14 @@
-# Where the remote state lives, for the azurerm backend in backend.tf (see
-# backend.tf.example for creating the account). Copy to backend.hcl and run
+# Where the remote state lives, for the azurerm backend in backend.tf.
+# ./state-storage.sh creates the account and prints these lines with its name
+# (backend.tf.example has the steps). The container is shared, so each stack
+# needs a key no other stack uses: kosmitor-prod.tfstate follows name and
+# environment in terraform.tfvars; change it if you changed those.
+# subscription_id is the one holding the account, so the backend signs in to
+# its tenant whichever subscription az has selected. Copy to backend.hcl and run
 #   terraform init -backend-config=backend.hcl
+subscription_id      = "<subscription-id>"
 resource_group_name  = "rg-terraform-state"
 storage_account_name = "<your-state-storage-account>"
 container_name       = "tfstate"
-key                  = "<name>-<environment>.tfstate"
+key                  = "kosmitor-prod.tfstate"
 use_azuread_auth     = true

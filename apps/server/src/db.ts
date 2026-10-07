@@ -1101,7 +1101,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_welcome_emails ON audit_log(created_at)
 UPDATE users SET last_login_at = created_at
  WHERE last_login_at IS NULL AND google_sub IS NULL
    AND (EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = users.id)
-     OR EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = users.id AND a.action <> 'PASSWORD_RESET_REQUESTED'));
+     OR EXISTS (SELECT 1 FROM audit_log a WHERE a.user_id = users.id AND a.action <> 'PASSWORD_RESET_REQUESTED'
+                AND a.action NOT LIKE 'WELCOME_EMAIL%'));
 
 -- Addresses were not verified before; an account someone has signed in to is taken as
 -- theirs. Every sign-in since records the verification too, so nothing matches a second time.

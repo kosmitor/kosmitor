@@ -5,12 +5,26 @@
 # can no longer reconcile. It is not a repair: everything goes, including the
 # database and every backup taken of it, and the application comes back at a new
 # address. README.md, "Rebuilding from scratch", lists what has to be pointed at
-# the new address afterwards.
+# the new address afterwards. Remote state (state-storage.sh) lives in a
+# resource group of its own, which this script never touches.
 #
 #   ./rebuild.sh                  the resource group in the Terraform outputs
 #   ./rebuild.sh rg-<name>-<env>  a group the state no longer knows about
 set -euo pipefail
 cd "$(dirname "$0")"
+
+if ! command -v az >/dev/null || ! az account show >/dev/null 2>&1; then
+  echo "Sign in first: az login --scope https://management.azure.com//.default" >&2
+  exit 1
+fi
+
+# With remote state, backend.hcl holds the account details (backend.tf.example).
+# A bare init only works while .terraform still remembers them, so not in a
+# fresh checkout. Initialising here, before anything is deleted, also means a
+# broken backend stops the script while there is still nothing to clean up.
+init_args=(-input=false)
+if [ -f backend.tf ] && [ -f backend.hcl ]; then init_args+=(-backend-config=backend.hcl); fi
+terraform init "${init_args[@]}"
 
 if [ -n "${1:-}" ]; then
   RG="$1"
@@ -22,9 +36,17 @@ elif ! RG="$(terraform output -no-color -raw resource_group 2>/dev/null)" || ! [
 fi
 INFRA_RG="$RG-cae-infra" # Azure creates this one for the Container Apps environment
 
-if ! command -v az >/dev/null || ! az account show >/dev/null 2>&1; then
-  echo "Sign in first: az login --scope https://management.azure.com//.default" >&2
-  exit 1
+# A terraform killed mid-run leaves the remote state locked, because an Azure
+# blob lease does not expire. state rm below would only find out after the
+# delete, and a second run of this script stops at deleting a group that is
+# already gone. A dry run takes the lock and lets it go, so it fails now instead.
+if [ -f backend.tf ]; then
+  addresses=$(terraform state list)
+  if [ -n "$addresses" ] &&
+    ! printf '%s\n' "$addresses" | tr '\n' '\0' | xargs -0 terraform state rm -dry-run -lock-timeout=0s >/dev/null; then
+    echo "Nothing was deleted. If the error above is the state lock and no other terraform is running, release it with terraform force-unlock <ID> (README.md, Operations), then run this again." >&2
+    exit 1
+  fi
 fi
 
 echo "Subscription: $(az account show --query '[name, id]' -o tsv | tr '\n' ' ')"
@@ -64,14 +86,16 @@ done
 if [ -f backend.tf ]; then
   echo "==> Remote state in use; removing the old resources from it"
   addresses=$(terraform state list)
-  if [ -n "$addresses" ]; then echo "$addresses" | xargs -n1 terraform state rm; fi
+  # NUL-separated, because xargs strips the quotes from for_each addresses such
+  # as job_failed["backup"]. One call also writes one new state version.
+  if [ -n "$addresses" ]; then printf '%s\n' "$addresses" | tr '\n' '\0' | xargs -0 terraform state rm; fi
 else
   echo "==> Discarding the local state; it describes resources that no longer exist"
   rm -f terraform.tfstate terraform.tfstate.backup
 fi
 
 echo "==> Rebuilding"
-terraform init -input=false -upgrade
+terraform init "${init_args[@]}" -upgrade
 terraform apply
 
 echo

@@ -9,7 +9,7 @@ import {
 } from '../auth.ts';
 import { verifyGoogleIdToken, GoogleAuthError } from '../google.ts';
 import { issueNonce, consumeNonce } from '../nonces.ts';
-import { tooManyAttempts } from '../rate-limit.ts';
+import { tooManyFailures, recordFailure, clearFailures } from '../rate-limit.ts';
 import { sendMail, mailConfigured, appUrl, SINGLE_ADDRESS, type Message } from '../mail.ts';
 import { renderEmail, type EmailContent } from '../email.ts';
 import { config, deskName, mailSignature, vestingTemplates } from '../config.ts';
@@ -68,16 +68,23 @@ route.post('/api/auth/login', 'public', async (ctx) => {
   assertPasswordSignIn();
   const email = str(ctx.body.email, 'Email', { max: 200 }).toLowerCase();
   const password = str(ctx.body.password, 'Password');
-  // Ten tries at one address from one place, or fifty at it from anywhere, in a quarter of an hour.
-  if (tooManyAttempts(`${ctx.ip}|${email}`, 10, QUARTER_HOUR_MS) || tooManyAttempts(email, 50, QUARTER_HOUR_MS)) {
+  // Ten wrong passwords for one address from one place, or fifty for it from anywhere, in a quarter of an hour.
+  // The demo account's password is on the sign-in page: there is nothing to guess.
+  const here = `${ctx.ip}|${email}`;
+  const limited = !isDemoAccount(email);
+  if (limited && (tooManyFailures(here, 10, QUARTER_HOUR_MS) || tooManyFailures(email, 50, QUARTER_HOUR_MS))) {
     throw new HttpError(429, 'Too many sign-in attempts. Wait fifteen minutes and try again.');
   }
   const found = await findUserByEmail(email);
   if (!found || !verifyPassword(password, found.passwordHash)) {
+    if (limited) { recordFailure(here, QUARTER_HOUR_MS); recordFailure(email, QUARTER_HOUR_MS); }
     throw unauthorized('That email and password do not match.');
   }
+  clearFailures(here);
   if (!found.emailVerifiedAt) {
-    if (verifyingEmail()) {
+    // A temporary password comes from an administrator, who vouches for the address as a link of theirs does;
+    // the demo account is everyone's. Neither has an inbox to confirm.
+    if (verifyingEmail() && Number(found.mustChangePassword) !== 1 && !isDemoAccount(found.email)) {
       // The password is right, so the person has the account; the link shows the address is
       // theirs too, and goes again in case the first never arrived.
       const link = await issueVerification(found.id);

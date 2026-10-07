@@ -16,8 +16,9 @@ terraform {
     }
   }
 
-  # State holds the database password. Keep it in a locked-down Azure Storage
-  # container rather than on a laptop: copy backend.tf.example to backend.tf.
+  # State holds the database password and the app's other secrets. Keep it in a
+  # locked-down Azure Storage container rather than on a laptop:
+  # ./state-storage.sh creates one, and backend.tf.example has the steps.
 }
 
 provider "azurerm" {
