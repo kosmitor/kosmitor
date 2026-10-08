@@ -57,9 +57,9 @@ import { sendMail, mailConfigured, SINGLE_ADDRESS, type Message } from '../mail.
 import { xlsx } from '../xlsx-writer.ts';
 import { config, deskName, mailSignature } from '../config.ts';
 import { renderEmail, paragraphsOf, type EmailSection } from '../email.ts';
-import { readFile, storeFile, maxUploadBytes } from './files.ts';
+import { readFile, storeFile, maxUploadBytes, uploadName } from './files.ts';
 import { readReport, ReaderBusy } from '../report-reader.ts';
-import type { ReportDetection } from '../report-detect.ts';
+import { deskDetection, type ReportDetection } from '../report-detect.ts';
 import { renderDocumentPdf, type Doc } from './certificates.ts';
 import { isEditor, seesWholeCompany, seesWholeVault, FULL_VIEW_ROLES } from '../auth.ts';
 import {
@@ -86,15 +86,25 @@ const OPEN_SQL = OPEN_STATUSES.map((s) => `'${s}'`).join(', ');
 const deskOn = (): boolean => config().valuationDesk.enabled;
 
 /**
- * Where a new request is sent: valuationDesk.email, or VALUATION_DESK_EMAIL over
- * it. With neither, a request is saved and nobody is emailed, so a laptop or a
+ * Where a new request is sent: every address in valuationDesk.email, or in
+ * VALUATION_DESK_EMAIL over it, one per evaluator, each once and in the order
+ * given. With neither, a request is saved and nobody is emailed, so a laptop or a
  * test run never mails a real person and no server mails one it was not given.
+ * The loader refuses an entry that is not one address; the check here only
+ * keeps a message from being built for one.
  */
-export function deskAddress(): string | null {
-  const configured = config().valuationDesk.email?.trim();
-  if (!configured) return null;
-  return SINGLE_ADDRESS.test(configured) ? configured.toLowerCase() : null;
+export function deskAddresses(): string[] {
+  const configured = config().valuationDesk.email;
+  const given = configured == null ? [] : Array.isArray(configured) ? configured : [configured];
+  return [...new Set(given.map((a) => a.trim().toLowerCase()).filter((a) => SINGLE_ADDRESS.test(a)))];
 }
+
+/**
+ * Where a reply from the company reaches the team: the first address only, so
+ * the recap and the status emails hand the company no more of the team's
+ * addresses than they did when there was one.
+ */
+export const deskReplyTo = (): string | null => deskAddresses()[0] ?? null;
 
 // --- Counts and waits, in words -------------------------------------------------
 
@@ -926,6 +936,8 @@ export interface DeskEmail {
   situation: Situation;
   /** The private page for this request. */
   link: string;
+  /** Whether the same link went to more than one address on the team's list, so the email does not tell its reader the link is theirs alone. */
+  shared?: boolean;
 }
 
 /** The notice to the valuation team that a request is waiting. Pure, like the recap. */
@@ -951,7 +963,7 @@ export function composeDeskEmail(r: DeskEmail): Message {
       { label: 'Contact', value: contactLines(r.contact) },
     ],
     action: { label: 'Open the request', url: r.link },
-    actionNote: `The link opens this request only. Keep it to yourself: whoever has it can change the status the company sees. It stops working after ${count(linkOpenDays, 'day')}, ${count(linkClosedDays, 'day')} after the request closes, or when a new notice replaces it, whichever comes first.`,
+    actionNote: `The link opens this request only${r.shared ? ', and everyone on the team’s list was sent the same one. Keep it within the team' : '. Keep it to yourself'}: whoever has it can change the status the company sees. It stops working after ${count(linkOpenDays, 'day')}, ${count(linkClosedDays, 'day')} after the request closes, or when a new notice replaces it, whichever comes first.`,
     sections: [
       { title: 'Their answers', details: intakeLines(r.intake) },
       ...tableSections(r.intake),
@@ -1396,15 +1408,28 @@ async function deliver(message: Message, requestId: string, what: string): Promi
   }
 }
 
-/** What a send did with each message: sent it, tried and failed, or had nothing to send. */
+/**
+ * What a send did with each message: sent it, tried and failed, or had nothing to
+ * send. The notice goes to each address on the team's list, so it can also reach
+ * some of them and not the others ('partial'), which deskError then says.
+ */
 export interface SendOutcome {
   recap: 'sent' | 'failed' | 'not needed';
   /** Whose account the recap went to, named so the person pressing the button is not told it went to them. */
   recapTo: string | null;
   recapError: string | null;
-  desk: 'sent' | 'failed' | 'not needed';
+  desk: 'sent' | 'partial' | 'failed' | 'not needed';
   deskError: string | null;
 }
+
+/**
+ * What the company is told when the notice reached some of the team's addresses
+ * and not the others. Neither the addresses nor how many there are: the team's
+ * list is the server's business, not the company's. The server log names the
+ * ones that failed.
+ */
+export const PARTLY_REACHED = 'Not every address on the team’s list could be emailed, so some of the team did not get it. '
+  + 'To reach them all, send it to the team again later, with a new link.';
 
 const countSince = async (where: string, ms: number, ...params: unknown[]): Promise<number> => {
   const r = await one<{ n: number | string }>(
@@ -1420,7 +1445,7 @@ const countSince = async (where: string, ms: number, ...params: unknown[]): Prom
  */
 async function deskHold(ctx: Ctx, row: RequestRow): Promise<string | null> {
   if (!deskOn()) return '409A requests are turned off on this server, so the team was not notified.';
-  if (!deskAddress()) return 'No valuation team address is set on this server, so the team was not notified.';
+  if (!deskAddresses().length) return 'No valuation team address is set on this server, so the team was not notified.';
   // In production an unsent notice would be printed to the log, link and all.
   if (isProduction() && !mailConfigured()) return 'Mail is not set up on this server, so the team was not notified.';
   const limits = config().valuationDesk;
@@ -1433,7 +1458,12 @@ async function deskHold(ctx: Ctx, row: RequestRow): Promise<string | null> {
   if (ctx.user && await countSince(`user_id = ? AND action IN ('NOTIFY_DESK', 'NOTIFY_DESK_FAILED')`, DAY, ctx.user.id) >= limits.noticesPerPersonPerDay) {
     return `You have sent the team ${count(limits.noticesPerPersonPerDay, 'notice')} today. Try again tomorrow.`;
   }
-  if (await countSince(`action = 'NOTIFY_DESK'`, 3_600_000) >= limits.noticesPerHour) {
+  // The hour's allowance is counted in emails, not notices: each address is an email
+  // against the mail provider's hourly limit, which password resets and invitations
+  // share. Notices sent earlier in the hour count at the list's length now, which
+  // only changes when the server restarts.
+  const emailsPerNotice = deskAddresses().length;
+  if ((await countSince(`action = 'NOTIFY_DESK'`, 3_600_000) + 1) * emailsPerNotice > limits.noticesPerHour) {
     return 'The valuation team is receiving a lot of requests right now. Try again in an hour.';
   }
   return null;
@@ -1441,8 +1471,16 @@ async function deskHold(ctx: Ctx, row: RequestRow): Promise<string | null> {
 
 /**
  * Sends whatever has not gone yet: the recap to the person who asked, and the
- * notice to the team. `again` sends the team a fresh notice, with a new link,
- * even if one arrived before.
+ * notice to the team, one email to each of its addresses, all with the same
+ * link. `again` sends the team a fresh notice, with a new link, even if one
+ * arrived before.
+ *
+ * However many addresses it goes to, a notice is one entry in the audit log, so
+ * it counts once against the per-request, per-company and per-person limits in
+ * deskHold: every evaluator gets at most as many notices as they say, and adding
+ * one to the list does not use up a company's allowance faster. The server's
+ * hourly limit counts each address, since that one guards the mail sent. A
+ * notice counts as sent once any address has it.
  *
  * Failures are reported, not thrown. The request is already saved by the time
  * this runs, and an error here would show a failure for something half done.
@@ -1456,7 +1494,7 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
 
   const company = await companyName(row.company_id);
   const contact: Contact = { name: row.contact_name, email: row.contact_email!, phone: row.contact_phone! };
-  const desk = deskAddress();
+  const desk = deskAddresses();
   const documents = ((await documentsOf(row.company_id, row.id)).get(row.id) ?? []).map((d) => ({ itemLabel: d.itemLabel, name: d.name }));
 
   // The recap goes to the account of whoever asked, never to an address typed into
@@ -1472,12 +1510,14 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
       outcome.recapTo = requester.name;
       recap = composeRecapEmail({
         companyName: company, to: requester.email, toName: requester.name, contact, intake, documents, notes: row.notes,
-        statusUrl: `${config().app.url}/compliance/409a`, replyTo: desk,
+        statusUrl: `${config().app.url}/compliance/409a`, replyTo: desk[0] ?? null,
       });
     }
   }
 
-  let notice: Message | null = null;
+  // One email to each address rather than one to all of them, so no evaluator
+  // sees another's address. Every one carries the same link.
+  let notices: Message[] = [];
   let token: string | null = null;
   if (wantDesk) {
     const hold = await deskHold(ctx, row);
@@ -1485,18 +1525,20 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
       outcome.desk = 'failed';
       outcome.deskError = hold;
     } else {
-      token = randomBytes(32).toString('base64url');
-      notice = composeDeskEmail({
-        companyName: company, to: desk!, requestedAt: row.created_at, requestedBy: row.requested_by,
-        contact, intake, documents, notes: row.notes, situation: await situationOf(row.company_id), link: deskLink(token),
-      });
+      const minted = randomBytes(32).toString('base64url');
+      const situation = await situationOf(row.company_id);
+      token = minted;
+      notices = desk.map((to) => composeDeskEmail({
+        companyName: company, to, requestedAt: row.created_at, requestedBy: row.requested_by,
+        contact, intake, documents, notes: row.notes, situation, link: deskLink(minted), shared: desk.length > 1,
+      }));
     }
   }
 
-  // Both at once, so a slow mail server holds the company's records for one wait, not two.
-  const [recapOutcome, deskOutcome] = await Promise.all([
+  // All at once, so a slow mail server holds the company's records for one wait, not one per email.
+  const [recapOutcome, ...deskOutcomes] = await Promise.all([
     recap ? deliver(recap, row.id, 'recap') : Promise.resolve(null),
-    notice ? deliver(notice, row.id, 'notice to the valuation team') : Promise.resolve(null),
+    ...notices.map((n) => deliver(n, row.id, `notice to the valuation team at ${n.to}`)),
   ]);
 
   const now = nowISO();
@@ -1508,20 +1550,26 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
     await audit(ctx, recapOutcome.delivered ? 'SEND_RECAP' : 'SEND_RECAP_FAILED', 'valuation_requests', row.id,
       recapOutcome.delivered ? '409A request recap emailed to the person who asked' : '409A request recap was not emailed');
   }
-  if (deskOutcome && token) {
-    outcome.desk = deskOutcome.delivered ? 'sent' : 'failed';
-    outcome.deskError = deskOutcome.error;
-    if (deskOutcome.delivered) values.deskNotifiedAt = now;
+  if (deskOutcomes.length && token) {
+    const total = deskOutcomes.length;
+    const reached = deskOutcomes.filter((o) => o.delivered).length;
+    outcome.desk = reached === total ? 'sent' : reached ? 'partial' : 'failed';
+    // Nothing reached means one reason for all of them: the same transport failed each.
+    outcome.deskError = reached === total ? null : reached ? PARTLY_REACHED : deskOutcomes[0].error;
+    if (reached) values.deskNotifiedAt = now;
     // A new link replaces the last one only once it has reached the team, so a
     // failed resend never strands a link that works. With no mail transport at
     // all the notice is printed to the console instead, link included, and the
     // link is kept so the page can be tried on a laptop.
-    if (deskOutcome.delivered || !mailConfigured()) {
+    if (reached || !mailConfigured()) {
       values.deskTokenHash = hashToken(token);
       values.deskTokenAt = now;
     }
-    await audit(ctx, deskOutcome.delivered ? 'NOTIFY_DESK' : 'NOTIFY_DESK_FAILED', 'valuation_requests', row.id,
-      deskOutcome.delivered ? `409A request sent to the ${deskName()}` : `409A request was not sent to the ${deskName()}`);
+    // The company reads the audit log, so it says that some addresses were missed, not how many there are.
+    await audit(ctx, reached ? 'NOTIFY_DESK' : 'NOTIFY_DESK_FAILED', 'valuation_requests', row.id,
+      reached === total ? `409A request sent to the ${deskName()}`
+        : reached ? `409A request sent to the ${deskName()}, but not to every address on its list`
+          : `409A request was not sent to the ${deskName()}`);
   } else if (wantDesk && outcome.deskError) {
     // Held back before anything was sent. Recorded, but not counted as an attempt.
     await audit(ctx, 'NOTIFY_DESK_SKIPPED', 'valuation_requests', row.id, `409A request was not sent to the ${deskName()}`);
@@ -1536,12 +1584,17 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
  * the team is sent nothing at all.
  */
 async function tellDeskClosed(ctx: Ctx, row: RequestRow, how: 'CANCELLED' | 'COMPLETED'): Promise<void> {
-  const desk = deskAddress();
-  if (!row.desk_notified_at || !desk || !deskOn()) return;
-  const outcome = await deliver(composeClosedEmail({ companyName: await companyName(row.company_id), to: desk, requestedAt: row.created_at, how }),
-    row.id, 'closing notice to the valuation team');
-  await audit(ctx, outcome.delivered ? 'NOTIFY_DESK_CLOSED' : 'NOTIFY_DESK_CLOSED_FAILED', 'valuation_requests', row.id,
-    outcome.delivered ? `The ${deskName()} was told the request closed` : `The ${deskName()} could not be told the request closed`);
+  const desk = deskAddresses();
+  if (!row.desk_notified_at || !desk.length || !deskOn()) return;
+  const company = await companyName(row.company_id);
+  // To every address, as the notice went, each in an email of its own.
+  const outcomes = await Promise.all(desk.map((to) => deliver(composeClosedEmail({ companyName: company, to, requestedAt: row.created_at, how }),
+    row.id, `closing notice to the valuation team at ${to}`)));
+  const reached = outcomes.filter((o) => o.delivered).length;
+  await audit(ctx, reached ? 'NOTIFY_DESK_CLOSED' : 'NOTIFY_DESK_CLOSED_FAILED', 'valuation_requests', row.id,
+    reached === outcomes.length ? `The ${deskName()} was told the request closed`
+      : reached ? `The ${deskName()} was told the request closed, but not at every address on its list`
+        : `The ${deskName()} could not be told the request closed`);
 }
 
 /** What became of the email to the person who asked, so the team's page can say whether the company was told. */
@@ -1604,7 +1657,7 @@ async function tellRequester(ctx: Ctx, row: RequestRow, change: StatusChange, me
       return skip(`since this request has already tried to email them ${times(limit)} today`);
     }
     const email = composeStatusEmail({
-      companyName: await companyName(row.company_id), to: requester.email, toName: requester.name, change, message, replyTo: deskAddress(),
+      companyName: await companyName(row.company_id), to: requester.email, toName: requester.name, change, message, replyTo: deskReplyTo(),
       canRecord: isEditor(requester.role),
     });
     const attempt = await audit(ctx, 'NOTIFY_REQUESTER_PENDING', 'valuation_requests', row.id, `409A request ${word}: emailing the person who asked`, actor);
@@ -2566,13 +2619,6 @@ async function dropUpload(row: RequestRow, documentId: string): Promise<boolean>
   return (await run('DELETE FROM documents WHERE id = ? AND company_id = ?', documentId, row.company_id)) > 0;
 }
 
-/** A file name as given, on one line and with no path in it, or a plain one when none was given. */
-function uploadName(v: string | null): string {
-  const s = (v ?? '').replace(/[\x00-\x1f\x7f]/g, '').replace(/[\\/]/g, '_').trim();
-  if (s.length > 255) throw badRequest('The file name is too long. Rename the file and upload it again.');
-  return s || 'Valuation report.pdf';
-}
-
 /**
  * The requests a report is being uploaded to right now, one at a time for each,
  * so two uploads to one request never replace each other halfway, and the team
@@ -2622,10 +2668,13 @@ route.post('/api/valuation-desk/report', 'public', async (ctx) => {
     let detected: ReportDetection;
     reading++;
     try {
-      detected = await readReport(body);
+      // The team's page is given what it has always been given: the appraiser
+      // and the company's value are read for the company's own import.
+      detected = deskDetection(await readReport(body));
     } catch (err) {
-      // The reader keeps a line of its own, which one reading at a time never
-      // fills; if it is full all the same, the file was not read and is not counted.
+      // The reader keeps a line of its own, which one reading at a time here
+      // never fills, though the company's imports read through it too; if it is
+      // full, the file was not read and is not counted.
       if (err instanceof ReaderBusy) {
         endAttempt(found.id, attempt);
         throw new HttpError(429, READER_BUSY);

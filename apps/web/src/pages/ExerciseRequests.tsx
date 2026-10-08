@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session.tsx';
 import { useQuery, api } from '../api.ts';
-import { Card, Table, TH, TD, TR, Badge, ErrorNote, EmptyState, Button, Input, Field, Modal, StatusBadge, SegmentedControl, useToast, Banner } from '../ui.tsx';
+import { Badge, ErrorNote, EmptyState, Button, Input, Field, Modal, StatusBadge, SegmentedControl, useToast, Banner } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { money, shares, pps, date, dateTime } from '../format.ts';
 import { useScrollToHash } from '../hooks.ts';
 
@@ -15,7 +16,7 @@ const OPEN_STATUSES = ['REQUESTED', 'APPROVED', 'PAID'];
 
 /**
  * Exercise requests that option holders raised from My equity, for the company
- * to approve, record payment for and complete. Rendered on Equity awards, and
+ * to approve, record payment for and complete. Rendered on Equity grants, and
  * hidden while the feature is off and nothing was ever requested.
  */
 export default function ExerciseRequests() {
@@ -64,54 +65,49 @@ export default function ExerciseRequests() {
         </div>
       )}
 
-      <Card padded={false}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 p-4">
-          <div>
-            <h2 className="text-[15px] font-semibold text-ink-900">Exercise requests</h2>
-            <p className="text-[12px] text-ink-500">
-              {data.enabled ? 'Holders request from My equity; each request lands here for review.' : 'Turned off in Settings; earlier requests stay on record.'}
-            </p>
-          </div>
-          <SegmentedControl value={filter} onChange={setFilter} options={[{ value: 'OPEN', label: `Open (${open.length})` }, { value: 'ALL', label: `All (${requests.length})` }]} />
-        </div>
-        {rows.length === 0 ? <EmptyState title={filter === 'OPEN' ? 'No open requests' : 'No exercise requests yet'} description="Option holders request exercises from My equity; each request lands here for review." /> : (
-          <Table>
-            <thead>
-              <tr><TH>Requested</TH><TH>Holder</TH><TH>Grant</TH><TH align="right">Options</TH><TH>Method</TH><TH align="right">Exercise price</TH><TH align="right">Spread at FMV</TH><TH>Status</TH>{canEdit && <TH width={260} />}</tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <TR key={r.id}>
-                  <TD className="text-ink-600">{dateTime(r.requestedAt)}</TD>
-                  <TD><Link to={`/stakeholders/${r.stakeholderId}`} className="font-medium hover:text-brand-700">{r.stakeholderName}</Link>{r.note && <span className="block max-w-xs truncate text-[11px] text-ink-500" title={r.note}>“{r.note}”</span>}</TD>
-                  <TD><span className="font-medium">{r.awardLabel ?? '—'}</span> <Badge tone="neutral" className="ml-1">{r.awardType}</Badge></TD>
-                  <TD align="right" mono>{shares(r.quantity)}</TD>
-                  <TD className="text-ink-600">{METHOD_LABELS[r.method] ?? r.method}</TD>
-                  <TD align="right" mono>{money(r.estimatedCost)}<span className="block text-[11px] text-ink-500">{pps(r.strikePrice)} / share</span></TD>
-                  <TD align="right" mono className="text-ink-600">{money(r.spread)}</TD>
-                  <TD>
-                    <StatusBadge status={r.status === 'APPROVED' ? 'PENDING' : r.status} />
-                    <span className="block text-[11px] text-ink-500">
-                      {r.status === 'APPROVED' && 'Awaiting payment'}{r.status === 'PAID' && `Paid${r.paymentReference ? ` · ${r.paymentReference}` : ''}`}
-                      {r.status === 'COMPLETED' && r.completedAt && `Recorded ${date(String(r.completedAt).slice(0, 10))}`}{r.status === 'REJECTED' && r.adminNote && r.adminNote}
-                    </span>
-                  </TD>
-                  {canEdit && (
-                    <TD align="right">
-                      <span className="flex flex-wrap justify-end gap-1">
-                        {r.status === 'REQUESTED' && <Button size="sm" variant="primary" onClick={() => start(r, 'approve')}>Approve</Button>}
-                        {r.status === 'APPROVED' && <Button size="sm" variant="primary" onClick={() => start(r, 'mark-paid')}>Mark paid</Button>}
-                        {(r.status === 'PAID' || r.status === 'APPROVED') && <Button size="sm" onClick={() => start(r, 'complete')}>Record exercise</Button>}
-                        {OPEN_STATUSES.includes(r.status) && <Button size="sm" variant="ghost" onClick={() => start(r, 'reject')}>Reject</Button>}
-                      </span>
-                    </TD>
-                  )}
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="Exercise requests" rows={rows} rowKey={(r) => r.id}
+        title="Exercise requests"
+        subtitle={data.enabled ? 'Holders request from My equity; each request lands here for review.' : 'Turned off in Settings; earlier requests stay on record.'}
+        controls={<SegmentedControl value={filter} onChange={setFilter} options={[{ value: 'OPEN', label: `Open (${open.length})` }, { value: 'ALL', label: `All (${requests.length})` }]} />}
+        search={{ placeholder: 'Holder or grant number', label: 'Search exercise requests', by: (r) => [r.stakeholderName, r.awardLabel] }}
+        empty={<EmptyState title={filter === 'OPEN' ? 'No open requests' : 'No exercise requests yet'} description="Option holders request exercises from My equity; each request lands here for review." />}
+        columns={[
+          { key: 'requested', label: 'Requested', type: 'date', value: (r) => r.requestedAt, cell: (r) => dateTime(r.requestedAt), className: 'text-ink-600' },
+          { key: 'holder', label: 'Holder', value: (r) => r.stakeholderName,
+            cell: (r) => (
+              <>
+                <Link to={`/stakeholders/${r.stakeholderId}`} className="font-medium hover:text-brand-700">{r.stakeholderName}</Link>
+                {r.note && <span className="block max-w-xs truncate text-[11px] text-ink-500" title={r.note}>“{r.note}”</span>}
+              </>
+            ) },
+          // A grant number is short, and breaking "OPT-12" at its hyphen made three lines of it.
+          { key: 'grant', label: 'Grant', value: (r) => r.awardLabel, className: 'whitespace-nowrap',
+            cell: (r) => <><span className="font-medium">{r.awardLabel ?? '—'}</span> <Badge tone="neutral" className="ml-1">{r.awardType}</Badge></> },
+          { key: 'options', label: 'Options', type: 'number', value: (r) => r.quantity },
+          { key: 'method', label: 'Method', value: (r) => METHOD_LABELS[r.method] ?? r.method, className: 'text-ink-600' },
+          { key: 'cost', label: 'Exercise price', type: 'money', value: (r) => r.estimatedCost,
+            cell: (r) => <>{money(r.estimatedCost)}<span className="block text-[11px] text-ink-500">{pps(r.strikePrice)} / share</span></> },
+          { key: 'spread', label: 'Spread at FMV', type: 'money', value: (r) => r.spread, className: 'text-ink-600' },
+          { key: 'status', label: 'Status', value: (r) => r.status,
+            cell: (r) => (
+              <>
+                <StatusBadge status={r.status === 'APPROVED' ? 'PENDING' : r.status} />
+                <span className="block text-[11px] text-ink-500">
+                  {r.status === 'APPROVED' && 'Awaiting payment'}{r.status === 'PAID' && `Paid${r.paymentReference ? ` · ${r.paymentReference}` : ''}`}
+                  {r.status === 'COMPLETED' && r.completedAt && `Recorded ${date(String(r.completedAt).slice(0, 10))}`}{r.status === 'REJECTED' && r.adminNote && r.adminNote}
+                </span>
+              </>
+            ) },
+          { key: 'actions', label: '', width: 260, align: 'right', hidden: !canEdit,
+            cell: (r) => (
+              <span className="flex flex-nowrap items-center justify-end gap-1">
+                {r.status === 'REQUESTED' && <Button size="sm" variant="primary" onClick={() => start(r, 'approve')}>Approve</Button>}
+                {r.status === 'APPROVED' && <Button size="sm" variant="primary" onClick={() => start(r, 'mark-paid')}>Mark paid</Button>}
+                {(r.status === 'PAID' || r.status === 'APPROVED') && <Button size="sm" onClick={() => start(r, 'complete')}>Record exercise</Button>}
+                {OPEN_STATUSES.includes(r.status) && <Button size="sm" variant="ghost" onClick={() => start(r, 'reject')}>Reject</Button>}
+              </span>
+            ) },
+        ]} />
 
       <Modal open={!!acting} onClose={() => setActing(null)} title={acting ? TITLES[acting.action] : ''} size="sm"
         description={acting ? `${acting.request.stakeholderName} · ${shares(acting.request.quantity)} options of ${acting.request.awardLabel ?? 'the grant'} · ${money(acting.request.estimatedCost)} exercise price` : undefined}

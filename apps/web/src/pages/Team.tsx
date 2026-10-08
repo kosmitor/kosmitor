@@ -3,9 +3,10 @@ import { useSession } from '../session.tsx';
 import { useQuery, api } from '../api.ts';
 import { FormModal, FormGrid } from '../crud.tsx';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field,
+  PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field,
   Select, EmptyState, ConfirmDialog, Avatar, useToast, Banner, Modal,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import type { AuthConfig } from '../session.tsx';
 import { Icon } from '../icons.tsx';
 import { date } from '../format.ts';
@@ -37,6 +38,9 @@ const ROLES: [string, string, string][] = [
   ['EMPLOYEE', 'Employee', 'Sees only their own holdings in the portal.'],
   ['INVESTOR', 'Investor', 'Sees only their own holdings in the portal.'],
 ];
+
+/** A role's name, as the table and the forms show it. */
+const roleLabel = (role: string): string => ROLES.find(([v]) => v === role)?.[1] ?? role;
 
 export default function Team() {
   const { companyId, isAdmin, user, refresh } = useSession();
@@ -151,68 +155,60 @@ export default function Team() {
         </Banner>
       </div>
 
-      <Card padded={false}>
-        <Table>
-          <thead>
-            {/* Below xl the date gives way, so the row's actions (four for someone invited) stay in view rather than scrolled off. */}
-            <tr><TH>Person</TH><TH>Role</TH><TH>Linked stakeholder</TH><TH className="hidden xl:table-cell">Access granted</TH><TH width={150} /></tr>
-          </thead>
-          <tbody>
-            {(data ?? []).map((m) => (
-              <TR key={m.id}>
-                <TD>
-                  <span className="flex items-center gap-2.5">
-                    <Avatar name={m.name} size={30} color={m.avatarColor ?? undefined} src={m.avatarUrl} />
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium">
-                        {m.name}{m.userId === user?.id && <span className="ml-1.5 text-[11px] text-ink-500">(you)</span>}
-                      </span>
-                      <span className="block truncate text-[11px] text-ink-500">{m.email}</span>
-                    </span>
-                  </span>
-                </TD>
-                <TD>
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <Badge tone={m.role === 'ADMIN' ? 'brand' : m.role === 'LEGAL' ? 'purple' : 'neutral'}>
-                      {ROLES.find(([v]) => v === m.role)?.[1] ?? m.role}
-                    </Badge>
-                    {m.authProvider === 'GOOGLE' && <Badge tone="info">Google</Badge>}
-                    {m.neverSignedIn && <Badge tone="warning">Invited</Badge>}
-                  </span>
-                </TD>
-                <TD className="text-ink-600">{m.stakeholderId ? nameOf.get(m.stakeholderId) ?? '—' : <span className="text-ink-400">Not linked</span>}</TD>
-                <TD className="hidden text-ink-600 xl:table-cell">{date(m.createdAt?.slice(0, 10))}</TD>
-                <TD align="right">
-                  <span className="flex justify-end gap-1">
-                    {/* Someone who has never signed in can be sent their invitation again, with a new link. */}
-                    {m.neverSignedIn && (
-                      <Button size="sm" variant="ghost" aria-label={`Resend invitation to ${m.name}`} title="Resend invitation"
-                        icon={<Icon name="send" className="size-4" />} loading={resending === m.id} disabled={!!resending}
-                        onClick={() => void resend(m)} />
-                    )}
-                    <Button size="sm" variant="ghost" aria-label="Edit member" title="Edit member"
-                      onClick={() => setEditing({ id: m.id, userId: m.userId, authProvider: m.authProvider, managedHere: m.managedHere, role: m.role, stakeholderId: m.stakeholderId ?? '', name: m.name, email: m.email })}>
-                      <Icon name="edit" className="size-4" />
-                    </Button>
-                    {!config.auth.passwordSignIn ? null : m.userId === user?.id ? (
-                      <Button size="sm" variant="ghost" aria-label="Change your password" title="Change your password" onClick={() => setChangingOwn(true)}>
-                        <Icon name="lock" className="size-4" />
-                      </Button>
-                    ) : (
-                      <Button size="sm" variant="ghost" aria-label="Reset password" title="Reset password" onClick={() => setResetting(m)}>
-                        <Icon name="lock" className="size-4" />
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" aria-label="Remove" onClick={() => setConfirmRemove(m)}>
-                      <Icon name="trash" className="size-4" />
-                    </Button>
-                  </span>
-                </TD>
-              </TR>
-            ))}
-          </tbody>
-        </Table>
-      </Card>
+      <DataTable caption="Team members" rows={data ?? []} rowKey={(m) => m.id}
+        search={{ placeholder: 'Search by name, email or role', by: (m) => [m.name, m.email, roleLabel(m.role), m.stakeholderId ? nameOf.get(m.stakeholderId) : null] }}
+        columns={[
+          { key: 'person', label: 'Person', value: (m) => m.name, cell: (m) => (
+            <span className="flex items-center gap-2.5">
+              <Avatar name={m.name} size={30} color={m.avatarColor ?? undefined} src={m.avatarUrl} />
+              <span className="min-w-0">
+                <span className="block truncate font-medium" title={m.name}>
+                  {m.name}{m.userId === user?.id && <span className="ml-1.5 text-[11px] text-ink-500">(you)</span>}
+                </span>
+                <span className="block truncate text-[11px] text-ink-500" title={m.email}>{m.email}</span>
+              </span>
+            </span>
+          ) },
+          { key: 'role', label: 'Role', value: (m) => roleLabel(m.role), cell: (m) => (
+            <span className="flex flex-wrap items-center gap-1.5">
+              <Badge tone={m.role === 'ADMIN' ? 'brand' : m.role === 'LEGAL' ? 'purple' : 'neutral'}>{roleLabel(m.role)}</Badge>
+              {m.authProvider === 'GOOGLE' && <Badge tone="info">Google</Badge>}
+              {m.neverSignedIn && <Badge tone="warning">Invited</Badge>}
+            </span>
+          ) },
+          { key: 'linked', label: 'Linked stakeholder', className: 'text-ink-600',
+            value: (m) => (m.stakeholderId ? nameOf.get(m.stakeholderId) : null),
+            cell: (m) => (m.stakeholderId ? nameOf.get(m.stakeholderId) ?? '—' : <span className="text-ink-400">Not linked</span>) },
+          // Below xl the date gives way, so the row's actions (four for someone invited) stay in view rather than scrolled off.
+          { key: 'granted', label: 'Access granted', type: 'date', hideBelow: 'xl', className: 'text-ink-600',
+            value: (m) => m.createdAt?.slice(0, 10) },
+          { key: 'actions', label: '', width: 150, align: 'right', cell: (m) => (
+            <span className="flex justify-end gap-1">
+              {/* Someone who has never signed in can be sent their invitation again, with a new link. */}
+              {m.neverSignedIn && (
+                <Button size="sm" variant="ghost" aria-label={`Resend invitation to ${m.name}`} title="Resend invitation"
+                  icon={<Icon name="send" className="size-4" />} loading={resending === m.id} disabled={!!resending}
+                  onClick={() => void resend(m)} />
+              )}
+              <Button size="sm" variant="ghost" aria-label="Edit member" title="Edit member"
+                onClick={() => setEditing({ id: m.id, userId: m.userId, authProvider: m.authProvider, managedHere: m.managedHere, role: m.role, stakeholderId: m.stakeholderId ?? '', name: m.name, email: m.email })}>
+                <Icon name="edit" className="size-4" />
+              </Button>
+              {!config.auth.passwordSignIn ? null : m.userId === user?.id ? (
+                <Button size="sm" variant="ghost" aria-label="Change your password" title="Change your password" onClick={() => setChangingOwn(true)}>
+                  <Icon name="lock" className="size-4" />
+                </Button>
+              ) : (
+                <Button size="sm" variant="ghost" aria-label="Reset password" title="Reset password" onClick={() => setResetting(m)}>
+                  <Icon name="lock" className="size-4" />
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" aria-label="Remove" onClick={() => setConfirmRemove(m)}>
+                <Icon name="trash" className="size-4" />
+              </Button>
+            </span>
+          ) },
+        ]} />
 
       <Card className="mt-5">
         <h3 className="mb-3 text-[15px] font-semibold">What each role can do</h3>

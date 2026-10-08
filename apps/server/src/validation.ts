@@ -8,7 +8,7 @@ const nonnegative = new Set(['quantity', 'authorized', 'exercisedQuantity', 'can
 const integers = new Set(['durationMonths', 'cliffMonths', 'ptepMonths', 'accelerationMonths', 'seniority', 'sortOrder', ...moneyFields]);
 const fractions = new Set(['discount', 'interestRate', 'dividendRate', 'evergreenPercent', 'immediatePortion', 'accelerationSingle', 'accelerationDouble']);
 const booleans = new Set(['dividendCompounding', 'dividendsParticipate', 'payToPlay', 'isConvertible', 'earlyExercised',
-  'earlyExerciseAllowed', 'rsuLiquidityCondition', 'returnForfeitures', 'netExercise', 'mfn', 'proRataRight']);
+  'earlyExerciseAllowed', 'rsuLiquidityCondition', 'returnForfeitures', 'netExercise', 'mfn', 'proRataRight', 'boardSeat']);
 const dates = new Set(['date', 'startDate', 'terminationDate', 'issueDate', 'vestingStartDate', 'election83bFiledOn',
   'boardApprovalDate', 'grantDate', 'expirationDate', 'acceptedDate', 'shareholderApprovalDate', 'maturityDate',
   'convertedOn', 'effectiveDate', 'dueDate', 'incorporationDate']);
@@ -67,6 +67,8 @@ export async function validateEntity(table: string, values: Record<string, unkno
   for (const [field, reference] of Object.entries({ stakeholderId: 'stakeholders', shareClassId: 'share_classes', poolId: 'pools', vestingScheduleId: 'vesting_schedules', sourceAwardId: 'awards', convertedIntoShareClassId: 'share_classes' })) {
     await companyReference(reference, values[field], companyId, field);
   }
+  // update() matches on id alone, so a designator from another company would be written as given.
+  if (table === 'stakeholders') await companyReference('stakeholders', values.boardDesignatedBy, companyId, 'The investor who designated the director');
   if (values.quantity != null && Number(values.quantity) <= 0) throw badRequest('Quantity must be greater than zero.');
   if (values.principal != null && Number(values.principal) <= 0) throw badRequest('Principal must be greater than zero.');
   if (Number(values.discount ?? 0) >= 1) throw badRequest('Discount must be less than 100%.');

@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../../session.tsx';
 import { useQuery } from '../../api.ts';
-import { Card, Table, TH, TD, TR, Badge, Button, Modal, Loading, ErrorNote, EmptyState, Banner, Stat } from '../../ui.tsx';
+import { Badge, Button, Modal, Loading, ErrorNote, EmptyState, Banner, Stat } from '../../ui.tsx';
+import { DataTable } from '../../DataTable.tsx';
 import { Icon } from '../../icons.tsx';
-import { money, shares } from '../../format.ts';
+import { shares } from '../../format.ts';
 import { SecurityDocuments } from '../../SecurityDocuments.tsx';
 
 /** IRC 422(d): the first-exercisable value of ISOs per employee per year, capped at $100,000. */
@@ -19,6 +20,8 @@ export default function Iso100k() {
   const rows: any[] = data.iso100k;
   const exceeded = rows.filter((r) => r.exceeded);
   const employees = new Set(rows.map((r) => r.stakeholderName)).size;
+  // A row is one grant in one year and has no id of its own, so it is known by its place in the list.
+  const keyOf = new Map(rows.map((r, i) => [r, i]));
 
   return (
     <>
@@ -34,48 +37,42 @@ export default function Iso100k() {
           and must be tracked separately for tax reporting.
         </Banner>
       </div>
-      <Card padded={false}>
-        {rows.length === 0 ? <EmptyState title="No ISOs granted" description="The test only applies to incentive stock options." /> : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Year</TH><TH>Employee</TH><TH>Grant</TH>
-                <TH align="right">Shares first exercisable</TH><TH align="right">Value at grant</TH><TH align="right">Cumulative</TH>
-                <TH align="right">Qualifies as ISO</TH><TH align="right">Treated as NSO</TH><TH>Status</TH><TH width={56} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <TR key={i} className={r.exceeded ? 'bg-amber-50/40' : undefined}>
-                  <TD mono>{r.year}</TD>
-                  {/* The limit is measured per person per year, so the row belongs to the holder. */}
-                  <TD className="font-medium">
-                    <Link to={`/stakeholders/${r.stakeholderId}`}
-                      className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
-                      {r.stakeholderName}
-                    </Link>
-                  </TD>
-                  <TD className="text-ink-600">{r.awardLabel}</TD>
-                  <TD align="right" mono>{shares(r.sharesVesting)}</TD>
-                  <TD align="right" mono>{money(r.valueAtGrant)}</TD>
-                  <TD align="right" mono className={r.exceeded ? 'font-medium text-amber-700' : 'text-ink-600'}>{money(r.cumulativeValue)}</TD>
-                  <TD align="right" mono>{shares(r.isoQualified)}</TD>
-                  <TD align="right" mono className={r.nsoRecharacterized > 0 ? 'font-medium text-amber-700' : 'text-ink-400'}>{r.nsoRecharacterized > 0 ? shares(r.nsoRecharacterized) : '—'}</TD>
-                  <TD>{r.exceeded ? <Badge tone="warning">Over limit</Badge> : <Badge tone="success">Within limit</Badge>}</TD>
-                  {/* The test is run per person per year, so the paperwork behind it belongs
-                      to that pair rather than to the grant the row happens to show. */}
-                  <TD align="right">
-                    <Button size="sm" variant="ghost" onClick={() => setDocumentsFor(r)}
-                      aria-label={`Documents for ${r.stakeholderName} in ${r.year}`} title={`Documents for ${r.stakeholderName} in ${r.year}`}>
-                      <Icon name="document" className="size-4" />
-                    </Button>
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="ISO $100,000 limit by employee and year" rows={rows} rowKey={(r) => keyOf.get(r)!}
+        search={{ placeholder: 'Search by employee, grant or year', label: 'Search the $100,000 test',
+          by: (r) => [r.stakeholderName, r.awardLabel, String(r.year)] }}
+        rowTone={(r) => (r.exceeded ? 'amber' : undefined)}
+        empty={<EmptyState title="No ISOs granted" description="The test only applies to incentive stock options." />}
+        columns={[
+          { key: 'year', label: 'Year', value: (r) => r.year, cell: (r) => r.year, className: 'tabular' },
+          // The limit is measured per person per year, so the row belongs to the holder.
+          { key: 'employee', label: 'Employee', value: (r) => r.stakeholderName, className: 'font-medium',
+            cell: (r) => (
+              <Link to={`/stakeholders/${r.stakeholderId}`}
+                className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
+                {r.stakeholderName}
+              </Link>
+            ) },
+          { key: 'grant', label: 'Grant', value: (r) => r.awardLabel, className: 'whitespace-nowrap text-ink-600' },
+          { key: 'vesting', label: 'Shares first exercisable', type: 'number', value: (r) => r.sharesVesting },
+          { key: 'value', label: 'Value at grant', type: 'money', value: (r) => r.valueAtGrant },
+          { key: 'cumulative', label: 'Cumulative', type: 'money', value: (r) => r.cumulativeValue,
+            className: (r) => (r.exceeded ? 'font-medium text-amber-700' : 'text-ink-600') },
+          { key: 'iso', label: 'Qualifies as ISO', type: 'number', value: (r) => r.isoQualified },
+          { key: 'nso', label: 'Treated as NSO', type: 'number', value: (r) => r.nsoRecharacterized,
+            cell: (r) => (r.nsoRecharacterized > 0 ? shares(r.nsoRecharacterized) : '—'),
+            className: (r) => (r.nsoRecharacterized > 0 ? 'font-medium text-amber-700' : 'text-ink-400') },
+          { key: 'status', label: 'Status', value: (r) => (r.exceeded ? 'Over limit' : 'Within limit'),
+            cell: (r) => (r.exceeded ? <Badge tone="warning">Over limit</Badge> : <Badge tone="success">Within limit</Badge>) },
+          // The test is run per person per year, so the paperwork behind it belongs
+          // to that pair rather than to the grant the row happens to show.
+          { key: 'documents', label: '', width: 56, align: 'right',
+            cell: (r) => (
+              <Button size="sm" variant="ghost" onClick={() => setDocumentsFor(r)}
+                aria-label={`Documents for ${r.stakeholderName} in ${r.year}`} title={`Documents for ${r.stakeholderName} in ${r.year}`}>
+                <Icon name="document" className="size-4" />
+              </Button>
+            ) },
+        ]} />
 
       <Modal open={!!documentsFor} onClose={() => setDocumentsFor(null)} size="lg"
         title={documentsFor ? `$100,000 limit for ${documentsFor.stakeholderName} in ${documentsFor.year}` : 'Documents'}

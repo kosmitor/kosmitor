@@ -70,6 +70,13 @@ export async function securityKind(companyId: string, securityId: string): Promi
 }
 const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
+/** A file name as given, on one line and with no path in it, or a plain one when none was given. */
+export function uploadName(v: string | null): string {
+  const s = (v ?? '').replace(/[\x00-\x1f\x7f]/g, '').replace(/[\\/]/g, '_').trim();
+  if (s.length > 255) throw badRequest('The file name is too long. Rename the file and upload it again.');
+  return s || 'Valuation report.pdf';
+}
+
 /** Stores a file's bytes for a document, replacing any previous content. */
 export async function storeFile(documentId: string, companyId: string, content: Buffer): Promise<void> {
   await run('DELETE FROM file_blobs WHERE document_id = ?', documentId);

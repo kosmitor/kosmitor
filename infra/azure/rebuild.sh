@@ -5,7 +5,7 @@
 # can no longer reconcile. It is not a repair: everything goes, including the
 # database and every backup taken of it, and the application comes back at a new
 # address. README.md, "Rebuilding from scratch", lists what has to be pointed at
-# the new address afterwards. Remote state (state-storage.sh) lives in a
+# the new address afterwards. Remote state (infra/tfstate) lives in a
 # resource group of its own, which this script never touches.
 #
 #   ./rebuild.sh                  the resource group in the Terraform outputs

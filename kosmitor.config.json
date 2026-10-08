@@ -2,8 +2,8 @@
   "$schema": "./kosmitor.config.schema.json",
   "brand": {
     "productName": "Kosmitor",
-    "pageTitle": "Kosmitor — Equity Management",
-    "tagline": "Equity management",
+    "pageTitle": "Kosmitor — 409A & Equity Management",
+    "tagline": "Equity management & 409A valuations for startups, founders and investors.",
     "logoUrl": null,
     "icons": {
       "svg": "/favicon.svg",
@@ -12,35 +12,109 @@
     },
     "colors": {
       "primary": {
-        "50": "#eef2ff", "100": "#e0e7ff", "200": "#c7d2fe", "300": "#a5b4fc", "400": "#818cf8",
-        "500": "#6366f1", "600": "#4f46e5", "700": "#4338ca", "800": "#3730a3", "900": "#312e81"
+        "50": "#eef2ff",
+        "100": "#e0e7ff",
+        "200": "#c7d2fe",
+        "300": "#a5b4fc",
+        "400": "#818cf8",
+        "500": "#6366f1",
+        "600": "#4f46e5",
+        "700": "#4338ca",
+        "800": "#3730a3",
+        "900": "#312e81"
       },
       "accent": {
-        "50": "#f7ffe0", "100": "#ecffb8", "200": "#dbff80", "300": "#c4ff3d", "400": "#adf70f",
-        "500": "#99f200", "600": "#7ac400", "700": "#5c9600", "800": "#457000", "900": "#2f4d00"
+        "50": "#f7ffe0",
+        "100": "#ecffb8",
+        "200": "#dbff80",
+        "300": "#c4ff3d",
+        "400": "#adf70f",
+        "500": "#99f200",
+        "600": "#7ac400",
+        "700": "#5c9600",
+        "800": "#457000",
+        "900": "#2f4d00"
       },
-      "charts": ["#6366f1", "#99f200", "#f59e0b", "#a855f7", "#ec4899", "#0ea5e9", "#84cc16", "#ef4444", "#8b5cf6", "#7ac400"],
-      "status": { "good": "#7ac400", "warning": "#f59e0b", "bad": "#ef4444", "track": "#eceef2" },
-      "avatarChoices": [
-        { "value": "#3d5afe", "label": "Indigo" },
-        { "value": "#00a389", "label": "Teal" },
-        { "value": "#e8710a", "label": "Orange" },
-        { "value": "#8e24aa", "label": "Purple" },
-        { "value": "#d81b60", "label": "Pink" },
-        { "value": "#0277bd", "label": "Blue" }
+      "charts": [
+        "#6366f1",
+        "#99f200",
+        "#f59e0b",
+        "#a855f7",
+        "#ec4899",
+        "#0ea5e9",
+        "#14b8a6",
+        "#ef4444",
+        "#8b5cf6",
+        "#7ac400"
       ],
-      "initialsFallback": ["#6366f1", "#5c9600", "#d97706", "#9333ea", "#db2777", "#0284c7", "#65a30d", "#dc2626"],
+      "status": {
+        "good": "#7ac400",
+        "warning": "#f59e0b",
+        "bad": "#ef4444",
+        "track": "#eceef2"
+      },
+      "avatarChoices": [
+        {
+          "value": "#3d5afe",
+          "label": "Indigo"
+        },
+        {
+          "value": "#00a389",
+          "label": "Teal"
+        },
+        {
+          "value": "#e8710a",
+          "label": "Orange"
+        },
+        {
+          "value": "#8e24aa",
+          "label": "Purple"
+        },
+        {
+          "value": "#d81b60",
+          "label": "Pink"
+        },
+        {
+          "value": "#0277bd",
+          "label": "Blue"
+        }
+      ],
+      "initialsFallback": [
+        "#6366f1",
+        "#5c9600",
+        "#d97706",
+        "#9333ea",
+        "#db2777",
+        "#0284c7",
+        "#65a30d",
+        "#dc2626"
+      ],
       "certificateFrame": "#0f6b4f"
     },
     "signIn": {
-      "headline": "Know who owns what, and what it is worth.",
-      "subheadline": "Stay in safe harbor with every action on your shares, at your current 409A fair market value.",
+      "headline": "Stay in safe harbor with every action on your shares, at your current 409A fair market value.",
+      "subheadline": "Know who owns what, and what it is worth, at any given time.",
       "features": [
-        { "title": "Cap table", "detail": "fully diluted, as of any date" },
-        { "title": "Conversion", "detail": "pre- and post-money SAFEs and notes" },
-        { "title": "Waterfall", "detail": "exit proceeds with participation caps" },
-        { "title": "409A valuations", "detail": "the fair market value behind every strike price" },
-        { "title": "Compliance & tax", "detail": "ISO $100K limit, Rule 701, 83(b) and Form 3921" }
+        {
+          "title": "409A valuations",
+          "detail": "the fair market value behind every strike price"
+        },
+        {
+          "title": "Cap table",
+          "detail": "fully diluted, as of any date"
+        },
+        {
+          "title": "Conversion",
+          "detail": "pre- and post-money SAFEs and notes"
+        },
+        {
+          "title": "Waterfall",
+          "detail": "exit proceeds with participation caps"
+        },
+        {
+          "title": "Compliance & tax",
+          "detail": "ISO $100K limit, Rule 701, 83(b) and Form 3921"
+        }
       ],
       "signInTitle": "Sign in to your workspace",
       "signInSubtitle": "Manage your cap table, equity grants and financing scenarios.",
@@ -108,40 +182,142 @@
     "resendCooldownMinutes": 10,
     "intake": {
       "companySizes": [
-        { "value": "1-10", "label": "1 to 10 people", "shortLabel": "1–10" },
-        { "value": "11-50", "label": "11 to 50 people", "shortLabel": "11–50" },
-        { "value": "51-200", "label": "51 to 200 people", "shortLabel": "51–200" },
-        { "value": "201-500", "label": "201 to 500 people", "shortLabel": "201–500" },
-        { "value": "500+", "label": "More than 500 people", "shortLabel": "500+" }
+        {
+          "value": "1-10",
+          "label": "1 to 10 people",
+          "shortLabel": "1–10"
+        },
+        {
+          "value": "11-50",
+          "label": "11 to 50 people",
+          "shortLabel": "11–50"
+        },
+        {
+          "value": "51-200",
+          "label": "51 to 200 people",
+          "shortLabel": "51–200"
+        },
+        {
+          "value": "201-500",
+          "label": "201 to 500 people",
+          "shortLabel": "201–500"
+        },
+        {
+          "value": "500+",
+          "label": "More than 500 people",
+          "shortLabel": "500+"
+        }
       ],
       "stages": [
-        { "value": "PRE_SEED", "label": "Pre-seed", "shortLabel": "Pre-seed" },
-        { "value": "SEED", "label": "Seed", "shortLabel": "Seed" },
-        { "value": "SERIES_A", "label": "Series A", "shortLabel": "Series A" },
-        { "value": "SERIES_B", "label": "Series B", "shortLabel": "Series B" },
-        { "value": "SERIES_C_PLUS", "label": "Series C or later", "shortLabel": "Series C+" },
-        { "value": "BOOTSTRAPPED", "label": "Bootstrapped (no outside funding)", "shortLabel": "Bootstrapped" }
+        {
+          "value": "PRE_SEED",
+          "label": "Pre-seed",
+          "shortLabel": "Pre-seed"
+        },
+        {
+          "value": "SEED",
+          "label": "Seed",
+          "shortLabel": "Seed"
+        },
+        {
+          "value": "SERIES_A",
+          "label": "Series A",
+          "shortLabel": "Series A"
+        },
+        {
+          "value": "SERIES_B",
+          "label": "Series B",
+          "shortLabel": "Series B"
+        },
+        {
+          "value": "SERIES_C_PLUS",
+          "label": "Series C or later",
+          "shortLabel": "Series C+"
+        },
+        {
+          "value": "BOOTSTRAPPED",
+          "label": "Bootstrapped (no outside funding)",
+          "shortLabel": "Bootstrapped"
+        }
       ],
       "plans": [
-        { "value": "OPTIONS", "label": "Grant options", "shortLabel": "Grant options" },
-        { "value": "FINANCING", "label": "Close a financing round", "shortLabel": "Close a round" },
-        { "value": "BOTH", "label": "Grant options and close a financing round", "shortLabel": "Both" },
-        { "value": "NEITHER", "label": "Neither in the next six months", "shortLabel": "Not in 6 months" }
+        {
+          "value": "OPTIONS",
+          "label": "Grant options",
+          "shortLabel": "Grant options"
+        },
+        {
+          "value": "FINANCING",
+          "label": "Close a financing round",
+          "shortLabel": "Close a round"
+        },
+        {
+          "value": "BOTH",
+          "label": "Grant options and close a financing round",
+          "shortLabel": "Both"
+        },
+        {
+          "value": "NEITHER",
+          "label": "Neither in the next six months",
+          "shortLabel": "Not in 6 months"
+        }
       ],
       "planTimings": [
-        { "value": "MONTH", "label": "within a month", "shortLabel": "< 1 month" },
-        { "value": "ONE_TO_THREE", "label": "in 1 to 3 months", "shortLabel": "1–3 months" },
-        { "value": "THREE_TO_SIX", "label": "in 3 to 6 months", "shortLabel": "3–6 months" },
-        { "value": "UNSURE", "label": "timing not sure yet", "shortLabel": "Not sure" }
+        {
+          "value": "MONTH",
+          "label": "within a month",
+          "shortLabel": "< 1 month"
+        },
+        {
+          "value": "ONE_TO_THREE",
+          "label": "in 1 to 3 months",
+          "shortLabel": "1–3 months"
+        },
+        {
+          "value": "THREE_TO_SIX",
+          "label": "in 3 to 6 months",
+          "shortLabel": "3–6 months"
+        },
+        {
+          "value": "UNSURE",
+          "label": "timing not sure yet",
+          "shortLabel": "Not sure"
+        }
       ],
       "securityTypes": [
-        { "value": "COMMON", "label": "Common stock", "shortLabel": "Common" },
-        { "value": "PREFERRED", "label": "Preferred stock", "shortLabel": "Preferred" },
-        { "value": "OPTIONS", "label": "Stock options", "shortLabel": "Options" },
-        { "value": "CONVERTIBLE", "label": "A SAFE or convertible note", "shortLabel": "SAFE or note" },
-        { "value": "OTHER", "label": "Another security", "shortLabel": "Other" }
+        {
+          "value": "COMMON",
+          "label": "Common stock",
+          "shortLabel": "Common"
+        },
+        {
+          "value": "PREFERRED",
+          "label": "Preferred stock",
+          "shortLabel": "Preferred"
+        },
+        {
+          "value": "OPTIONS",
+          "label": "Stock options",
+          "shortLabel": "Options"
+        },
+        {
+          "value": "CONVERTIBLE",
+          "label": "A SAFE or convertible note",
+          "shortLabel": "SAFE or note"
+        },
+        {
+          "value": "OTHER",
+          "label": "Another security",
+          "shortLabel": "Other"
+        }
       ],
-      "softwareSuggestions": ["Spreadsheets", "Carta", "Pulley", "QuickBooks", "Xero"]
+      "softwareSuggestions": [
+        "Spreadsheets",
+        "Carta",
+        "Pulley",
+        "QuickBooks",
+        "Xero"
+      ]
     }
   },
   "limits": {
@@ -150,6 +326,9 @@
     "importUploadMb": 20,
     "importMaxRows": 5000,
     "importMaxSheets": 50,
+    "importJsonMb": 48,
+    "importUnzippedMb": 256,
+    "importMaxTotalRows": 25000,
     "ledgerPageSize": 200,
     "ledgerMaxPageSize": 500,
     "reportRows": 200,
@@ -159,11 +338,24 @@
   "compliance": {
     "scoring": {
       "start": 100,
-      "points": { "error": 12, "warning": 4, "info": 1 },
+      "points": {
+        "error": 12,
+        "warning": 4,
+        "info": 1
+      },
       "bands": [
-        { "min": 85, "label": "In good shape" },
-        { "min": 60, "label": "A few items need attention" },
-        { "min": 0, "label": "Several findings need resolving" }
+        {
+          "min": 85,
+          "label": "In good shape"
+        },
+        {
+          "min": 60,
+          "label": "A few items need attention"
+        },
+        {
+          "min": 0,
+          "label": "Several findings need resolving"
+        }
       ]
     },
     "valuationExpiryWarningDays": 90,
@@ -199,15 +391,110 @@
       "showUpdates": true
     },
     "vestingSchedules": [
-      { "name": "4 years, 1 year cliff, monthly", "kind": "TIME", "durationMonths": 48, "cliffMonths": 12, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 0 },
-      { "name": "4 years, no cliff, monthly", "kind": "TIME", "durationMonths": 48, "cliffMonths": 0, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 0 },
-      { "name": "4 years, 1 year cliff, quarterly", "kind": "TIME", "durationMonths": 48, "cliffMonths": 12, "frequency": "QUARTERLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 0 },
-      { "name": "3 years, 6 month cliff, monthly", "kind": "TIME", "durationMonths": 36, "cliffMonths": 6, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 0 },
-      { "name": "2 years, monthly (advisor)", "kind": "TIME", "durationMonths": 24, "cliffMonths": 0, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 1, "doubleTrigger": 0 },
-      { "name": "1 year, monthly", "kind": "TIME", "durationMonths": 12, "cliffMonths": 0, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 0 },
-      { "name": "4 years back-loaded (10/20/30/40)", "kind": "TIME", "durationMonths": 48, "cliffMonths": 12, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": [0.1, 0.2, 0.3, 0.4], "singleTrigger": 0, "doubleTrigger": 0 },
-      { "name": "4 years, double-trigger 100%", "kind": "TIME", "durationMonths": 48, "cliffMonths": 12, "frequency": "MONTHLY", "immediatePortion": 0, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 1 },
-      { "name": "Fully vested at grant", "kind": "FULLY_VESTED", "durationMonths": 0, "cliffMonths": 0, "frequency": "MONTHLY", "immediatePortion": 1, "yearWeights": null, "singleTrigger": 0, "doubleTrigger": 0 }
+      {
+        "name": "4 years, 1 year cliff, monthly",
+        "kind": "TIME",
+        "durationMonths": 48,
+        "cliffMonths": 12,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "4 years, no cliff, monthly",
+        "kind": "TIME",
+        "durationMonths": 48,
+        "cliffMonths": 0,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "4 years, 1 year cliff, quarterly",
+        "kind": "TIME",
+        "durationMonths": 48,
+        "cliffMonths": 12,
+        "frequency": "QUARTERLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "3 years, 6 month cliff, monthly",
+        "kind": "TIME",
+        "durationMonths": 36,
+        "cliffMonths": 6,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "2 years, monthly (advisor)",
+        "kind": "TIME",
+        "durationMonths": 24,
+        "cliffMonths": 0,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 1,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "1 year, monthly",
+        "kind": "TIME",
+        "durationMonths": 12,
+        "cliffMonths": 0,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "4 years back-loaded (10/20/30/40)",
+        "kind": "TIME",
+        "durationMonths": 48,
+        "cliffMonths": 12,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": [
+          0.1,
+          0.2,
+          0.3,
+          0.4
+        ],
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      },
+      {
+        "name": "4 years, double-trigger 100%",
+        "kind": "TIME",
+        "durationMonths": 48,
+        "cliffMonths": 12,
+        "frequency": "MONTHLY",
+        "immediatePortion": 0,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 1
+      },
+      {
+        "name": "Fully vested at grant",
+        "kind": "FULLY_VESTED",
+        "durationMonths": 0,
+        "cliffMonths": 0,
+        "frequency": "MONTHLY",
+        "immediatePortion": 1,
+        "yearWeights": null,
+        "singleTrigger": 0,
+        "doubleTrigger": 0
+      }
     ]
   },
   "equity": {
@@ -216,7 +503,12 @@
     "postTerminationExerciseMonths": 3,
     "vestingMonths": 48,
     "cliffMonths": 12,
-    "backLoadedWeights": [0.1, 0.2, 0.3, 0.4],
+    "backLoadedWeights": [
+      0.1,
+      0.2,
+      0.3,
+      0.4
+    ],
     "doubleTriggerWindowDays": 548,
     "signerTitle": "Authorized Officer",
     "convertibleSignerTitle": "Chief Executive Officer",
@@ -237,7 +529,14 @@
     "preMoneyValuation": 40000000,
     "leadInvestment": 10000000,
     "targetPoolPercent": 10,
-    "exitPresetsMillions": [10, 25, 50, 100, 250, 500],
+    "exitPresetsMillions": [
+      10,
+      25,
+      50,
+      100,
+      250,
+      500
+    ],
     "exitValue": 100000000,
     "portalMaxExit": 100000000,
     "portalSalePriceMultiple": 5
@@ -277,11 +576,26 @@
     "esignConsent": "Typing your full name creates a binding electronic signature. The time and IP address are recorded.",
     "esignAgreement": "By signing you agree that this electronic signature is the legal equivalent of your manual signature.",
     "stockLegends": [
-      { "when": "always", "text": "THE SECURITIES REFERENCED HEREIN HAVE NOT BEEN REGISTERED UNDER THE SECURITIES ACT OF 1933, AS AMENDED, AND HAVE BEEN ACQUIRED FOR INVESTMENT AND NOT WITH A VIEW TO, OR IN CONNECTION WITH, THE SALE OR DISTRIBUTION THEREOF. NO SUCH SALE OR DISTRIBUTION MAY BE EFFECTED WITHOUT AN EFFECTIVE REGISTRATION STATEMENT RELATED THERETO OR AN OPINION OF COUNSEL IN A FORM SATISFACTORY TO THE COMPANY THAT SUCH REGISTRATION IS NOT REQUIRED UNDER THE SECURITIES ACT OF 1933." },
-      { "when": "restricted", "text": "THE SECURITIES REFERENCED HEREIN MAY BE TRANSFERRED ONLY IN ACCORDANCE WITH THE TERMS OF AN AGREEMENT BETWEEN THE COMPANY AND THE STOCKHOLDER, A COPY OF WHICH IS ON FILE WITH AND MAY BE OBTAINED FROM THE SECRETARY OF THE COMPANY AT NO CHARGE. THE SHARES ARE SUBJECT TO A REPURCHASE OPTION IN FAVOR OF THE COMPANY AND TO FORFEITURE UNDER THE VESTING TERMS OF THAT AGREEMENT." },
-      { "when": "notPlan", "text": "THE TRANSFER OF THE SECURITIES REFERENCED HEREIN IS SUBJECT TO CERTAIN TRANSFER RESTRICTIONS SET FORTH IN THE COMPANY'S BYLAWS, COPIES OF WHICH MAY BE OBTAINED UPON WRITTEN REQUEST TO THE COMPANY AT ITS PRINCIPAL PLACE OF BUSINESS. THE COMPANY SHALL NOT REGISTER OR OTHERWISE RECOGNIZE OR GIVE EFFECT TO ANY PURPORTED TRANSFER OF SECURITIES THAT DOES NOT COMPLY WITH SUCH TRANSFER RESTRICTIONS." },
-      { "when": "plan", "text": "THE TRANSFER OF THE SECURITIES REFERENCED HEREIN IS SUBJECT TO CERTAIN TRANSFER RESTRICTIONS SET FORTH IN THE COMPANY'S BYLAWS AND STOCK PLAN, COPIES OF WHICH MAY BE OBTAINED UPON WRITTEN REQUEST TO THE COMPANY AT ITS PRINCIPAL PLACE OF BUSINESS. THE COMPANY SHALL NOT REGISTER OR OTHERWISE RECOGNIZE OR GIVE EFFECT TO ANY PURPORTED TRANSFER OF SECURITIES THAT DOES NOT COMPLY WITH SUCH TRANSFER RESTRICTIONS." },
-      { "when": "nonUs", "text": "THE SECURITIES REFERENCED HEREIN HAVE NOT BEEN REGISTERED UNDER THE SECURITIES ACT OF 1933, AS AMENDED (THE \"ACT\"), AND THE ISSUER DOES NOT INTEND TO REGISTER THEM. THEY WERE OFFERED AND SOLD OUTSIDE THE UNITED STATES IN RELIANCE ON REGULATION S UNDER THE ACT. PRIOR TO THE END OF THE DISTRIBUTION COMPLIANCE PERIOD DEFINED IN REGULATION S, THE SECURITIES MAY NOT BE OFFERED OR SOLD (INCLUDING OPENING A SHORT POSITION IN THE SECURITIES) IN THE UNITED STATES OR TO U.S. PERSONS (AS DEFINED BY RULE 902(k) UNDER THE ACT) UNLESS THE SECURITIES ARE REGISTERED UNDER THE ACT OR AN EXEMPTION FROM THE REGISTRATION REQUIREMENTS OF THE ACT IS AVAILABLE. PURCHASERS OF THE SECURITIES PRIOR TO THE END OF THAT PERIOD MAY RESELL THEM ONLY PURSUANT TO AN EXEMPTION FROM REGISTRATION UNDER THE ACT OR IN TRANSACTIONS EFFECTED OUTSIDE THE UNITED STATES, PROVIDED THEY DO NOT SOLICIT (AND NO ONE ACTING ON THEIR BEHALF SOLICITS) PURCHASERS IN THE UNITED STATES OR OTHERWISE ENGAGE IN SELLING EFFORTS IN THE UNITED STATES. HEDGING TRANSACTIONS INVOLVING THE SECURITIES MAY NOT BE CONDUCTED UNLESS IN COMPLIANCE WITH THE ACT." }
+      {
+        "when": "always",
+        "text": "THE SECURITIES REFERENCED HEREIN HAVE NOT BEEN REGISTERED UNDER THE SECURITIES ACT OF 1933, AS AMENDED, AND HAVE BEEN ACQUIRED FOR INVESTMENT AND NOT WITH A VIEW TO, OR IN CONNECTION WITH, THE SALE OR DISTRIBUTION THEREOF. NO SUCH SALE OR DISTRIBUTION MAY BE EFFECTED WITHOUT AN EFFECTIVE REGISTRATION STATEMENT RELATED THERETO OR AN OPINION OF COUNSEL IN A FORM SATISFACTORY TO THE COMPANY THAT SUCH REGISTRATION IS NOT REQUIRED UNDER THE SECURITIES ACT OF 1933."
+      },
+      {
+        "when": "restricted",
+        "text": "THE SECURITIES REFERENCED HEREIN MAY BE TRANSFERRED ONLY IN ACCORDANCE WITH THE TERMS OF AN AGREEMENT BETWEEN THE COMPANY AND THE STOCKHOLDER, A COPY OF WHICH IS ON FILE WITH AND MAY BE OBTAINED FROM THE SECRETARY OF THE COMPANY AT NO CHARGE. THE SHARES ARE SUBJECT TO A REPURCHASE OPTION IN FAVOR OF THE COMPANY AND TO FORFEITURE UNDER THE VESTING TERMS OF THAT AGREEMENT."
+      },
+      {
+        "when": "notPlan",
+        "text": "THE TRANSFER OF THE SECURITIES REFERENCED HEREIN IS SUBJECT TO CERTAIN TRANSFER RESTRICTIONS SET FORTH IN THE COMPANY'S BYLAWS, COPIES OF WHICH MAY BE OBTAINED UPON WRITTEN REQUEST TO THE COMPANY AT ITS PRINCIPAL PLACE OF BUSINESS. THE COMPANY SHALL NOT REGISTER OR OTHERWISE RECOGNIZE OR GIVE EFFECT TO ANY PURPORTED TRANSFER OF SECURITIES THAT DOES NOT COMPLY WITH SUCH TRANSFER RESTRICTIONS."
+      },
+      {
+        "when": "plan",
+        "text": "THE TRANSFER OF THE SECURITIES REFERENCED HEREIN IS SUBJECT TO CERTAIN TRANSFER RESTRICTIONS SET FORTH IN THE COMPANY'S BYLAWS AND STOCK PLAN, COPIES OF WHICH MAY BE OBTAINED UPON WRITTEN REQUEST TO THE COMPANY AT ITS PRINCIPAL PLACE OF BUSINESS. THE COMPANY SHALL NOT REGISTER OR OTHERWISE RECOGNIZE OR GIVE EFFECT TO ANY PURPORTED TRANSFER OF SECURITIES THAT DOES NOT COMPLY WITH SUCH TRANSFER RESTRICTIONS."
+      },
+      {
+        "when": "nonUs",
+        "text": "THE SECURITIES REFERENCED HEREIN HAVE NOT BEEN REGISTERED UNDER THE SECURITIES ACT OF 1933, AS AMENDED (THE \"ACT\"), AND THE ISSUER DOES NOT INTEND TO REGISTER THEM. THEY WERE OFFERED AND SOLD OUTSIDE THE UNITED STATES IN RELIANCE ON REGULATION S UNDER THE ACT. PRIOR TO THE END OF THE DISTRIBUTION COMPLIANCE PERIOD DEFINED IN REGULATION S, THE SECURITIES MAY NOT BE OFFERED OR SOLD (INCLUDING OPENING A SHORT POSITION IN THE SECURITIES) IN THE UNITED STATES OR TO U.S. PERSONS (AS DEFINED BY RULE 902(k) UNDER THE ACT) UNLESS THE SECURITIES ARE REGISTERED UNDER THE ACT OR AN EXEMPTION FROM THE REGISTRATION REQUIREMENTS OF THE ACT IS AVAILABLE. PURCHASERS OF THE SECURITIES PRIOR TO THE END OF THAT PERIOD MAY RESELL THEM ONLY PURSUANT TO AN EXEMPTION FROM REGISTRATION UNDER THE ACT OR IN TRANSACTIONS EFFECTED OUTSIDE THE UNITED STATES, PROVIDED THEY DO NOT SOLICIT (AND NO ONE ACTING ON THEIR BEHALF SOLICITS) PURCHASERS IN THE UNITED STATES OR OTHERWISE ENGAGE IN SELLING EFFORTS IN THE UNITED STATES. HEDGING TRANSACTIONS INVOLVING THE SECURITIES MAY NOT BE CONDUCTED UNLESS IN COMPLIANCE WITH THE ACT."
+      }
     ],
     "convertibleLegend": "THIS INSTRUMENT AND ANY SECURITIES ISSUABLE PURSUANT HERETO HAVE NOT BEEN REGISTERED UNDER THE SECURITIES ACT OF 1933, AS AMENDED (THE \"SECURITIES ACT\"), OR UNDER THE SECURITIES LAWS OF CERTAIN STATES. THESE SECURITIES MAY NOT BE OFFERED, SOLD OR OTHERWISE TRANSFERRED, PLEDGED OR HYPOTHECATED EXCEPT AS PERMITTED UNDER THE SECURITIES ACT AND APPLICABLE STATE SECURITIES LAWS PURSUANT TO AN EFFECTIVE REGISTRATION STATEMENT OR AN EXEMPTION THEREFROM."
   },
@@ -290,17 +604,30 @@
     "providers": {
       "anthropic": {
         "enabled": true,
-        "models": ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+        "models": [
+          "claude-fable-5-1",
+          "claude-opus-5",
+          "claude-sonnet-5",
+          "claude-haiku-4-5-20251001"
+        ],
         "endpoint": "https://api.anthropic.com/v1/messages"
       },
       "openai": {
         "enabled": true,
-        "models": ["gpt-5", "gpt-5-mini", "gpt-4.1", "o4-mini"],
+        "models": [
+          "gpt-5",
+          "gpt-5-mini",
+          "gpt-4.1",
+          "o4-mini"
+        ],
         "endpoint": "https://api.openai.com/v1/chat/completions"
       },
       "google": {
         "enabled": true,
-        "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
+        "models": [
+          "gemini-2.5-pro",
+          "gemini-2.5-flash"
+        ],
         "endpoint": "https://generativelanguage.googleapis.com/v1beta"
       }
     },

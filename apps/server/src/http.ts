@@ -49,11 +49,20 @@ interface RouteOptions {
   /** Deliver the request body untouched as `ctx.rawBody` instead of parsing JSON. */
   raw?: boolean;
   /**
-   * Body size ceiling for raw routes, limits.uploadMb when not given; JSON routes
-   * are capped at limits.jsonBodyMb. A function is asked on every request, so a
-   * limit taken from the settings follows them rather than the value at start-up.
+   * Body size ceiling: for raw routes limits.uploadMb when not given, for JSON
+   * routes limits.jsonBodyMb (the import's preview and commit, which carry every
+   * row of several files, take limits.importJsonMb). A function is asked on every
+   * request, so a limit taken from the settings follows them rather than the
+   * value at start-up.
    */
   maxBytes?: number | (() => number);
+  /**
+   * Runs outside a transaction and without the company's lock, as a GET does.
+   * Only for a route that writes nothing and waits on something slow, such as
+   * reading a report: holding the lock meanwhile would keep every other change at
+   * the company waiting for it.
+   */
+  unlocked?: boolean;
 }
 
 interface Route extends RouteOptions {
@@ -67,7 +76,7 @@ interface Route extends RouteOptions {
 const routes: Route[] = [];
 
 function add(method: Method, path: string, access: Route['access'], handler: Handler, opts: RouteOptions = {}): void {
-  const wrapped: Handler = method === 'GET' || access === 'public' ? handler : async (ctx) => {
+  const wrapped: Handler = method === 'GET' || access === 'public' || opts.unlocked ? handler : async (ctx) => {
     try {
       return await transaction(async () => {
         // Serialize company mutations before reading balances. This prevents two
@@ -122,19 +131,18 @@ async function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buff
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > maxBytes) throw new HttpError(413, `The file is too large — the limit is ${inMegabytes(maxBytes)} MB.`);
+    if (size > maxBytes) throw new HttpError(413, `The file is too large — the limit is ${inMegabytes(maxBytes)} MB.`, { code: 'too-large', limitMb: Number(inMegabytes(maxBytes)) });
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
 }
 
-async function readBody(req: IncomingMessage): Promise<any> {
-  const limit = megabytes(config().limits.jsonBodyMb);
+async function readBody(req: IncomingMessage, limit = megabytes(config().limits.jsonBodyMb)): Promise<any> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > limit) throw badRequest('Request body is too large.');
+    if (size > limit) throw badRequest('Request body is too large.', { code: 'body-too-large' });
     chunks.push(chunk as Buffer);
   }
   if (chunks.length === 0) return {};
@@ -241,13 +249,6 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
     body: {}, rawBody: null, user, membership: null, companyId: found.params.cid ?? null, ip,
   };
 
-    if (found.route.raw) {
-      const { maxBytes } = found.route;
-      ctx.rawBody = await readRawBody(req, typeof maxBytes === 'function' ? maxBytes() : maxBytes ?? megabytes(config().limits.uploadMb));
-    }
-    else if (req.method !== 'GET' && req.method !== 'DELETE') ctx.body = await readBody(req);
-    else ctx.body = {};
-
     const { access } = found.route;
     if (access !== 'public') {
       if (!user) throw unauthorized();
@@ -269,6 +270,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
             || /^issuances\/[^/]+\/detail$/.test(suffix)   // the handler refuses anyone else's certificate
             || /^securities\/[^/]+\/documents$/.test(suffix)   // filtered to what this holder may see
             || suffix === 'compliance-documents'   // same filter; a Rule 701 package is theirs to read
+            || suffix === 'my-actions'   // only their own signatures, votes and payments (routes/my-actions.ts)
             || /^(awards|convertibles|warrants)\/[^/]+\/detail$/.test(suffix)   // each handler refuses anyone else's
             || ['model/exercise', 'model/exit-curve'].includes(suffix);
           if (!permitted) throw forbidden('Your role can only view your own portfolio.');
@@ -280,18 +282,30 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
           throw forbidden('Only workspace administrators can do this.');
         }
         // A sample company is for exploring: its records never change. Calculations that only read
-        // (modelling, report runs, the import wizard up to its review step), managing who may look at
-        // the sample, and removing it altogether stay possible.
+        // (modelling, report runs, the import wizard up to its review step, reading a 409A report to
+        // fill in the form), managing who may look at the sample, and removing it altogether stay possible.
         if (m.isSample && req.method !== 'GET' && req.method !== 'HEAD') {
           const suffix = url.pathname.split('/').slice(4).join('/');
           const computes = suffix.startsWith('model/') || suffix === 'report-builder/run'
-            || suffix.startsWith('ai/chats')
+            || suffix.startsWith('ai/chats') || suffix === 'valuations/report-reading'
             || (suffix.startsWith('imports/') && !suffix.endsWith('/commit'));
           const housekeeping = (suffix === '' && req.method === 'DELETE') || suffix === 'members' || suffix.startsWith('members/');
           if (!computes && !housekeeping) throw forbidden('This is sample data and cannot be changed.');
         }
       }
     }
+
+    // The body is read only once the caller may make the request: someone signed out, or without
+    // the role, is answered before a byte of a large upload or import is buffered.
+    if (found.route.raw) {
+      const { maxBytes } = found.route;
+      ctx.rawBody = await readRawBody(req, typeof maxBytes === 'function' ? maxBytes() : maxBytes ?? megabytes(config().limits.uploadMb));
+    }
+    else if (req.method !== 'GET' && req.method !== 'DELETE') {
+      const { maxBytes } = found.route;
+      ctx.body = await readBody(req, typeof maxBytes === 'function' ? maxBytes() : maxBytes);
+    }
+    else ctx.body = {};
 
     const result = await found.route.handler(ctx);
     if (res.writableEnded || res.headersSent) return;   // the handler streamed its own response
@@ -300,6 +314,9 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
     if (err instanceof URIError || err instanceof TypeError && /Invalid URL/.test(err.message)) {
       json(res, 400, { error: 'Malformed request URL or cookie.' });
     } else if (err instanceof HttpError) {
+      // Given up on partway through its body (too large): the rest is not read, so the connection cannot carry
+      // another request. A body never started on (not signed in, not allowed) is drained by Node as usual.
+      if (!req.complete && req.readableDidRead && !res.headersSent) res.setHeader('Connection', 'close');
       json(res, err.status, { error: err.message, detail: err.detail });
     } else {
       console.error('[api]', (err as Error).stack ?? err);

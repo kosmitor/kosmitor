@@ -5,9 +5,10 @@ import { useSession } from '../session.tsx';
 import { useQuery, api } from '../api.ts';
 import { useSearchQuery } from '../hooks.ts';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field, Select, SearchInput,
+  PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field, Select,
   EmptyState, ConfirmDialog, SegmentedControl, useToast, Textarea, Modal, Banner, KeyValue, ActionMenu,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { shares, pps, money, date, today, parseShares, parsePPS, AWARD_LABELS } from '../format.ts';
 import { config } from '../config.ts';
@@ -146,6 +147,33 @@ export default function Offers() {
   const counts = data?.counts ?? {};
   const noPools = (pools ?? []).length === 0;
 
+  // One button for the thing you came to do, the rest in the menu: five
+  // side by side needed three times the width this column ever gets.
+  const rowActions = (o: any) => (
+    <span className="flex flex-nowrap items-center justify-end gap-1">
+      {o.status === 'DRAFT' && (
+        <Button size="sm" variant="primary" loading={busy} onClick={() => void send(o)}>Send</Button>
+      )}
+      {o.status === 'SENT' && (
+        <Button size="sm" variant="secondary" loading={busy} onClick={() => void send(o)}>Resend</Button>
+      )}
+      {o.status === 'ACCEPTED' && (
+        <Button size="sm" variant="primary" loading={busy} onClick={() => void convert(o)}>Create grant</Button>
+      )}
+      <ActionMenu items={[
+        { label: 'View the letter', icon: 'document', onClick: () => setViewing(o) },
+        ...(o.status === 'SENT' && o.link
+          ? [{ label: 'Copy the accept link', icon: 'link' as const, onClick: () => copy(o.link) }] : []),
+        ...(o.status === 'DRAFT' || o.status === 'SENT'
+          ? [{ label: 'Edit the offer', icon: 'edit' as const, onClick: () => openEdit(o) }] : []),
+        ...(o.status === 'SENT'
+          ? [{ label: 'Withdraw the offer', icon: 'alert' as const, danger: true, onClick: () => setWithdrawing(o) }] : []),
+        ...(['DRAFT', 'DECLINED', 'WITHDRAWN'].includes(o.status)
+          ? [{ label: 'Delete', icon: 'trash' as const, danger: true, onClick: () => setDeleting(o) }] : []),
+      ]} />
+    </span>
+  );
+
   return (
     <>
       <PageHeader concept="offer-letters" title="Offer letters" subtitle="Equity offers to candidates: draft from a template, send an accept link, then turn accepted offers into grants."
@@ -165,78 +193,48 @@ export default function Offers() {
         ))}
       </div>
 
-      <Card padded={false}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 p-4">
-          <SegmentedControl value={filter} onChange={setFilter} options={[{ value: 'OPEN', label: 'Open' }, { value: 'ALL', label: 'All offers' }]} />
-          <div className="w-64"><SearchInput value={search} onChange={setSearch} placeholder="Candidate or position" /></div>
-        </div>
-        {rows.length === 0 ? (
-          <EmptyState title={filter === 'OPEN' ? 'No open offers' : 'No offers yet'} description="Draft an offer letter with the equity package; the candidate accepts it from a link."
-            action={canEdit && !noPools && <Button variant="primary" onClick={openNew}>New offer</Button>} />
-        ) : (
-          <Table>
-            <thead>
-              <tr><TH>Candidate</TH><TH>Position</TH><TH>Start</TH><TH align="right">Equity</TH><TH align="right">Salary</TH><TH>Expires</TH><TH>Status</TH>{canEdit && <TH width={150} />}</tr>
-            </thead>
-            <tbody>
-              {rows.map((o) => {
-                const st = shownStatus(o);
-                return (
-                  <TR key={o.id}>
-                    <TD>
-                      <p className="font-medium text-ink-900">{o.candidateName}</p>
-                      {o.candidateEmail && <p className="text-[12px] text-ink-500">{o.candidateEmail}</p>}
-                    </TD>
-                    <TD>{o.position}{o.department && <span className="block text-[12px] text-ink-500">{o.department}</span>}</TD>
-                    <TD className="text-ink-600">{o.startDate ? date(o.startDate) : '—'}</TD>
-                    <TD align="right">
-                      <span className="tabular font-medium">{shares(o.quantity)}</span> <Badge tone={o.awardType === 'RSU' ? 'info' : 'brand'}>{AWARD_LABELS[o.awardType] ?? o.awardType}</Badge>
-                      <span className="block text-[12px] text-ink-500">{o.poolName ?? '—'}{o.strikePrice != null && o.awardType !== 'RSU' ? ` · ${pps(o.strikePrice)}` : ''}</span>
-                    </TD>
-                    <TD align="right" mono className="text-ink-600">{o.salaryCents != null ? money(o.salaryCents, { compact: true }) : '—'}</TD>
-                    <TD className="text-ink-600">{o.expiresOn ? date(o.expiresOn) : '—'}</TD>
-                    <TD>
-                      <Badge tone={STATUS[st]?.tone ?? 'neutral'}>{STATUS[st]?.label ?? st}</Badge>
-                      {o.status === 'ACCEPTED' && o.acceptedAt && <span className="mt-1 block text-[11px] text-ink-500">Accepted {date(String(o.acceptedAt).slice(0, 10))} as “{o.acceptedName}”</span>}
-                      {o.status === 'DECLINED' && o.declineReason && <span className="mt-1 block max-w-[220px] truncate text-[11px] text-ink-500" title={o.declineReason}>“{o.declineReason}”</span>}
-                      {o.status === 'SENT' && !o.expired && o.viewedAt && <span className="mt-1 block text-[11px] text-ink-500">Opened {date(String(o.viewedAt).slice(0, 10))}</span>}
-                      {o.status === 'CONVERTED' && <Link to="/grants" className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700">See the grant</Link>}
-                    </TD>
-                    {canEdit && (
-                      <TD align="right">
-                        {/* One button for the thing you came to do, the rest in the menu: five
-                            side by side needed three times the width this column ever gets. */}
-                        <span className="flex flex-nowrap items-center justify-end gap-1">
-                          {o.status === 'DRAFT' && (
-                            <Button size="sm" variant="primary" loading={busy} onClick={() => void send(o)}>Send</Button>
-                          )}
-                          {o.status === 'SENT' && (
-                            <Button size="sm" variant="secondary" loading={busy} onClick={() => void send(o)}>Resend</Button>
-                          )}
-                          {o.status === 'ACCEPTED' && (
-                            <Button size="sm" variant="primary" loading={busy} onClick={() => void convert(o)}>Create grant</Button>
-                          )}
-                          <ActionMenu items={[
-                            { label: 'View the letter', icon: 'document', onClick: () => setViewing(o) },
-                            ...(o.status === 'SENT' && o.link
-                              ? [{ label: 'Copy the accept link', icon: 'link' as const, onClick: () => copy(o.link) }] : []),
-                            ...(o.status === 'DRAFT' || o.status === 'SENT'
-                              ? [{ label: 'Edit the offer', icon: 'edit' as const, onClick: () => openEdit(o) }] : []),
-                            ...(o.status === 'SENT'
-                              ? [{ label: 'Withdraw the offer', icon: 'alert' as const, danger: true, onClick: () => setWithdrawing(o) }] : []),
-                            ...(['DRAFT', 'DECLINED', 'WITHDRAWN'].includes(o.status)
-                              ? [{ label: 'Delete', icon: 'trash' as const, danger: true, onClick: () => setDeleting(o) }] : []),
-                          ]} />
-                        </span>
-                      </TD>
-                    )}
-                  </TR>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="Offer letters" rows={rows} rowKey={(o) => o.id}
+        controls={<SegmentedControl value={filter} onChange={setFilter} options={[{ value: 'OPEN', label: 'Open' }, { value: 'ALL', label: 'All offers' }]} />}
+        search={{ value: search, onChange: setSearch, placeholder: 'Candidate or position', label: 'Search offers' }}
+        empty={<EmptyState title={filter === 'OPEN' ? 'No open offers' : 'No offers yet'} description="Draft an offer letter with the equity package; the candidate accepts it from a link."
+          action={canEdit && !noPools && <Button variant="primary" onClick={openNew}>New offer</Button>} />}
+        columns={[
+          { key: 'candidate', label: 'Candidate', value: (o) => o.candidateName,
+            cell: (o) => (
+              <>
+                <p className="font-medium text-ink-900">{o.candidateName}</p>
+                {o.candidateEmail && <p className="text-[12px] text-ink-500">{o.candidateEmail}</p>}
+              </>
+            ) },
+          { key: 'position', label: 'Position', value: (o) => o.position,
+            cell: (o) => <>{o.position}{o.department && <span className="block text-[12px] text-ink-500">{o.department}</span>}</> },
+          { key: 'start', label: 'Start', type: 'date', value: (o) => o.startDate, className: 'text-ink-600' },
+          // Sorts by the number of shares; the plan and the price sit under the figure.
+          { key: 'equity', label: 'Equity', type: 'number', value: (o) => o.quantity,
+            cell: (o) => (
+              <>
+                <span className="tabular font-medium">{shares(o.quantity)}</span> <Badge tone={o.awardType === 'RSU' ? 'info' : 'brand'}>{AWARD_LABELS[o.awardType] ?? o.awardType}</Badge>
+                <span className="block text-[12px] text-ink-500">{o.poolName ?? '—'}{o.strikePrice != null && o.awardType !== 'RSU' ? ` · ${pps(o.strikePrice)}` : ''}</span>
+              </>
+            ) },
+          { key: 'salary', label: 'Salary', type: 'money', value: (o) => o.salaryCents,
+            cell: (o) => (o.salaryCents != null ? money(o.salaryCents, { compact: true }) : '—'), className: 'text-ink-600' },
+          { key: 'expires', label: 'Expires', type: 'date', value: (o) => o.expiresOn, className: 'text-ink-600' },
+          { key: 'status', label: 'Status', value: (o) => STATUS[shownStatus(o)]?.label ?? shownStatus(o),
+            cell: (o) => {
+              const st = shownStatus(o);
+              return (
+                <>
+                  <Badge tone={STATUS[st]?.tone ?? 'neutral'}>{STATUS[st]?.label ?? st}</Badge>
+                  {o.status === 'ACCEPTED' && o.acceptedAt && <span className="mt-1 block text-[11px] text-ink-500">Accepted {date(String(o.acceptedAt).slice(0, 10))} as “{o.acceptedName}”</span>}
+                  {o.status === 'DECLINED' && o.declineReason && <span className="mt-1 block max-w-[220px] truncate text-[11px] text-ink-500" title={o.declineReason}>“{o.declineReason}”</span>}
+                  {o.status === 'SENT' && !o.expired && o.viewedAt && <span className="mt-1 block text-[11px] text-ink-500">Opened {date(String(o.viewedAt).slice(0, 10))}</span>}
+                  {o.status === 'CONVERTED' && <Link to="/grants" className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700">See the grant</Link>}
+                </>
+              );
+            } },
+          { key: 'actions', label: '', width: 150, align: 'right', hidden: !canEdit, cell: rowActions },
+        ]} />
 
       <FormModal open={!!editing} onClose={() => setEditing(null)} busy={busy} size="lg"
         title={editing?.id ? 'Edit offer' : 'New offer letter'}

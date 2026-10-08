@@ -1,15 +1,23 @@
 # Remote state. terraform.tfstate holds the app's secrets in clear (the database
 # password, the secret key, the email service's connection string) and is the
 # only record of what this stack owns, so it does not belong on a laptop.
-# ./state-storage.sh creates the storage for it once per subscription, in a
-# resource group of its own that rebuild.sh never touches, grants you the blob
-# role Terraform needs, and prints the backend.hcl lines. Then, from this
-# directory:
+# The stack in infra/tfstate creates the storage for it once per subscription,
+# in a resource group of its own that rebuild.sh never touches, grants the blob
+# role Terraform needs to each object id in its state_writer_object_ids, and
+# prints the backend.hcl lines (terraform output -raw backend_hcl, there).
+#
+# A new deployment, with no state yet, needs only the two files; from this
+# directory, before the init in README.md, Deploy:
+#
+#   cp backend.tf.example backend.tf
+#   cp backend.hcl.example backend.hcl     # then the subscription and account from backend_hcl
+#
+# To move a state that is already local into the storage, from this directory:
 #
 #   terraform plan                         # note what it reports
 #   terraform state list > state-before.txt
 #   cp backend.tf.example backend.tf
-#   cp backend.hcl.example backend.hcl     # then the subscription and account the script printed
+#   cp backend.hcl.example backend.hcl     # then the subscription and account from backend_hcl
 #   terraform init -backend-config=backend.hcl -migrate-state
 #   terraform state list | diff state-before.txt -    # prints nothing
 #   terraform plan                         # reports what it reported before

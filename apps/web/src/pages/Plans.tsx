@@ -3,9 +3,10 @@ import { useCrud, FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
 import { useQuery } from '../api.ts';
 import {
-  PageHeader, Card, CardHeader, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field,
+  PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field,
   Select, EmptyState, ConfirmDialog, Checkbox, MiniBar, Tabs, KeyValue, InfoDot,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { shares, percent, date, today, parseShares, parsePercent } from '../format.ts';
 import { config } from '../config.ts';
@@ -197,60 +198,52 @@ export default function Plans() {
         )
       )}
 
+      {/* In the order the server gives (by name); a heading sorts by another column. */}
       {tab === 'schedules' && (
-        <Card padded={false}>
-          <Table>
-            <thead>
-              <tr>
-                <TH>Schedule</TH><TH>Type</TH><TH align="right">Duration</TH><TH align="right">Cliff</TH>
-                <TH>Frequency</TH><TH>Acceleration</TH>{canEdit && <TH width={90} />}
-              </tr>
-            </thead>
-            <tbody>
-              {schedules.items.map((s) => (
-                <TR key={s.id}>
-                  <TD className="font-medium">{s.name}</TD>
-                  <TD><Badge tone="neutral">{s.kind.toLowerCase()}</Badge></TD>
-                  <TD align="right" mono>{s.durationMonths} mo</TD>
-                  <TD align="right" mono>{s.cliffMonths ? `${s.cliffMonths} mo` : '—'}</TD>
-                  <TD className="text-ink-600 capitalize">{s.frequency.toLowerCase()}</TD>
-                  <TD>
-                    <span className="flex flex-wrap gap-1">
-                      {s.accelerationSingle > 0 && <Badge tone="info">Single {percent(s.accelerationSingle, 0)}</Badge>}
-                      {s.accelerationDouble > 0 && <Badge tone="purple">Double {percent(s.accelerationDouble, 0)}</Badge>}
-                      {!s.accelerationSingle && !s.accelerationDouble && <span className="text-ink-400">—</span>}
-                    </span>
-                  </TD>
-                  {canEdit && (
-                    <TD align="right">
-                      <span className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" aria-label="Edit"
-                          onClick={() => {
-                            setScheduleForm({
-                              name: s.name, kind: s.kind, durationMonths: String(s.durationMonths),
-                              cliffMonths: String(s.cliffMonths), frequency: s.frequency,
-                              immediatePortion: String(s.immediatePortion * 100),
-                              accelerationSingle: String(s.accelerationSingle * 100),
-                              accelerationDouble: String(s.accelerationDouble * 100),
-                              accelerationMonths: s.accelerationMonths ? String(s.accelerationMonths) : '',
-                              backLoaded: !!s.yearWeights,
-                            });
-                            setEditingSchedule(s);
-                          }}>
-                          <Icon name="edit" className="size-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" aria-label="Delete"
-                          onClick={() => setConfirmDelete({ kind: 'schedule', row: s })}>
-                          <Icon name="trash" className="size-4" />
-                        </Button>
-                      </span>
-                    </TD>
-                  )}
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable caption="Vesting schedules" rows={schedules.items} rowKey={(s) => s.id}
+          search={{ placeholder: 'Search schedules', by: (s) => [s.name] }}
+          empty={<p className="px-5 py-8 text-center text-[13px] text-ink-500">No vesting schedules yet.</p>}
+          columns={[
+            { key: 'name', label: 'Schedule', value: (s) => s.name, className: 'font-medium' },
+            { key: 'kind', label: 'Type', value: (s) => s.kind.toLowerCase(),
+              cell: (s) => <Badge tone="neutral">{s.kind.toLowerCase()}</Badge> },
+            { key: 'duration', label: 'Duration', type: 'number', value: (s) => s.durationMonths, cell: (s) => `${s.durationMonths} mo` },
+            { key: 'cliff', label: 'Cliff', type: 'number', value: (s) => s.cliffMonths || null,
+              cell: (s) => (s.cliffMonths ? `${s.cliffMonths} mo` : '—') },
+            { key: 'frequency', label: 'Frequency', value: (s) => s.frequency.toLowerCase(), className: 'text-ink-600 capitalize' },
+            { key: 'acceleration', label: 'Acceleration',
+              cell: (s) => (
+                <span className="flex flex-wrap gap-1">
+                  {s.accelerationSingle > 0 && <Badge tone="info">Single {percent(s.accelerationSingle, 0)}</Badge>}
+                  {s.accelerationDouble > 0 && <Badge tone="purple">Double {percent(s.accelerationDouble, 0)}</Badge>}
+                  {!s.accelerationSingle && !s.accelerationDouble && <span className="text-ink-400">—</span>}
+                </span>
+              ) },
+            { key: 'actions', label: '', width: 90, align: 'right', hidden: !canEdit,
+              cell: (s) => (
+                <span className="flex justify-end gap-1">
+                  <Button size="sm" variant="ghost" aria-label="Edit"
+                    onClick={() => {
+                      setScheduleForm({
+                        name: s.name, kind: s.kind, durationMonths: String(s.durationMonths),
+                        cliffMonths: String(s.cliffMonths), frequency: s.frequency,
+                        immediatePortion: String(s.immediatePortion * 100),
+                        accelerationSingle: String(s.accelerationSingle * 100),
+                        accelerationDouble: String(s.accelerationDouble * 100),
+                        accelerationMonths: s.accelerationMonths ? String(s.accelerationMonths) : '',
+                        backLoaded: !!s.yearWeights,
+                      });
+                      setEditingSchedule(s);
+                    }}>
+                    <Icon name="edit" className="size-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" aria-label="Delete"
+                    onClick={() => setConfirmDelete({ kind: 'schedule', row: s })}>
+                    <Icon name="trash" className="size-4" />
+                  </Button>
+                </span>
+              ) },
+          ]} />
       )}
 
       <FormModal open={!!editingPool} onClose={() => setEditingPool(null)} busy={pools.busy}

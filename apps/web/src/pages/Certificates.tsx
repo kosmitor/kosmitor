@@ -5,14 +5,15 @@ import { useSession } from '../session.tsx';
 import { useQuery, api, downloadFile } from '../api.ts';
 import { useSearchQuery } from '../hooks.ts';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field,
-  Select, SearchInput, EmptyState, ConfirmDialog, StatusBadge, SegmentedControl, useToast, Checkbox, Modal, Banner,
+  PageHeader, Badge, Loading, ErrorNote, Button, Input, Field,
+  Select, EmptyState, ConfirmDialog, StatusBadge, SegmentedControl, useToast, Checkbox, Modal, Banner,
   KeyValue, ActionMenu,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
 import { DocumentPreview } from '../PdfFrame.tsx';
-import { shares, pps, money, date, today, parseShares, parsePPS } from '../format.ts';
+import { shares, money, date, today, parseShares, parsePPS } from '../format.ts';
 import { readableDocumentPath, documentFilename, isUploadedFile, documentAccess, newestPerHolding, downloadDocumentPath } from '../documents.ts';
 import { config } from '../config.ts';
 
@@ -272,9 +273,110 @@ export default function Certificates() {
   const companyBlock = (i: any) => blocksOf(i).find((s) => s.stakeholderId == null);
   const holderBlock = (i: any) => blocksOf(i).find((s) => s.stakeholderId != null);
 
+  const certificateNoOf = (i: any): string => i.certificateNo ?? i.id.slice(-6).toUpperCase();
+  /** What the holder paid, in cents. */
+  const paidOf = (i: any): number => Math.round((i.quantity * i.pricePerShare) / 1e4);
+  const scheduleOf = (i: any) => (schedules ?? []).find((s) => s.id === i.vestingScheduleId);
+  /** The status, how far the signing has got, and what is filed against the holding. */
+  const statusCell = (i: any) => {
+    const certificate = certificateOf.get(i.id);
+    // The executed certificate keeps the words it has always had.
+    const signed = i.status === 'OUTSTANDING' && certificate?.status === 'EXECUTED' ? certificate : null;
+    // Everything else on file, newest first as the vault returns them. The
+    // executed certificate is pulled out above because it keeps its own wording.
+    const filed = (documentsOf.get(i.id) ?? []).filter((d) => d.id !== signed?.id);
+    return (
+      <>
+        <StatusBadge status={i.status} />
+        {certificate?.resign && <Badge tone="warning" className="ml-1">Corrected: awaiting re-signing</Badge>}
+        {(i.status === 'PENDING_SIGNATURE' || certificate?.resign) && blocksOf(i).length > 0 && (
+          <span className="mt-1 block text-[11px] text-ink-500">
+            {blocksOf(i).filter((s) => s.status === 'SIGNED').length} of {blocksOf(i).length} signed
+            {blocksOf(i).some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocksOf(i).filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
+          </span>
+        )}
+        {signed && (
+          <button className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700" onClick={() => openCertificate(i)}>Signed certificate</button>
+        )}
+        {filed.map((d) => {
+          const access = documentAccess(companyId!, d);
+          // A document with neither text nor a stored file has nothing behind
+          // it, so its name is stated rather than offered as something to open.
+          if (access === 'none') {
+            return (
+              <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
+                {d.name}
+              </span>
+            );
+          }
+          // The certificate the platform wrote belongs in the certificate dialog,
+          // which shows who signed it. That is true before it is executed as well.
+          const own = d.id === certificate?.id && !isUploadedFile(d);
+          return (
+            <button key={d.id} type="button" title={own ? `Open ${d.name}` : access === 'read' ? `Read ${d.name}` : `Download ${d.name}`}
+              onClick={() => (own ? openCertificate(i) : openDocument(d))}
+              className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700">
+              {d.name}
+            </button>
+          );
+        })}
+      </>
+    );
+  };
+
+  const rowActions = (i: any) => {
+    const certificate = certificateOf.get(i.id);
+    // At most one button for the thing this row is waiting on, and the rest
+    // in the menu. Five side by side wrapped into a ragged block.
+    return (
+      <span className="flex flex-nowrap items-center justify-end gap-1">
+        {i.status === 'PENDING_SIGNATURE' ? (
+          <>
+            {companyBlock(i)?.status === 'PENDING' ? (
+              <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(i), document: certificateOf.get(i.id) }); }}>Countersign</Button>
+            ) : holderBlock(i)?.status === 'PENDING' ? (
+              <Button size="sm" loading={busy} onClick={() => void remind(i)}>Remind</Button>
+            ) : null}
+            <ActionMenu items={[
+              { label: 'View the certificate', icon: 'certificate', onClick: () => openCertificate(i) },
+              ...(companyBlock(i)?.status === 'PENDING' && holderBlock(i)?.status === 'PENDING'
+                ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(i); } }] : []),
+              // Editable only while it is genuinely still a draft. Once a
+              // party has signed, changing the terms would alter what they signed.
+              ...(blocksOf(i).every((sig) => sig.status !== 'SIGNED')
+                ? [{ label: 'Edit the draft', icon: 'edit' as const, onClick: () => openEdit(i) }] : []),
+              { label: 'Withdraw before signing', icon: 'trash', danger: true, onClick: () => setWithdrawing(i) },
+            ]} />
+          </>
+        ) : (
+          <>
+            {certificate?.resign && companyBlock(i)?.status === 'PENDING' && (
+              <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(i), document: certificate }); }}>Countersign</Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => openEdit(i)} aria-label="Edit" title="Edit">
+              <Icon name="edit" className="size-4" />
+            </Button>
+            <ActionMenu items={[
+              { label: 'View the certificate', icon: 'certificate', onClick: () => openCertificate(i) },
+              ...(i.status === 'OUTSTANDING' ? [
+                { label: 'Transfer the shares', icon: 'convert' as const,
+                  onClick: () => { setTransfer({ toStakeholderId: '', quantity: String(i.quantity), date: today(), pricePerShare: String(i.pricePerShare / 1e6) }); setTransferring(i); } },
+                { label: 'Repurchase the shares', icon: 'wallet' as const,
+                  onClick: () => { setRepurchase({ quantity: String(i.quantity), date: today(), pricePerShare: String(i.pricePerShare / 1e6), memo: '' }); setRepurchasing(i); } },
+                { label: 'Cancel the certificate', icon: 'trash' as const, danger: true,
+                  onClick: () => { setCancel({ quantity: String(i.quantity), date: today(), reason: '' }); setCancelling(i); } },
+              ] : []),
+              { label: 'Delete', icon: 'trash', danger: true, onClick: () => setConfirmDelete(i) },
+            ]} />
+          </>
+        )}
+      </span>
+    );
+  };
+
   return (
     <>
-      <PageHeader concept="certificates" title="Share certificates"
+      <PageHeader concept="certificates" title="Share & certificates"
         subtitle={`${shares(totalShares)} shares outstanding across ${rows.length - (status === 'ALL' ? 0 : rows.filter((r) => r.status === 'PENDING_SIGNATURE').length)} certificates${pendingCount ? ` · ${pendingCount} awaiting signature${pendingCount === 1 ? '' : 's'}` : ''}`}
         actions={canEdit && (
           <>
@@ -285,163 +387,42 @@ export default function Certificates() {
           </>
         )} />
 
-      <Card className="mb-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <SegmentedControl value={status} onChange={setStatus} options={[
-            { value: 'OUTSTANDING', label: 'Active' }, { value: 'ALL', label: 'All certificates' },
-          ]} />
-          <div className="ml-auto w-64"><SearchInput value={search} onChange={setSearch} placeholder="Holder or certificate number" /></div>
-        </div>
-      </Card>
-
-      <Card padded={false}>
-        {rows.length === 0 ? (
-          <EmptyState title="No certificates" description="Issue founder stock or record an investor purchase to get started."
-            action={canEdit && <Button variant="primary" onClick={openNew}>Issue shares</Button>} />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Certificate</TH>
-                <TH>Holder</TH>
-                <TH>Class</TH>
-                <TH align="right">Shares</TH>
-                <TH align="right">Price</TH>
-                <TH align="right">Paid</TH>
-                <TH>Issued</TH>
-                <TH>Vesting</TH>
-                <TH>Status</TH>
-                {canEdit && <TH width={120} />}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((i) => {
-                const cls = classOf.get(i.shareClassId);
-                const schedule = (schedules ?? []).find((s) => s.id === i.vestingScheduleId);
-                const certificate = certificateOf.get(i.id);
-                // The executed certificate keeps the words it has always had.
-                const signed = i.status === 'OUTSTANDING' && certificate?.status === 'EXECUTED' ? certificate : null;
-                // Everything else on file, newest first as the vault returns them. The
-                // executed certificate is pulled out above because it keeps its own wording.
-                const filed = (documentsOf.get(i.id) ?? []).filter((d) => d.id !== signed?.id);
-                return (
-                  <TR key={i.id}>
-                    <TD className="font-medium">
-                      {/* The number is the certificate, so it opens the certificate. This is
-                          outside the canEdit block on purpose: reading one is not editing it. */}
-                      <Link to={`/certificates/${i.id}`}
-                        className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
-                        {i.certificateNo ?? i.id.slice(-6).toUpperCase()}
-                      </Link>
-                    </TD>
-                    <TD>
-                      <Link to={`/stakeholders/${i.stakeholderId}`} className="hover:text-brand-700">
-                        {nameOf.get(i.stakeholderId) ?? '—'}
-                      </Link>
-                    </TD>
-                    <TD>
-                      <Badge tone={cls?.kind === 'PREFERRED' ? 'purple' : 'neutral'}>{cls?.name ?? '—'}</Badge>
-                    </TD>
-                    <TD align="right" mono className="font-medium">{shares(i.quantity)}</TD>
-                    <TD align="right" mono>{pps(i.pricePerShare)}</TD>
-                    <TD align="right" mono className="text-ink-600">
-                      {money(Math.round((i.quantity * i.pricePerShare) / 1e4), { compact: true })}
-                    </TD>
-                    <TD className="text-ink-600">{date(i.issueDate)}</TD>
-                    <TD className="text-[12px] text-ink-600">
-                      {schedule ? schedule.name : <span className="text-ink-400">Not subject to vesting</span>}
-                      {i.election83bFiledOn && <Badge tone="success" className="ml-1">83(b)</Badge>}
-                    </TD>
-                    <TD>
-                      <StatusBadge status={i.status} />
-                      {certificate?.resign && <Badge tone="warning" className="ml-1">Corrected: awaiting re-signing</Badge>}
-                      {(i.status === 'PENDING_SIGNATURE' || certificate?.resign) && blocksOf(i).length > 0 && (
-                        <span className="mt-1 block text-[11px] text-ink-500">
-                          {blocksOf(i).filter((s) => s.status === 'SIGNED').length} of {blocksOf(i).length} signed
-                          {blocksOf(i).some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocksOf(i).filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
-                        </span>
-                      )}
-                      {signed && (
-                        <button className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700" onClick={() => openCertificate(i)}>Signed certificate</button>
-                      )}
-                      {filed.map((d) => {
-                        const access = documentAccess(companyId!, d);
-                        // A document with neither text nor a stored file has nothing behind
-                        // it, so its name is stated rather than offered as something to open.
-                        if (access === 'none') {
-                          return (
-                            <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
-                              {d.name}
-                            </span>
-                          );
-                        }
-                        // The certificate the platform wrote belongs in the certificate dialog,
-                        // which shows who signed it. That is true before it is executed as well.
-                        const own = d.id === certificate?.id && !isUploadedFile(d);
-                        return (
-                          <button key={d.id} type="button" title={own ? `Open ${d.name}` : access === 'read' ? `Read ${d.name}` : `Download ${d.name}`}
-                            onClick={() => (own ? openCertificate(i) : openDocument(d))}
-                            className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700">
-                            {d.name}
-                          </button>
-                        );
-                      })}
-                    </TD>
-                    {canEdit && (
-                      <TD align="right">
-                        {/* At most one button for the thing this row is waiting on, and the rest
-                            in the menu. Five side by side wrapped into a ragged block. */}
-                        <span className="flex flex-nowrap items-center justify-end gap-1">
-                          {i.status === 'PENDING_SIGNATURE' ? (
-                            <>
-                              {companyBlock(i)?.status === 'PENDING' ? (
-                                <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(i), document: certificateOf.get(i.id) }); }}>Countersign</Button>
-                              ) : holderBlock(i)?.status === 'PENDING' ? (
-                                <Button size="sm" loading={busy} onClick={() => void remind(i)}>Remind</Button>
-                              ) : null}
-                              <ActionMenu items={[
-                                { label: 'View the certificate', icon: 'certificate', onClick: () => openCertificate(i) },
-                                ...(companyBlock(i)?.status === 'PENDING' && holderBlock(i)?.status === 'PENDING'
-                                  ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(i); } }] : []),
-                                // Editable only while it is genuinely still a draft. Once a
-                                // party has signed, changing the terms would alter what they signed.
-                                ...(blocksOf(i).every((sig) => sig.status !== 'SIGNED')
-                                  ? [{ label: 'Edit the draft', icon: 'edit' as const, onClick: () => openEdit(i) }] : []),
-                                { label: 'Withdraw before signing', icon: 'trash', danger: true, onClick: () => setWithdrawing(i) },
-                              ]} />
-                            </>
-                          ) : (
-                            <>
-                              {certificate?.resign && companyBlock(i)?.status === 'PENDING' && (
-                                <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(i), document: certificate }); }}>Countersign</Button>
-                              )}
-                              <Button size="sm" variant="ghost" onClick={() => openEdit(i)} aria-label="Edit" title="Edit">
-                                <Icon name="edit" className="size-4" />
-                              </Button>
-                              <ActionMenu items={[
-                                { label: 'View the certificate', icon: 'certificate', onClick: () => openCertificate(i) },
-                                ...(i.status === 'OUTSTANDING' ? [
-                                  { label: 'Transfer the shares', icon: 'convert' as const,
-                                    onClick: () => { setTransfer({ toStakeholderId: '', quantity: String(i.quantity), date: today(), pricePerShare: String(i.pricePerShare / 1e6) }); setTransferring(i); } },
-                                  { label: 'Repurchase the shares', icon: 'wallet' as const,
-                                    onClick: () => { setRepurchase({ quantity: String(i.quantity), date: today(), pricePerShare: String(i.pricePerShare / 1e6), memo: '' }); setRepurchasing(i); } },
-                                  { label: 'Cancel the certificate', icon: 'trash' as const, danger: true,
-                                    onClick: () => { setCancel({ quantity: String(i.quantity), date: today(), reason: '' }); setCancelling(i); } },
-                                ] : []),
-                                { label: 'Delete', icon: 'trash', danger: true, onClick: () => setConfirmDelete(i) },
-                              ]} />
-                            </>
-                          )}
-                        </span>
-                      </TD>
-                    )}
-                  </TR>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="Certificates" rows={rows} rowKey={(i) => i.id}
+        controls={<SegmentedControl value={status} onChange={setStatus} options={[
+          { value: 'OUTSTANDING', label: 'Active' }, { value: 'ALL', label: 'All certificates' },
+        ]} />}
+        search={{ value: search, onChange: setSearch, placeholder: 'Holder or certificate number', label: 'Search certificates' }}
+        empty={<EmptyState title="No certificates" description="Issue founder stock or record an investor purchase to get started."
+          action={canEdit && <Button variant="primary" onClick={openNew}>Issue shares</Button>} />}
+        columns={[
+          { key: 'certificate', label: 'Certificate', value: certificateNoOf, className: 'font-medium',
+            // The number is the certificate, so it opens the certificate. This is
+            // outside the canEdit column on purpose: reading one is not editing it.
+            cell: (i) => (
+              <Link to={`/certificates/${i.id}`}
+                className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
+                {certificateNoOf(i)}
+              </Link>
+            ) },
+          { key: 'holder', label: 'Holder', value: (i) => nameOf.get(i.stakeholderId),
+            cell: (i) => <Link to={`/stakeholders/${i.stakeholderId}`} className="hover:text-brand-700">{nameOf.get(i.stakeholderId) ?? '—'}</Link> },
+          { key: 'class', label: 'Class', value: (i) => classOf.get(i.shareClassId)?.name,
+            cell: (i) => <Badge tone={classOf.get(i.shareClassId)?.kind === 'PREFERRED' ? 'purple' : 'neutral'}>{classOf.get(i.shareClassId)?.name ?? '—'}</Badge> },
+          { key: 'shares', label: 'Shares', type: 'number', value: (i) => i.quantity, className: 'font-medium' },
+          // Prices are in micro-cents, so they sort as numbers and show as a price per share.
+          { key: 'price', label: 'Price', type: 'price', value: (i) => i.pricePerShare },
+          { key: 'paid', label: 'Paid', type: 'money', value: paidOf, cell: (i) => money(paidOf(i), { compact: true }), className: 'text-ink-600' },
+          { key: 'issued', label: 'Issued', type: 'date', value: (i) => i.issueDate, className: 'text-ink-600' },
+          { key: 'vesting', label: 'Vesting', value: (i) => scheduleOf(i)?.name, className: 'text-[12px] text-ink-600',
+            cell: (i) => (
+              <>
+                {scheduleOf(i) ? scheduleOf(i).name : <span className="text-ink-400">Not subject to vesting</span>}
+                {i.election83bFiledOn && <Badge tone="success" className="ml-1">83(b)</Badge>}
+              </>
+            ) },
+          { key: 'status', label: 'Status', value: (i) => i.status, cell: statusCell },
+          { key: 'actions', label: '', width: 120, align: 'right', hidden: !canEdit, cell: rowActions },
+        ]} />
 
       <FormModal open={!!editing} onClose={() => setEditing(null)} busy={crud.busy || busy} size="lg"
         title={editing?.id ? 'Edit certificate' : 'Issue shares'}

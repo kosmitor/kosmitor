@@ -29,6 +29,7 @@ import { useSession } from './session.tsx';
 import { uploadFile } from './api.ts';
 import { FormGrid } from './crud.tsx';
 import { Button, Checkbox, Field, Input, Select, Spinner, Textarea, cx } from './ui.tsx';
+import { DataTable, type Column } from './DataTable.tsx';
 import { Icon, type IconName } from './icons.tsx';
 import {
   amountHint, currencySymbol, date, fieldNumber, money, parseMoney, parsePPS, parseShares, pps, shares, today, fileSize,
@@ -1554,10 +1555,21 @@ export type HeadingLevel = 3 | 4 | 5;
 const headingTag = (level: HeadingLevel) => `h${level}` as const;
 
 /**
- * The answers that are lists, in the words the server put them in. A table of
- * two or three columns fits a phone; a wider one becomes a card per row, so a
- * secondary sale's nine answers stay readable at any width.
+ * The answers that are lists, in the words the server put them in. A list of
+ * two or three columns is the app's table in a plain border (DataTable.tsx),
+ * which scrolls sideways inside it where a phone is short of room; a wider one
+ * becomes a card per row, so a secondary sale's nine answers stay readable at
+ * any width.
  */
+/** An answer worded as a figure ("$1,200,000", "-$400,000", "2027") as a number, else null. */
+function figure(text: string | undefined): number | null {
+  const bare = (text ?? '').replace(/[,\s]/g, '').replace(/^(-?)[^\d.-]+/, '$1');
+  return /^-?\d+(\.\d+)?$/.test(bare) ? Number(bare) : null;
+}
+/** Whether a column's answers are all figures, so it sorts by size rather than as words. */
+const figures = (rows: string[][], j: number): boolean =>
+  rows.some((row) => row[j]) && rows.every((row) => !row[j] || figure(row[j]) != null);
+
 export function AnswerTables({ tables, level = 5 }: { tables: AnswerTable[]; level?: HeadingLevel }) {
   if (tables.length === 0) return null;
   const Heading = headingTag(level);
@@ -1567,18 +1579,14 @@ export function AnswerTables({ tables, level = 5 }: { tables: AnswerTable[]; lev
         <div key={t.title} className="min-w-0">
           <Heading className="mb-1.5 text-[13px] font-semibold text-ink-900">{t.title}</Heading>
           {t.columns.length <= 3 ? (
-            <table className="w-full text-left text-[13px]">
-              <thead>
-                <tr>{t.columns.map((c) => <th key={c} scope="col" className="border-b border-ink-200 py-1.5 pr-3 text-[11px] font-medium text-ink-500">{c}</th>)}</tr>
-              </thead>
-              <tbody>
-                {t.rows.map((row, i) => (
-                  <tr key={i}>
-                    {t.columns.map((c, j) => <td key={c} className="break-words border-b border-ink-100 py-1.5 pr-3 align-top text-ink-900">{row[j] || '—'}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable frame="box" caption={t.title} rows={t.rows.map((cells, i) => ({ cells, i }))} rowKey={(r) => r.i}
+              columns={t.columns.map((c, j): Column<{ cells: string[]; i: number }> => ({
+                key: `${j}`, label: c,
+                // The server words every answer; a column of amounts or years sorts and lines up as figures.
+                type: j > 0 && figures(t.rows, j) ? 'number' : 'text',
+                value: (r) => (figures(t.rows, j) ? figure(r.cells[j]) : r.cells[j] || null),
+                cell: (r) => r.cells[j] || '—', className: 'break-words',
+              }))} />
           ) : (
             <ul className="space-y-2">
               {t.rows.map((row, i) => (

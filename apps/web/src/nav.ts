@@ -19,12 +19,12 @@ export const NAV: NavGroup[] = [
     { to: '/', label: 'Overview', icon: 'home', requires: 'viewAll' },
     { to: '/cap-table', label: 'Cap table', icon: 'table', requires: 'viewAll', children: [
       { to: '/share-classes', label: 'Share classes' },
-      { to: '/certificates', label: 'Certificates' },
-      { to: '/grants', label: 'Equity awards' },
-      { to: '/offers', label: 'Offer letters' },
-      { to: '/convertibles', label: 'SAFEs & notes' },
-      { to: '/warrants', label: 'Warrants' },
       { to: '/plans', label: 'Plans & vesting' },
+      { to: '/certificates', label: 'Share & certificates' },
+      { to: '/convertibles', label: 'SAFEs & notes' },
+      { to: '/grants', label: 'Equity grants' },
+      { to: '/warrants', label: 'Warrants' },
+      { to: '/offers', label: 'Offer letters' },
     ] },
     { to: '/compliance', label: 'Compliance & tax', icon: 'shield', requires: 'viewAll', children: [
       { to: '/compliance/409a', label: '409A valuations' },

@@ -6,7 +6,8 @@
  * each would leave the vault with duplicates nobody can tell apart, so the
  * request form can point at the documents where they are. Modelled on the
  * single choice in ValuationReportField.tsx, with a tick per document instead of
- * one selection, since a year of statements is often a file a quarter.
+ * one selection, since a year of statements is often a file a quarter. The 409A
+ * page's import picks one report, and only a PDF, so it can be read.
  */
 import { useEffect, useState } from 'react';
 import { useSession } from './session.tsx';
@@ -19,13 +20,18 @@ import { categoryLabel } from './documents.ts';
 export interface VaultDocument {
   id: string; name: string; category: string; folder: string | null; fileName: string | null; mimeType: string | null;
   body: string | null; sizeBytes: number | null; createdAt: string;
+  status?: string; visibility?: string;
 }
+
+/** Whether a document in the vault is a PDF file, the one kind a report is read from. */
+export const isPdfDocument = (d: VaultDocument): boolean =>
+  !!d.fileName && (d.mimeType === 'application/pdf' || /\.pdf$/i.test(d.fileName));
 
 const describe = (d: VaultDocument): string => [
   categoryLabel(d.category), d.folder, d.sizeBytes ? fileSize(Number(d.sizeBytes)) : null, `added ${dateTime(d.createdAt)}`,
 ].filter(Boolean).join(' · ');
 
-export function VaultPicker({ open, onClose, onPick, purpose, preferCategory, exclude = [] }: {
+export function VaultPicker({ open, onClose, onPick, purpose, preferCategory, exclude = [], single = false, only, description, pickLabel }: {
   open: boolean;
   onClose: () => void;
   /** Called with the documents ticked, in the order the list shows them. */
@@ -36,6 +42,14 @@ export function VaultPicker({ open, onClose, onPick, purpose, preferCategory, ex
   preferCategory?: string;
   /** Documents already chosen for this purpose, which are not offered again. */
   exclude?: string[];
+  /** One document, not several: choosing another lets go of the first. */
+  single?: boolean;
+  /** The only documents offered, such as PDFs for a report to be read. */
+  only?: (d: VaultDocument) => boolean;
+  /** What the dialog says under its title, in place of what a request's checklist says. */
+  description?: string;
+  /** The button that takes the choice, in place of "Attach it". */
+  pickLabel?: string;
 }) {
   const { companyId } = useSession();
   const [search, setSearch] = useState('');
@@ -53,6 +67,7 @@ export function VaultPicker({ open, onClose, onPick, purpose, preferCategory, ex
     .filter((d) => !exclude.includes(d.id))
     // A record with no file and no text has nothing the appraiser could open.
     .filter((d) => d.fileName || d.body)
+    .filter((d) => !only || only(d))
     // The list arrives newest first; the likely category goes to the top without losing that order.
     .sort((a, b) => Number(b.category === preferCategory) - Number(a.category === preferCategory));
   const candidates = offered.filter((d) => !term || d.name.toLowerCase().includes(term) || String(d.fileName ?? '').toLowerCase().includes(term));
@@ -62,15 +77,15 @@ export function VaultPicker({ open, onClose, onPick, purpose, preferCategory, ex
   const chosen = offered.filter((d) => picked.includes(d.id));
   const hiddenTicks = chosen.length - candidates.filter((d) => picked.includes(d.id)).length;
 
-  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const toggle = (id: string) => setPicked((p) => (single ? [id] : p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   return (
     <Modal open={open} onClose={onClose} size="md" title="Choose from the vault"
-      description={`For: ${purpose}. The documents stay where they are in the vault; the request points to them.`}
+      description={description ?? `For: ${purpose}. The documents stay where they are in the vault; the request points to them.`}
       footer={<>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
         <Button variant="primary" disabled={chosen.length === 0} onClick={() => onPick(chosen)}>
-          {chosen.length > 1 ? `Attach ${chosen.length} documents` : 'Attach it'}
+          {pickLabel ?? (chosen.length > 1 ? `Attach ${chosen.length} documents` : 'Attach it')}
         </Button>
       </>}>
       <SearchInput value={search} onChange={setSearch} placeholder="Search documents by name" />
@@ -84,22 +99,23 @@ export function VaultPicker({ open, onClose, onPick, purpose, preferCategory, ex
           : error ? <ErrorNote error={error} onRetry={reload} />
             : candidates.length === 0 ? (
               <EmptyState icon={<Icon name="document" className="size-8" />}
-                title={term ? 'No document matches that search' : 'There is nothing else on file'}
+                title={term ? 'No document matches that search' : only ? 'There is no PDF on file to choose' : 'There is nothing else on file'}
                 description={term ? 'Try part of the file name, or upload the document instead.' : 'Upload the document instead.'} />
             ) : (
-              <fieldset>
+              // min-w-0: a fieldset is as wide as its widest row unless told otherwise, and a row's file details would never be cut short.
+              <fieldset className="min-w-0">
                 <legend className="sr-only">Documents in the vault</legend>
                 <ul className="max-h-72 space-y-2 overflow-y-auto">
                   {candidates.map((d) => {
                     const on = picked.includes(d.id);
                     return (
                       <li key={d.id}>
-                        {/* A real checkbox underneath, so Space ticks it and a screen reader says whether it is ticked. */}
+                        {/* A real checkbox underneath, so Space ticks it and a screen reader says whether it is ticked; a radio button for one choice. */}
                         <label className={cx('relative flex w-full cursor-pointer items-center gap-3 rounded-lg border p-3 text-left transition-colors',
                           'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-brand-500',
                           on ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50')}>
-                          <input type="checkbox" className="sr-only" checked={on} onChange={() => toggle(d.id)} />
-                          <span className={cx('grid size-5 shrink-0 place-items-center rounded border transition-colors',
+                          <input type={single ? 'radio' : 'checkbox'} name={single ? 'vault-document' : undefined} className="sr-only" checked={on} onChange={() => toggle(d.id)} />
+                          <span className={cx('grid size-5 shrink-0 place-items-center border transition-colors', single ? 'rounded-full' : 'rounded',
                             on ? 'border-brand-600 bg-brand-600 text-white' : 'border-ink-300 bg-white')} aria-hidden>
                             {on && <Icon name="check" className="pop size-3.5" />}
                           </span>

@@ -10,6 +10,7 @@ import { route, newId, nowISO, audit, badRequest, notFound, str, num, date, type
 import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
 import { getCompanyData, invalidate } from '../store.ts';
 import { validateEntity } from '../validation.ts';
+import { namedDirectors } from '../board.ts';
 import { sendMail, mailConfigured, type Message } from '../mail.ts';
 import { renderEmail, type EmailContent } from '../email.ts';
 import { config, mailSignature } from '../config.ts';
@@ -235,7 +236,8 @@ route.post('/api/c/:cid/convertibles/issue', 'write', async (ctx) => {
   if (investors.length === 0) throw badRequest('Add at least one investor.');
   const data = await getCompanyData(ctx.companyId!);
   for (const inv of investors) if (!data.stakeholders.some((s) => s.id === inv.stakeholderId)) throw badRequest('Every investor must be a stakeholder of this company.');
-  const directorIds: string[] = Array.isArray(b.directorIds) ? b.directorIds.map(String) : [];
+  // The consent takes effect on the issue date, so its directors are the board of that day.
+  const directorIds = approval === 'REQUEST' ? await namedDirectors(ctx.companyId!, b.directorIds, issueDate) : [];
   if (approval === 'REQUEST' && directorIds.length === 0) throw badRequest('Choose at least one director to approve the instruments.');
   const signing: SigningConfig | null = forSignature ? {
     signerName: str(b.signing.signerName ?? ctx.user!.name, 'Company signatory', { max: 120 }),

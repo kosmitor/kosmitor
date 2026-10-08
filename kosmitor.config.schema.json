@@ -520,12 +520,19 @@
           "minLength": 2
         },
         "email": {
-          "description": "Inbox that receives each request. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL wins over it.",
+          "description": "Where each new request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it.",
           "type": [
             "string",
+            "array",
             "null"
           ],
-          "pattern": "^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+\\.[^\\s@<>,;\"]+$"
+          "pattern": "^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+\\.[^\\s@<>,;\"]+$",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+\\.[^\\s@<>,;\"]+$"
+          },
+          "minItems": 1,
+          "maxItems": 10
         },
         "linkOpenDays": {
           "description": "How long the team's status link works while a request is open.",
@@ -563,7 +570,7 @@
           "minimum": 1
         },
         "noticesPerHour": {
-          "description": "Notices to the team across all companies per hour.",
+          "description": "Emails to the team across all companies per hour: a notice counts once for each address in valuationDesk.email, so a longer list sends no more mail. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. It cannot be fewer than the addresses in valuationDesk.email.",
           "type": "integer",
           "minimum": 1
         },
@@ -763,7 +770,24 @@
           "minimum": 1
         },
         "importMaxSheets": {
-          "description": "Sheets imported from one workbook.",
+          "description": "Sheets one import takes, across all its files.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "importJsonMb": {
+          "description": "Largest import preview or commit request, in MB: it carries every row of every file being imported.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "importUnzippedMb": {
+          "description": "Most an .xlsx import may unpack to, in MB, across the parts that are read. A workbook that unpacks to more is refused: a small file that unpacks to gigabytes is a zip bomb.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4000
+        },
+        "importMaxTotalRows": {
+          "description": "Rows one import takes across all its sheets and files. Each sheet still reads at most importMaxRows.",
           "type": "integer",
           "minimum": 1
         },

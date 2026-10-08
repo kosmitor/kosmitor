@@ -56,10 +56,13 @@ done
 Copy `terraform.tfvars.example` to `terraform.tfvars` (ignored by git) and fill in
 at least `subscription_id` and `alert_email`; every other variable is listed there
 with its default. The Terraform state will hold the database password and the
-app's other secrets, so keep it in Azure Storage from the start: run
-`./state-storage.sh` once per subscription (it creates the storage and prints the
-account details), then follow `backend.tf.example`. Operations, below, says how
-that storage is protected.
+app's other secrets, so keep it in Azure Storage from the start: apply
+[`infra/tfstate`](../tfstate/README.md) once per subscription (it creates the
+storage; `terraform output -raw backend_hcl` there prints the account details),
+then copy `backend.tf.example` to `backend.tf` and `backend.hcl.example` to
+`backend.hcl` with the subscription and the account filled in; `backend.tf.example`
+also has the steps for moving a state that is already local. Operations, below,
+says how that storage is protected.
 
 ```bash
 cd infra/azure
@@ -136,6 +139,17 @@ them, or is refused while the network is in use.
   to its own domain. `TF_VAR_smtp_url` still works if you would rather use your
   own mail server; Communication Services takes precedence when both are set.
 - **Google sign-in**: set `google_client_id` (and `google_allowed_domains`).
+- **409A valuation desk**: `valuation_desk_emails` lists the evaluators each request
+  goes to, up to 10. Each gets an email of its own with the same private request
+  link, so none sees the others' addresses, and the closing notice and a resend with
+  a new link reach all of them; replies to the recap and status emails reach the
+  first. It is passed as `VALUATION_DESK_EMAIL`, comma separated, which wins over
+  `valuationDesk.email` in the param file, so changing it is an apply (a new
+  revision), not a new image. More than one address needs an image newer than v21,
+  which refuses a list and stops at start; the plan stops first while `image_tag`
+  is v21 or older. Removing an address does not take back the request links it was
+  already sent: each works until the company sends that request to the team again
+  with a new link, or until it expires (docs/valuation-desk.md, *Changing the list*).
 - **Costs** (Central US, list prices): the HA database is the bulk, roughly
   the price of two D2ds_v5 instances plus storage; Container Apps with one
   always-on replica, the Basic registry, Log Analytics and cool storage add a
@@ -219,24 +233,26 @@ the outputs too.
 - Run a backup by hand: `az containerapp job start -g "$rg" -n <name>-<environment>-backup`.
 - State: `terraform.tfstate` holds the app's secrets in clear (the database password,
   the secret key, the email service's connection string, and `smtp_url` when set) and
-  is the only record of what the stack owns, so keep it in Azure Storage rather than on
-  a laptop. `./state-storage.sh` creates that storage, and is safe to run again: a GZRS
-  account with one `tfstate` container that every stack shares under its own key, in a
-  resource group of its own (`rg-terraform-state` in East US 2 unless `STATE_RG` and
-  `STATE_LOCATION` say otherwise; the header of the script lists every setting), out of
-  `rebuild.sh`'s reach. Only Entra ID sign-in works on it: account keys and SAS are
-  disabled, and Terraform reaches the blob as you (`use_azuread_auth`) through the
-  Storage Blob Data Contributor role the script grants you on the container. It takes
+  is the only record of what the stack owns, so keep it in Azure Storage rather than
+  on a laptop. The stack in `infra/tfstate` creates that storage, with a state and a
+  resource group of its own (`rg-terraform-state` in East US 2 unless its
+  `resource_group_name` and `location` say otherwise; its `variables.tf` lists every
+  setting), out of `rebuild.sh`'s reach: a GZRS account with one `tfstate` container
+  that every stack shares under its own key. Only Entra ID sign-in works on it:
+  account keys, and the SAS they sign, are disabled, and Terraform reaches the blob as
+  you (`use_azuread_auth`) through the Storage Blob Data Contributor role that stack
+  grants on the container to each object id in its `state_writer_object_ids`. It takes
   HTTPS with TLS 1.2 or later only, allows no public access and encrypts twice at rest
   (infrastructure encryption). Versioning keeps each earlier state, a deleted one
-  included, for 90 days after it was written, and soft delete keeps whatever is
-  deleted, a version or the container, for 30 days more. Old versions keep the secrets
-  they held, which is why they do not stay for ever. A delete lock on the group refuses
-  `az group delete` until someone removes the lock. If it also refuses removing
-  someone's role on the container, lift it with
-  `az lock delete -n terraform-state -g rg-terraform-state`, remove the role, and run
-  the script again to put the lock back. `backend.tf.example` has the migration steps
-  and `backend.hcl.example` the settings.
+  included, for 90 days after it was written (`version_retention_days` there), and
+  soft delete keeps whatever is deleted, a version or the container, for 30 days more
+  (`soft_delete_days`). Old versions keep the secrets they held, which is why they do
+  not stay for ever. A delete lock on the group refuses `az group delete` until
+  someone removes the lock, and `prevent_destroy` stops a `terraform destroy` in
+  `infra/tfstate` at the plan. Giving someone access, or taking it away, is a change
+  to `state_writer_object_ids`; the Operations section of `infra/tfstate/README.md`
+  has the steps, the lock's part in them included. `backend.tf.example` has the
+  migration steps and `backend.hcl.example` the settings.
 - Local copies of the state: the migration empties `terraform.tfstate` and leaves the
   old state, secrets included, in `terraform.tfstate.backup`. Once
   `terraform state list` lists what it did before and `terraform plan` reports what it

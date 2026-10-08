@@ -66,6 +66,7 @@ packages/core     domain engine — pure TypeScript, no dependencies
 apps/server       Node HTTP API over PostgreSQL (pg driver)
 apps/web          React + Vite + Tailwind, 24 screens
 infra/azure       Terraform for a production deployment on Azure (see its README)
+infra/tfstate     Terraform for the storage of every stack's state; apply it first (see its README)
 docs              the reference for settings, the math, imports and the rest (see below)
 ```
 
@@ -102,6 +103,11 @@ amount on the way to or from disk.
 
 `ADMIN` and `LEGAL` can edit; `BOARD` and `VIEWER` read the whole company;
 `EMPLOYEE` and `INVESTOR` see only their own position in the portal.
+
+A role is about access. Who sits on the board is each stakeholder's **board seat**,
+recorded apart from their relationship with the dates it ran and the investor who
+designated the director: an investor can hold one, and a founder is a director only
+with one. The seat decides who votes on board consents and who gets the board's updates.
 
 ## Docs
 

@@ -4,9 +4,10 @@ import { useCrud, FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
 import { useQuery, api, downloadFile } from '../api.ts';
 import {
-  PageHeader, Card, CardHeader, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field,
+  PageHeader, Badge, Loading, ErrorNote, Button, Input, Field,
   Select, EmptyState, ConfirmDialog, StatusBadge, Stat, Checkbox, Banner, SegmentedControl, InfoDot, Modal, Textarea, useToast, ActionMenu,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
 import { DocumentPreview } from '../PdfFrame.tsx';
@@ -14,6 +15,7 @@ import { SecurityDocuments } from '../SecurityDocuments.tsx';
 import { readableDocumentPath, documentFilename, documentAccess, newestPerHolding, downloadDocumentPath } from '../documents.ts';
 import { money, percent, date, today, parseMoney, parsePercent, INSTRUMENT_LABELS, amountHint, shares } from '../format.ts';
 import { config } from '../config.ts';
+import { directorsOn, reselectDirectors } from '../board.ts';
 
 /** Instruments issued on the platform that are not yet outstanding. */
 const IN_FLIGHT = new Set(['PENDING_APPROVAL', 'PENDING_SIGNATURE']);
@@ -74,7 +76,8 @@ export default function Convertibles() {
   const [settle, setSettle] = useState({ date: today(), amount: '', reason: '' });
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
-  const directors = useMemo(() => (stakeholders ?? []).filter((s) => s.relation === 'BOARD_MEMBER' || s.relation === 'FOUNDER'), [stakeholders]);
+  // The consent takes effect on the issue date, so it goes to the board of that day.
+  const directors = useMemo(() => directorsOn(stakeholders, terms.issueDate), [stakeholders, terms.issueDate]);
   const agreementOf = useMemo(() => newestPerHolding((documents ?? []).filter((d) => d.category === 'CONVERTIBLE_AGREEMENT')), [documents]);
   /**
    * Everything filed against an instrument, not only the agreement the app wrote
@@ -105,7 +108,7 @@ export default function Convertibles() {
   const openRaise = () => {
     setTerms(blankTerms);
     setInvestors([newLine((stakeholders ?? []).find((s) => s.relation === 'INVESTOR')?.id ?? '')]);
-    setIssue({ ...blankIssue, signerName: contacts?.defaultSignatory?.name ?? user?.name ?? '', signerTitle: contacts?.defaultSignatory?.title ?? blankIssue.signerTitle, directorIds: directors.map((d) => d.id) });
+    setIssue({ ...blankIssue, signerName: contacts?.defaultSignatory?.name ?? user?.name ?? '', signerTitle: contacts?.defaultSignatory?.title ?? blankIssue.signerTitle, directorIds: directorsOn(stakeholders, blankTerms.issueDate).map((d) => d.id) });
     setRaising(true);
   };
   const openEdit = (c: any) => {
@@ -162,7 +165,7 @@ export default function Convertibles() {
           issueDate: terms.issueDate, notes: terms.notes || null,
           investors: investors.filter((i) => i.stakeholderId && i.principal).map((i) => ({ stakeholderId: i.stakeholderId, principal: parseMoney(i.principal), label: i.label || null })),
           approval: issue.approval, boardApprovalDate: issue.approval === 'APPROVED' ? issue.boardApprovalDate || today() : null,
-          directorIds: issue.approval === 'REQUEST' ? issue.directorIds : [],
+          directorIds: issue.approval === 'REQUEST' ? issue.directorIds.filter((d) => directors.some((x) => x.id === d)) : [],
           signing: issue.forSignature ? { signerName: issue.signerName, signerTitle: issue.signerTitle, templateId: issue.templateId || null, message: issue.message || null } : null,
         },
       });
@@ -294,205 +297,193 @@ export default function Convertibles() {
         </>
       )}
 
-      <Card className="mb-5">
-        <SegmentedControl value={status} onChange={setStatus} options={[
-          { value: 'OUTSTANDING', label: 'Outstanding & in flight' }, { value: 'ALL', label: 'All instruments' },
-        ]} />
-      </Card>
-
-      <Card padded={false}>
-        {rows.length === 0 ? (
+      {/* The status filter sits in the table's own header row. The server sends the
+          newest instrument first, which is the order the table opens in. With no rows
+          there is nothing to search, so the empty state stands alone under the filter. */}
+      <DataTable caption="SAFEs and convertible notes" rows={rows} rowKey={(c) => c.id}
+        defaultSort={{ key: 'issued', direction: 'desc' }}
+        controls={(
+          <SegmentedControl value={status} onChange={setStatus} options={[
+            { value: 'OUTSTANDING', label: 'Outstanding & in flight' }, { value: 'ALL', label: 'All instruments' },
+          ]} />
+        )}
+        search={{ placeholder: 'Search by holder or instrument', label: 'Search instruments', by: (c) => [nameOf.get(c.stakeholderId), c.label, INSTRUMENT_LABELS[c.instrument] ?? c.instrument] }}
+        empty={(
           <EmptyState title="No instruments" description="Raise with SAFEs to issue instruments for signature, or record ones signed elsewhere."
             action={canEdit && <Button variant="primary" onClick={openRaise}>Raise with SAFEs</Button>} />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Holder</TH>
-                <TH>Instrument</TH>
-                <TH align="right">Principal</TH>
-                <TH align="right">Valuation cap</TH>
-                <TH align="right">Discount</TH>
-                <TH align="right">Interest</TH>
-                <TH>Issued</TH>
-                <TH>Maturity</TH>
-                <TH>Terms</TH>
-                <TH>Status</TH>
-                <TH width={150} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => {
-                const pending = IN_FLIGHT.has(c.status);
-                const blocks = blocksOf(c);
-                const agreement = agreementOf.get(c.id);
-                const onPlatform = !!c.signingConfig;
-                return (
-                  <TR key={c.id}>
-                    <TD>
-                      {/* A person's name goes to the person. The instrument's own label is
-                          what opens the instrument, and the row menu covers the ones with none. */}
-                      <Link to={`/stakeholders/${c.stakeholderId}`} className="font-medium hover:text-brand-700">
-                        {nameOf.get(c.stakeholderId) ?? '—'}
-                      </Link>
-                      {c.label && (
-                        <Link to={`/convertibles/${c.id}`} className="block text-[11px] text-ink-500 underline decoration-ink-300 underline-offset-2 hover:text-brand-700">
-                          {c.label}
-                        </Link>
-                      )}
-                    </TD>
-                    <TD>
-                      <Badge tone={c.instrument === 'NOTE' ? 'warning' : 'brand'}>
-                        {INSTRUMENT_LABELS[c.instrument] ?? c.instrument}
-                      </Badge>
-                    </TD>
-                    <TD align="right" mono className="font-medium">{money(c.principal, { compact: true })}</TD>
-                    <TD align="right" mono>{c.valuationCap ? money(c.valuationCap, { compact: true }) : <span className="text-ink-400">Uncapped</span>}</TD>
-                    <TD align="right" mono>{c.discount ? percent(c.discount, 0) : '—'}</TD>
-                    <TD align="right" mono>{c.interestRate ? `${percent(c.interestRate, 1)} ${c.compounding.toLowerCase()}` : '—'}</TD>
-                    <TD className="text-ink-600">{date(c.issueDate)}</TD>
-                    <TD className="text-ink-600">{c.maturityDate ? date(c.maturityDate) : '—'}</TD>
-                    <TD>
-                      <span className="flex flex-wrap gap-1">
-                        {!!c.mfn && <Badge tone="info">MFN</Badge>}
-                        {!!c.proRataRight && <Badge tone="neutral">Pro rata</Badge>}
-                        {!!c.qualifiedFinancingMinimum && (
-                          <Badge tone="neutral">Min {money(c.qualifiedFinancingMinimum, { compact: true })}</Badge>
-                        )}
-                      </span>
-                      {mfnOf.get(c.id)?.mfnElection ? (
-                        <span className="mt-1 block text-[11px] text-ink-500">
-                          Elected {labelOf(mfnOf.get(c.id).mfnElection.adoptedId)} on {date(mfnOf.get(c.id).mfnElection.date)}
-                        </span>
-                      ) : mfnOf.get(c.id)?.mfnSuggestion && (
-                        <span className="mt-1 block text-[11px] text-ink-500">
-                          Best for the holder today: {labelOf(mfnOf.get(c.id).mfnSuggestion.adoptedId)}, {shares(mfnOf.get(c.id).mfnSuggestion.shares)} shares as converted
-                          {canEdit && (
-                            <button className="ml-1 text-brand-600 hover:text-brand-700" onClick={() => openElection(c)}>Record election</button>
-                          )}
-                        </span>
-                      )}
-                    </TD>
-                    <TD>
-                      <StatusBadge status={c.status} />
-                      {c.status === 'PENDING_APPROVAL' && <Link to="/consents" className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700">Board consent pending</Link>}
-                      {c.status === 'PENDING_SIGNATURE' && blocks.length > 0 && (
-                        <span className="mt-1 block text-[11px] text-ink-500">
-                          {blocks.filter((s) => s.status === 'SIGNED').length} of {blocks.length} signed
-                          {blocks.some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocks.filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
-                        </span>
-                      )}
-                      {onPlatform && !pending && c.status !== 'CANCELLED' && (
-                        c.fundsReceivedOn
-                          ? <span className="mt-1 block text-[11px] text-ink-500">Funded {date(c.fundsReceivedOn)}{c.fundsReference ? ` · ${c.fundsReference}` : ''}</span>
-                          : <Badge tone="warning" className="mt-1">Funds pending</Badge>
-                      )}
-                      {/* The executed agreement keeps its own words and its own dialog, which
-                          shows the signature blocks; anything else filed against the instrument
-                          is listed by name and opens on a click, for every role. */}
-                      {(filedOn.get(c.id) ?? []).map((d) => (
-                        // The agreement the app wrote belongs in its own dialog, which carries
-                        // the signature blocks, whether or not it has been signed yet. Only the
-                        // wording changes with its state.
-                        d === agreement ? (
-                          <button key={d.id} title={d.name}
-                            className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
-                            onClick={() => setViewing(d)}>
-                            {!pending && d.status === 'EXECUTED' ? 'Signed agreement' : d.name}
-                          </button>
-                        ) : documentAccess(companyId!, d) === 'none' ? (
-                          // Neither text nor a stored file: named, but not offered as something
-                          // to open, because nothing would come back.
-                          <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
-                            {d.name}
-                          </span>
-                        ) : (
-                          <button key={d.id} title={d.name}
-                            className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
-                            onClick={() => openDocument(d)}>{d.name}</button>
-                        )
-                      ))}
-                    </TD>
-                    {/* At most one button for the thing this row is waiting on and the rest in
-                        the menu: four side by side wrapped into a ragged block. The menu itself
-                        is here for every role, because the documents are worth reading whether
-                        or not you may change anything. */}
-                    <TD align="right">
-                      <span className="flex flex-nowrap items-center justify-end gap-1">
-                        {canEdit && pending && (
-                          companyBlock(c)?.status === 'PENDING' ? (
-                            <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(c), document: agreementOf.get(c.id) }); }}>Countersign</Button>
-                          ) : holderBlock(c)?.status === 'PENDING' ? (
-                            <Button size="sm" loading={busy} onClick={() => void remind(c)}>Remind</Button>
-                          ) : null
-                        )}
-                        {canEdit && !pending && onPlatform && !c.fundsReceivedOn && c.status === 'OUTSTANDING' && (
-                          <Button size="sm" onClick={() => { setFunds({ receivedOn: today(), reference: '' }); setFunding(c); }}>Funds received</Button>
-                        )}
-                        <ActionMenu items={[
-                          { label: 'Open the record', icon: 'convert', onClick: () => navigate(`/convertibles/${c.id}`) },
-                          { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(c) },
-                          ...(pending && agreementOf.get(c.id)
-                            ? [{ label: 'View the agreement', icon: 'eye' as const, onClick: () => setViewing(agreementOf.get(c.id)) }] : []),
-                          ...(canEdit && pending && companyBlock(c)?.status === 'PENDING' && holderBlock(c)?.status === 'PENDING'
-                            ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(c); } }] : []),
-                          ...(canEdit && !pending
-                            ? [{ label: 'Edit the terms', icon: 'edit' as const, onClick: () => openEdit(c) }] : []),
-                          ...(canEdit && mfnOf.has(c.id) && c.status === 'OUTSTANDING'
-                            ? [{ label: mfnOf.get(c.id).mfnElection ? 'Correct the MFN election' : 'Record the MFN election', icon: 'convert' as const, onClick: () => openElection(c) }] : []),
-                          ...(canEdit && pending
-                            ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(c) }] : []),
-                          ...(canEdit && c.status === 'OUTSTANDING' ? [
-                            { label: 'Record repayment', icon: 'wallet' as const,
-                              onClick: () => { setSettle({ date: today(), amount: '', reason: '' }); setSettling({ c, kind: 'repay' }); } },
-                            { label: 'Cancel the instrument', icon: 'trash' as const, danger: true,
-                              onClick: () => { setSettle({ date: today(), amount: '', reason: '' }); setSettling({ c, kind: 'cancel' }); } },
-                          ] : []),
-                          ...(canEdit && !pending
-                            ? [{ label: 'Delete the instrument', icon: 'trash' as const, danger: true, onClick: () => setConfirmDelete(c) }] : []),
-                        ]} />
-                      </span>
-                    </TD>
-                  </TR>
-                );
-              })}
-            </tbody>
-          </Table>
         )}
-      </Card>
+        columns={[
+          { key: 'holder', label: 'Holder', value: (c) => nameOf.get(c.stakeholderId),
+            cell: (c) => (
+              // A person's name goes to the person. The instrument's own label is
+              // what opens the instrument, and the row menu covers the ones with none.
+              <>
+                <Link to={`/stakeholders/${c.stakeholderId}`} className="font-medium hover:text-brand-700">
+                  {nameOf.get(c.stakeholderId) ?? '—'}
+                </Link>
+                {c.label && (
+                  <Link to={`/convertibles/${c.id}`} className="block text-[11px] text-ink-500 underline decoration-ink-300 underline-offset-2 hover:text-brand-700">
+                    {c.label}
+                  </Link>
+                )}
+              </>
+            ) },
+          { key: 'instrument', label: 'Instrument', value: (c) => INSTRUMENT_LABELS[c.instrument] ?? c.instrument,
+            cell: (c) => (
+              <Badge tone={c.instrument === 'NOTE' ? 'warning' : 'brand'}>
+                {INSTRUMENT_LABELS[c.instrument] ?? c.instrument}
+              </Badge>
+            ) },
+          { key: 'principal', label: 'Principal', type: 'money', value: (c) => c.principal, className: 'font-medium',
+            cell: (c) => money(c.principal, { compact: true }) },
+          // Uncapped is a blank to sort by: it stays at the bottom either way.
+          { key: 'cap', label: 'Valuation cap', type: 'money', value: (c) => c.valuationCap || null,
+            cell: (c) => (c.valuationCap ? money(c.valuationCap, { compact: true }) : <span className="text-ink-400">Uncapped</span>) },
+          { key: 'discount', label: 'Discount', type: 'number', value: (c) => c.discount || null,
+            cell: (c) => (c.discount ? percent(c.discount, 0) : '—') },
+          { key: 'interest', label: 'Interest', type: 'number', value: (c) => c.interestRate || null,
+            cell: (c) => (c.interestRate ? `${percent(c.interestRate, 1)} ${c.compounding.toLowerCase()}` : '—') },
+          { key: 'issued', label: 'Issued', type: 'date', value: (c) => c.issueDate, className: 'text-ink-600' },
+          { key: 'maturity', label: 'Maturity', type: 'date', value: (c) => c.maturityDate, className: 'text-ink-600' },
+          { key: 'terms', label: 'Terms',
+            cell: (c) => (
+              <>
+                <span className="flex flex-wrap gap-1">
+                  {!!c.mfn && <Badge tone="info">MFN</Badge>}
+                  {!!c.proRataRight && <Badge tone="neutral">Pro rata</Badge>}
+                  {!!c.qualifiedFinancingMinimum && (
+                    <Badge tone="neutral">Min {money(c.qualifiedFinancingMinimum, { compact: true })}</Badge>
+                  )}
+                </span>
+                {mfnOf.get(c.id)?.mfnElection ? (
+                  <span className="mt-1 block text-[11px] text-ink-500">
+                    Elected {labelOf(mfnOf.get(c.id).mfnElection.adoptedId)} on {date(mfnOf.get(c.id).mfnElection.date)}
+                  </span>
+                ) : mfnOf.get(c.id)?.mfnSuggestion && (
+                  <span className="mt-1 block text-[11px] text-ink-500">
+                    Best for the holder today: {labelOf(mfnOf.get(c.id).mfnSuggestion.adoptedId)}, {shares(mfnOf.get(c.id).mfnSuggestion.shares)} shares as converted
+                    {canEdit && (
+                      <button className="ml-1 whitespace-nowrap text-brand-600 hover:text-brand-700" onClick={() => openElection(c)}>Record election</button>
+                    )}
+                  </span>
+                )}
+              </>
+            ) },
+          { key: 'status', label: 'Status', value: (c) => c.status,
+            cell: (c) => {
+              const pending = IN_FLIGHT.has(c.status);
+              const blocks = blocksOf(c);
+              const agreement = agreementOf.get(c.id);
+              const onPlatform = !!c.signingConfig;
+              return (
+                <>
+                  <StatusBadge status={c.status} />
+                  {c.status === 'PENDING_APPROVAL' && <Link to="/consents" className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700">Board consent pending</Link>}
+                  {c.status === 'PENDING_SIGNATURE' && blocks.length > 0 && (
+                    <span className="mt-1 block text-[11px] text-ink-500">
+                      {blocks.filter((s) => s.status === 'SIGNED').length} of {blocks.length} signed
+                      {blocks.some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocks.filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
+                    </span>
+                  )}
+                  {onPlatform && !pending && c.status !== 'CANCELLED' && (
+                    c.fundsReceivedOn
+                      ? <span className="mt-1 block text-[11px] text-ink-500">Funded {date(c.fundsReceivedOn)}{c.fundsReference ? ` · ${c.fundsReference}` : ''}</span>
+                      : <Badge tone="warning" className="mt-1">Funds pending</Badge>
+                  )}
+                  {/* The executed agreement keeps its own words and its own dialog, which
+                      shows the signature blocks; anything else filed against the instrument
+                      is listed by name and opens on a click, for every role. */}
+                  {(filedOn.get(c.id) ?? []).map((d) => (
+                    // The agreement the app wrote belongs in its own dialog, which carries
+                    // the signature blocks, whether or not it has been signed yet. Only the
+                    // wording changes with its state.
+                    d === agreement ? (
+                      <button key={d.id} title={d.name}
+                        className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
+                        onClick={() => setViewing(d)}>
+                        {!pending && d.status === 'EXECUTED' ? 'Signed agreement' : d.name}
+                      </button>
+                    ) : documentAccess(companyId!, d) === 'none' ? (
+                      // Neither text nor a stored file: named, but not offered as something
+                      // to open, because nothing would come back.
+                      <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
+                        {d.name}
+                      </span>
+                    ) : (
+                      <button key={d.id} title={d.name}
+                        className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
+                        onClick={() => openDocument(d)}>{d.name}</button>
+                    )
+                  ))}
+                </>
+              );
+            } },
+          // At most one button for the thing this row is waiting on and the rest in
+          // the menu: four side by side wrapped into a ragged block. The menu itself
+          // is here for every role, because the documents are worth reading whether
+          // or not you may change anything.
+          { key: 'actions', label: '', width: 150, align: 'right',
+            cell: (c) => {
+              const pending = IN_FLIGHT.has(c.status);
+              const onPlatform = !!c.signingConfig;
+              return (
+                <span className="flex flex-nowrap items-center justify-end gap-1">
+                  {canEdit && pending && (
+                    companyBlock(c)?.status === 'PENDING' ? (
+                      <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(c), document: agreementOf.get(c.id) }); }}>Countersign</Button>
+                    ) : holderBlock(c)?.status === 'PENDING' ? (
+                      <Button size="sm" loading={busy} onClick={() => void remind(c)}>Remind</Button>
+                    ) : null
+                  )}
+                  {canEdit && !pending && onPlatform && !c.fundsReceivedOn && c.status === 'OUTSTANDING' && (
+                    <Button size="sm" onClick={() => { setFunds({ receivedOn: today(), reference: '' }); setFunding(c); }}>Funds received</Button>
+                  )}
+                  <ActionMenu items={[
+                    { label: 'Open the record', icon: 'convert', onClick: () => navigate(`/convertibles/${c.id}`) },
+                    { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(c) },
+                    ...(pending && agreementOf.get(c.id)
+                      ? [{ label: 'View the agreement', icon: 'eye' as const, onClick: () => setViewing(agreementOf.get(c.id)) }] : []),
+                    ...(canEdit && pending && companyBlock(c)?.status === 'PENDING' && holderBlock(c)?.status === 'PENDING'
+                      ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(c); } }] : []),
+                    ...(canEdit && !pending
+                      ? [{ label: 'Edit the terms', icon: 'edit' as const, onClick: () => openEdit(c) }] : []),
+                    ...(canEdit && mfnOf.has(c.id) && c.status === 'OUTSTANDING'
+                      ? [{ label: mfnOf.get(c.id).mfnElection ? 'Correct the MFN election' : 'Record the MFN election', icon: 'convert' as const, onClick: () => openElection(c) }] : []),
+                    ...(canEdit && pending
+                      ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(c) }] : []),
+                    ...(canEdit && c.status === 'OUTSTANDING' ? [
+                      { label: 'Record repayment', icon: 'wallet' as const,
+                        onClick: () => { setSettle({ date: today(), amount: '', reason: '' }); setSettling({ c, kind: 'repay' }); } },
+                      { label: 'Cancel the instrument', icon: 'trash' as const, danger: true,
+                        onClick: () => { setSettle({ date: today(), amount: '', reason: '' }); setSettling({ c, kind: 'cancel' }); } },
+                    ] : []),
+                    ...(canEdit && !pending
+                      ? [{ label: 'Delete the instrument', icon: 'trash' as const, danger: true, onClick: () => setConfirmDelete(c) }] : []),
+                  ]} />
+                </span>
+              );
+            } },
+        ]} />
 
+      {/* In the order the conversion model gives; a heading sorts by another column. */}
       {stack && stack.instruments.length > 0 && (
-        <Card className="mt-5">
-          <CardHeader title="Conversion economics"
-            subtitle="What each instrument is contractually entitled to at the next priced round" />
-          <Table>
-            <thead>
-              <tr>
-                <TH>Holder</TH><TH>Instrument</TH>
-                <TH align="right">Converting amount</TH>
-                <TH align="right">Implied ownership</TH>
-                <TH>Notes</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {stack.instruments.map((i: any) => (
-                <TR key={i.id}>
-                  <TD>{nameOf.get(i.stakeholderId) ?? '—'}</TD>
-                  <TD className="text-ink-600">{INSTRUMENT_LABELS[i.instrument] ?? i.instrument}</TD>
-                  <TD align="right" mono>{money(i.amount)}</TD>
-                  <TD align="right" mono>
-                    {i.impliedOwnershipPct != null ? percent(i.impliedOwnershipPct) : <span className="text-ink-400">Price dependent</span>}
-                  </TD>
-                  <TD className="text-[12px] text-ink-500">
-                    {i.matured ? <Badge tone="danger">Matured</Badge>
-                      : i.impliedOwnershipPct != null ? 'Fixed share of the pre-new-money company'
-                      : 'Converts at the lower of the cap price and the discounted round price'}
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable className="mt-5" title="Conversion economics"
+          subtitle="What each instrument is contractually entitled to at the next priced round"
+          caption="Conversion economics" rows={stack.instruments as any[]} rowKey={(i) => i.id}
+          search={{ placeholder: 'Search by holder or instrument', label: 'Search conversion economics', by: (i) => [nameOf.get(i.stakeholderId), INSTRUMENT_LABELS[i.instrument] ?? i.instrument] }}
+          columns={[
+            { key: 'holder', label: 'Holder', value: (i) => nameOf.get(i.stakeholderId), cell: (i) => nameOf.get(i.stakeholderId) ?? '—' },
+            // A short label, kept on one line as the badge in the table above is.
+            { key: 'instrument', label: 'Instrument', value: (i) => INSTRUMENT_LABELS[i.instrument] ?? i.instrument, className: 'whitespace-nowrap text-ink-600' },
+            { key: 'amount', label: 'Converting amount', type: 'money', value: (i) => i.amount },
+            // Price dependent is a blank to sort by: it stays at the bottom either way.
+            { key: 'implied', label: 'Implied ownership', type: 'number', value: (i) => i.impliedOwnershipPct,
+              cell: (i) => (i.impliedOwnershipPct != null ? percent(i.impliedOwnershipPct) : <span className="text-ink-400">Price dependent</span>) },
+            { key: 'notes', label: 'Notes', wrap: true, className: 'text-[12px] text-ink-500',
+              cell: (i) => (i.matured ? <Badge tone="danger">Matured</Badge>
+                : i.impliedOwnershipPct != null ? 'Fixed share of the pre-new-money company'
+                : 'Converts at the lower of the cap price and the discounted round price') },
+          ]} />
       )}
 
       {/* Raise: one set of terms, several investors, approval and signatures */}
@@ -512,7 +503,11 @@ export default function Convertibles() {
               </Select>
             </Field>
             <Field label="Issue date" required>
-              <Input type="date" value={terms.issueDate} onChange={(e) => setTerms({ ...terms, issueDate: e.target.value })} required />
+              <Input type="date" value={terms.issueDate} required onChange={(e) => {
+                setTerms({ ...terms, issueDate: e.target.value });
+                // The consent goes to the board of the issue date: who joined it by then is asked too, and who left is not.
+                setIssue({ ...issue, directorIds: reselectDirectors(issue.directorIds, stakeholders, terms.issueDate, e.target.value) });
+              }} />
             </Field>
             <Field label={<>Valuation cap<InfoDot text={terms.instrument === 'SAFE_POST' ? 'Post-money cap: ownership equals principal divided by the cap.' : 'Pre-money cap, measured against the capitalization before this round.'} /></>}
               hint="Leave empty for an uncapped instrument.">
@@ -584,7 +579,7 @@ export default function Convertibles() {
             <div className="mt-3">
               <p className="mb-2 text-[12px] text-ink-600">One written consent covers every instrument in this batch. They go out for signature once the directors below have approved.</p>
               {directors.length === 0
-                ? <p className="text-[12px] text-amber-700">No directors on file — give a stakeholder the Board member relationship first.</p>
+                ? <p className="text-[12px] text-amber-700">Nobody holds a board seat on the issue date — give each director a seat on their stakeholder record first.</p>
                 : directors.map((d) => (
                   <Checkbox key={d.id} label={d.name} checked={issue.directorIds.includes(d.id)}
                     onChange={(v) => setIssue({ ...issue, directorIds: v ? [...issue.directorIds, d.id] : issue.directorIds.filter((id) => id !== d.id) })} />

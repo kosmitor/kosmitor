@@ -38,10 +38,10 @@ interface SearchHit { kind: string; id: string; title: string; subtitle: string 
 const PAGE_KEYWORDS: Record<string, string[]> = {
   '/': ['dashboard', 'home', 'summary', 'overview'],
   '/cap-table': ['captable', 'ownership', 'fully diluted', 'shareholders', 'percentages', 'dilution'],
-  '/stakeholders': ['people', 'holders', 'employees', 'investors', 'advisors', 'shareholders', 'entities'],
+  '/stakeholders': ['people', 'holders', 'employees', 'investors', 'advisors', 'shareholders', 'entities', 'board seat', 'board of directors'],
   '/share-classes': ['common', 'preferred', 'series', 'liquidation preference', 'seniority', 'anti-dilution'],
-  '/certificates': ['shares', 'issuances', 'stock certificates', 'certificate book', 'legends'],
-  '/grants': ['options', 'rsu', 'iso', 'nso', 'awards', 'grants', 'vesting', 'exercise', 'strike price'],
+  '/certificates': ['certificates', 'shares', 'issuances', 'stock certificates', 'share certificates', 'certificate book', 'legends'],
+  '/grants': ['options', 'rsu', 'iso', 'nso', 'awards', 'equity awards', 'grants', 'vesting', 'exercise', 'strike price'],
   '/offers': ['offer letters', 'candidates', 'hiring', 'job offer', 'recruiting'],
   '/convertibles': ['safe', 'safes', 'notes', 'convertible notes', 'fundraising', 'pre-seed', 'seed', 'valuation cap'],
   '/warrants': ['warrants', 'lender', 'bank'],
@@ -82,7 +82,7 @@ const PAGES: SearchEntry[] = NAV.flatMap((group) => group.items.flatMap((item): 
 
 /** Workflows: each lands on the page where the work starts, with the form open where the page supports it. */
 const ACTIONS: SearchEntry[] = ([
-  { id: 'new-grant', title: 'Issue an equity award', subtitle: 'Options or RSUs from a plan, with board approval and e-signature', keywords: ['grant', 'option', 'iso', 'nso', 'rsu', 'stock option', 'new grant', 'issue options', 'award', 'hire', 'onboard'], to: '/grants?new=1', icon: 'award', requires: 'edit' },
+  { id: 'new-grant', title: 'Issue an equity grant', subtitle: 'Options or RSUs from a plan, with board approval and e-signature', keywords: ['grant', 'option', 'iso', 'nso', 'rsu', 'stock option', 'new grant', 'issue options', 'award', 'hire', 'onboard'], to: '/grants?new=1', icon: 'award', requires: 'edit' },
   { id: 'new-offer', title: 'Send an offer letter', subtitle: 'An equity package a candidate accepts online', keywords: ['offer', 'candidate', 'hire', 'recruit', 'job offer', 'equity package'], to: '/offers', icon: 'target', requires: 'edit' },
   { id: 'new-safe', title: 'Issue a SAFE or convertible note', subtitle: 'Batch issuance for signature with funds tracking', keywords: ['safe', 'note', 'convertible', 'fundraising', 'investor', 'raise', 'pre-seed', 'seed', 'mfn', 'valuation cap', 'discount'], to: '/convertibles', icon: 'convert', requires: 'edit' },
   { id: 'new-certificate', title: 'Issue shares and a certificate', subtitle: 'Record a share issuance for a stakeholder', keywords: ['certificate', 'issue shares', 'common', 'preferred', 'stock certificate', 'issuance', 'founder shares'], to: '/certificates', icon: 'certificate', requires: 'edit' },
@@ -155,8 +155,8 @@ function score(entry: SearchEntry, tokens: string[], phrase: string): number {
 /** Where each kind of record opens, and under which heading it is listed. */
 const RECORDS: Record<string, { group: string; icon: IconName; to: (h: SearchHit) => string }> = {
   stakeholder: { group: 'Stakeholders', icon: 'users', to: (h) => `/stakeholders/${h.id}` },
-  award: { group: 'Equity awards', icon: 'award', to: (h) => `/grants?q=${encodeURIComponent(h.label ?? h.title)}` },
-  certificate: { group: 'Certificates', icon: 'certificate', to: (h) => `/certificates?q=${encodeURIComponent(h.label ?? h.title)}` },
+  award: { group: 'Equity grants', icon: 'award', to: (h) => `/grants?q=${encodeURIComponent(h.label ?? h.title)}` },
+  certificate: { group: 'Share & certificates', icon: 'certificate', to: (h) => `/certificates?q=${encodeURIComponent(h.label ?? h.title)}` },
   convertible: { group: 'SAFEs & notes', icon: 'convert', to: (h) => (h.stakeholderId ? `/stakeholders/${h.stakeholderId}` : '/convertibles') },
   offer: { group: 'Offer letters', icon: 'target', to: (h) => `/offers?q=${encodeURIComponent(h.label ?? h.title)}` },
   document: { group: 'Documents', icon: 'document', to: (h) => `/documents?q=${encodeURIComponent(h.label ?? h.title)}` },

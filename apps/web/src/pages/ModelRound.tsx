@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { useSession } from '../session.tsx';
 import { useQuery, api } from '../api.ts';
 import {
-  PageHeader, Card, CardHeader, Table, TH, TD, TR, Badge, Button, Input, Field, Select,
+  PageHeader, Card, CardHeader, Badge, Button, Input, Field, Select,
   Stat, ErrorNote, Banner, Checkbox, EmptyState, Loading, useToast, KeyValue, InfoDot, Spinner,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { DilutionBars } from '../charts.tsx';
 import { Icon } from '../icons.tsx';
 import { money, shares, pps, percent, date, today, parseMoney, parsePercent, currencySymbol, INSTRUMENT_LABELS, amountHint } from '../format.ts';
@@ -16,6 +17,11 @@ const MODEL = config.modeling;
 const grouped = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 interface InvestorRow { id: number; name: string; stakeholderId: string; amount: string }
+
+/** A conversion's instrument, its basis (cap, discount or round price) and an anti-dilution formula, in words. */
+const instrumentOf = (c: any): string => INSTRUMENT_LABELS[c.instrument] ?? c.instrument;
+const basisOf = (c: any): string => c.method.replace(/_/g, ' ').toLowerCase();
+const formulaOf = (a: any): string => a.formula.replace(/_/g, ' ').toLowerCase();
 
 export default function ModelRound() {
   const { companyId, canViewAll, canEdit } = useSession();
@@ -104,7 +110,7 @@ export default function ModelRound() {
           </>
         } />
 
-      <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
+      <div className="grid gap-5 lg:grid-cols-[380px_1fr] [&>*]:min-w-0">
         <div className="space-y-5">
           <Card>
             <CardHeader title="Round terms" />
@@ -251,126 +257,90 @@ export default function ModelRound() {
                   tone="warning" hint={`Pool refreshed to ${percent(result.poolPctAfter)}`} />
               </div>
 
-              <Card>
-                <CardHeader title="Capitalization bridge" subtitle="How the share count moves through the round" />
-                <Table>
-                  <tbody>
-                    {[
-                      ['Fully diluted before the round', result.preRoundFullyDiluted],
-                      ['Shares issued on conversion of SAFEs and notes', result.conversionShares],
-                      ['Option pool increase', result.poolIncrease],
-                      ['Shares issued to new investors', result.newInvestorShares],
-                    ].map(([label, value]) => (
-                      <TR key={label as string}>
-                        <TD className="text-ink-700">{label}</TD>
-                        <TD align="right" mono>{(value as number) > 0 && label !== 'Fully diluted before the round' ? '+' : ''}{shares(value as number)}</TD>
-                      </TR>
-                    ))}
-                    <TR className="bg-ink-50">
-                      <TD className="font-semibold">Fully diluted after the round</TD>
-                      <TD align="right" mono className="font-semibold">{shares(result.postRoundFullyDiluted)}</TD>
-                    </TR>
-                  </tbody>
-                </Table>
-              </Card>
+              <DataTable title="Capitalization bridge" caption="Capitalization bridge"
+                subtitle="How the share count moves through the round"
+                // A bridge reads top to bottom, each line adding to the one before, so its lines keep their order.
+                pinFirst={false}
+                rows={[
+                  { label: 'Fully diluted before the round', value: result.preRoundFullyDiluted, added: false },
+                  { label: 'Shares issued on conversion of SAFEs and notes', value: result.conversionShares, added: true },
+                  { label: 'Option pool increase', value: result.poolIncrease, added: true },
+                  { label: 'Shares issued to new investors', value: result.newInvestorShares, added: true },
+                ]}
+                rowKey={(line) => line.label}
+                columns={[
+                  { key: 'line', label: 'Step', cell: (line) => line.label, className: 'text-ink-700', total: 'Fully diluted after the round' },
+                  {
+                    key: 'shares', label: 'Shares', type: 'number', cell: (line) => `${line.added && line.value > 0 ? '+' : ''}${shares(line.value)}`,
+                    total: shares(result.postRoundFullyDiluted),
+                  },
+                ]} />
 
               {result.conversions.length > 0 && (
-                <Card padded={false}>
-                  <div className="p-5 pb-0">
-                    <CardHeader title="Convertible conversions"
-                      subtitle="Each instrument converts at the lower of its cap price and the discounted round price" />
-                  </div>
-                  <Table>
-                    <thead>
-                      <tr>
-                        <TH>Instrument</TH><TH align="right">Converting amount</TH>
-                        <TH align="right">Cap price</TH><TH align="right">Discount price</TH>
-                        <TH align="right">Conversion price</TH><TH>Basis</TH>
-                        <TH align="right">Shares</TH><TH align="right">Value multiple</TH>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.conversions.map((c: any) => (
-                        <TR key={c.convertibleId}>
-                          <TD>{INSTRUMENT_LABELS[c.instrument] ?? c.instrument}</TD>
-                          <TD align="right" mono>{money(c.amount)}</TD>
-                          <TD align="right" mono className="text-ink-600">{c.capPrice ? pps(c.capPrice) : '—'}</TD>
-                          <TD align="right" mono className="text-ink-600">{c.discountPrice ? pps(c.discountPrice) : '—'}</TD>
-                          <TD align="right" mono className="font-medium">{pps(c.conversionPrice)}</TD>
-                          <TD><Badge tone={c.method.includes('CAP') ? 'brand' : c.method.includes('DISCOUNT') ? 'info' : 'neutral'}>
-                            {c.method.replace(/_/g, ' ').toLowerCase()}</Badge></TD>
-                          <TD align="right" mono>{shares(c.shares)}</TD>
-                          <TD align="right" mono className="text-secondary-800">{c.valueMultiple.toFixed(2)}x</TD>
-                        </TR>
-                      ))}
-                    </tbody>
-                  </Table>
-                </Card>
+                <DataTable title="Convertible conversions" caption="Convertible conversions"
+                  subtitle="Each instrument converts at the lower of its cap price and the discounted round price"
+                  rows={result.conversions} rowKey={(c: any) => c.convertibleId}
+                  search={{ placeholder: 'Search by instrument or basis', label: 'Search conversions', by: (c: any) => [instrumentOf(c), basisOf(c)] }}
+                  columns={[
+                    { key: 'instrument', label: 'Instrument', value: instrumentOf },
+                    { key: 'amount', label: 'Converting amount', type: 'money', value: (c) => c.amount },
+                    { key: 'cap', label: 'Cap price', type: 'price', value: (c) => c.capPrice || null, cell: (c) => (c.capPrice ? pps(c.capPrice) : '—'), className: 'text-ink-600' },
+                    { key: 'discount', label: 'Discount price', type: 'price', value: (c) => c.discountPrice || null, cell: (c) => (c.discountPrice ? pps(c.discountPrice) : '—'), className: 'text-ink-600' },
+                    { key: 'price', label: 'Conversion price', type: 'price', value: (c) => c.conversionPrice, className: 'font-medium' },
+                    {
+                      key: 'basis', label: 'Basis', value: basisOf,
+                      cell: (c) => <Badge tone={c.method.includes('CAP') ? 'brand' : c.method.includes('DISCOUNT') ? 'info' : 'neutral'}>{basisOf(c)}</Badge>,
+                    },
+                    { key: 'shares', label: 'Shares', type: 'number', value: (c) => c.shares },
+                    { key: 'multiple', label: 'Value multiple', type: 'number', value: (c) => c.valueMultiple, cell: (c) => `${c.valueMultiple.toFixed(2)}x`, className: 'text-secondary-800' },
+                  ]} />
               )}
 
               {antiDilution.length > 0 && (
-                <Card padded={false}>
-                  <div className="p-5 pb-0">
-                    <CardHeader title="Anti-dilution adjustment"
-                      subtitle="This round prices below an earlier class, which triggers protection" />
-                  </div>
-                  <Table>
-                    <thead>
-                      <tr>
-                        <TH>Class</TH><TH>Formula</TH>
-                        <TH align="right">Old conversion price</TH><TH align="right">New conversion price</TH>
-                        <TH align="right">New ratio</TH><TH align="right">Additional shares</TH>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {antiDilution.map((a) => (
-                        <TR key={a.shareClassId}>
-                          <TD className="font-medium">{a.className}</TD>
-                          <TD><Badge tone="warning">{a.formula.replace(/_/g, ' ').toLowerCase()}</Badge></TD>
-                          <TD align="right" mono>{pps(a.oldConversionPrice)}</TD>
-                          <TD align="right" mono className="text-red-600">{pps(a.newConversionPrice)}</TD>
-                          <TD align="right" mono>{a.newConversionRatio.toFixed(4)}:1</TD>
-                          <TD align="right" mono className="font-medium">{shares(a.additionalShares)}</TD>
-                        </TR>
-                      ))}
-                    </tbody>
-                  </Table>
-                </Card>
+                <DataTable title="Anti-dilution adjustment" caption="Anti-dilution adjustment"
+                  subtitle="This round prices below an earlier class, which triggers protection"
+                  rows={antiDilution} rowKey={(a) => a.shareClassId}
+                  columns={[
+                    { key: 'class', label: 'Class', value: (a) => a.className, className: 'font-medium' },
+                    { key: 'formula', label: 'Formula', value: formulaOf, cell: (a) => <Badge tone="warning">{formulaOf(a)}</Badge> },
+                    { key: 'old', label: 'Old conversion price', type: 'price', value: (a) => a.oldConversionPrice },
+                    { key: 'new', label: 'New conversion price', type: 'price', value: (a) => a.newConversionPrice, className: 'text-red-600' },
+                    { key: 'ratio', label: 'New ratio', type: 'number', value: (a) => a.newConversionRatio, cell: (a) => `${a.newConversionRatio.toFixed(4)}:1` },
+                    { key: 'additional', label: 'Additional shares', type: 'number', value: (a) => a.additionalShares, className: 'font-medium' },
+                  ]} />
               )}
 
-              <Card padded={false}>
-                <div className="p-5 pb-0">
-                  <CardHeader title="Ownership before and after" subtitle="Every holder's position through the round" />
-                </div>
-                <Table>
-                  <thead>
-                    <tr>
-                      <TH>Holder</TH>
-                      <TH align="right">Shares before</TH><TH align="right">Ownership before</TH>
-                      <TH align="right">Shares after</TH><TH align="right">Ownership after</TH>
-                      <TH align="right">Change</TH><TH align="right">Value at round price</TH>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.ownership.map((o: any) => (
-                      <TR key={o.stakeholderId}>
-                        <TD>
-                          <span className="font-medium">{o.name}</span>
-                          {o.sharesBefore === 0 && <Badge tone="success" className="ml-2">New</Badge>}
-                        </TD>
-                        <TD align="right" mono>{o.sharesBefore ? shares(o.sharesBefore) : '—'}</TD>
-                        <TD align="right" mono className="text-ink-600">{o.sharesBefore ? percent(o.pctBefore) : '—'}</TD>
-                        <TD align="right" mono className="font-medium">{shares(o.sharesAfter)}</TD>
-                        <TD align="right" mono className="font-medium">{percent(o.pctAfter)}</TD>
-                        <TD align="right" mono className={o.dilutionPct > 0 ? 'text-red-600' : 'text-secondary-800'}>
-                          {o.sharesBefore ? `${o.dilutionPct > 0 ? '−' : '+'}${percent(Math.abs(o.dilutionPct))}` : '—'}
-                        </TD>
-                        <TD align="right" mono className="text-ink-600">{money(o.valueAfter, { compact: true })}</TD>
-                      </TR>
-                    ))}
-                  </tbody>
-                </Table>
-              </Card>
+              <DataTable title="Ownership before and after" caption="Ownership before and after"
+                subtitle="Every holder's position through the round"
+                rows={result.ownership} rowKey={(o: any) => o.stakeholderId}
+                // The engine lists the holders largest after the round first.
+                defaultSort={{ key: 'sharesAfter', direction: 'desc' }}
+                search={{ placeholder: 'Search holders', label: 'Search holders', by: (o: any) => [o.name] }}
+                columns={[
+                  {
+                    key: 'holder', label: 'Holder', value: (o) => o.name,
+                    cell: (o) => (
+                      <>
+                        <span className="font-medium">{o.name}</span>
+                        {o.sharesBefore === 0 && <Badge tone="success" className="ml-2">New</Badge>}
+                      </>
+                    ),
+                  },
+                  { key: 'sharesBefore', label: 'Shares before', type: 'number', value: (o) => o.sharesBefore || null },
+                  {
+                    key: 'pctBefore', label: 'Ownership before', type: 'number', value: (o) => (o.sharesBefore ? o.pctBefore : null),
+                    cell: (o) => (o.sharesBefore ? percent(o.pctBefore) : '—'), className: 'text-ink-600',
+                  },
+                  { key: 'sharesAfter', label: 'Shares after', type: 'number', value: (o) => o.sharesAfter, className: 'font-medium' },
+                  { key: 'pctAfter', label: 'Ownership after', type: 'number', value: (o) => o.pctAfter, cell: (o) => percent(o.pctAfter), className: 'font-medium' },
+                  {
+                    // Sorts as it reads: a holder who lost the most ownership has the lowest change.
+                    key: 'change', label: 'Change', type: 'number', value: (o) => (o.sharesBefore ? -o.dilutionPct : null),
+                    cell: (o) => (o.sharesBefore ? `${o.dilutionPct > 0 ? '−' : '+'}${percent(Math.abs(o.dilutionPct))}` : '—'),
+                    className: (o) => (o.dilutionPct > 0 ? 'text-red-600' : 'text-secondary-800'),
+                  },
+                  { key: 'value', label: 'Value at round price', type: 'money', value: (o) => o.valueAfter, cell: (o) => money(o.valueAfter, { compact: true }), className: 'text-ink-600' },
+                ]} />
 
               <Card>
                 <CardHeader title="Dilution" subtitle="Ownership before and after, by holder" />

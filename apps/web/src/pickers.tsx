@@ -337,7 +337,7 @@ export const DateInput = React.forwardRef<HTMLInputElement, DateInputProps>(func
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown' || (e.key === 'Enter' && e.altKey)) { e.preventDefault(); openCalendar(); }
           else if (e.key === 'Enter' && text !== display(iso)) { e.preventDefault(); commitText(); }
-          else if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
+          else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); } // the calendar closes, not a dialog behind it
           onKeyDown?.(e);
         }}
         className={cx(INPUT_CLASS, 'pr-9', className)} />
@@ -433,7 +433,8 @@ export function ActionMenu({ items, label = 'More actions' }: { items: ActionIte
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); anchor.current?.focus(); } };
+    // Taken, so that nothing behind the menu, such as a table's full size view, closes with it.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); setOpen(false); anchor.current?.focus(); } };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
@@ -456,6 +457,8 @@ export function ActionMenu({ items, label = 'More actions' }: { items: ActionIte
     else if (e.key === 'ArrowUp') go(at < 0 ? -1 : at - 1);
     else if (e.key === 'Home') go(0);
     else if (e.key === 'End') go(-1);
+    // Escape closes the menu and nothing behind it: not a dialog the row is in, nor a table's full size view.
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); anchor.current?.focus(); }
     // Focus is put on the button before the browser acts on Tab, so the next
     // stop is the one after the button rather than the end of the page.
     else if (e.key === 'Tab') { setOpen(false); anchor.current?.focus(); }

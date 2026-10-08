@@ -30,7 +30,7 @@ export interface Concept {
 }
 
 export const CONCEPT_IDS = [
-  'overview', 'cap-table', 'stakeholders', 'stakeholder-position', 'share-classes', 'certificates',
+  'cap-table', 'stakeholders', 'stakeholder-position', 'share-classes', 'certificates',
   'certificate-record',
   'equity-awards', 'award-record', 'equity-plans', 'offer-letters', 'my-equity', 'stock-comp',
   'convertibles', 'convertible-record', 'warrants', 'warrant-record', 'round-modeling', 'exit-waterfall',
@@ -44,23 +44,6 @@ export type ConceptId = (typeof CONCEPT_IDS)[number];
 
 /** Partial on purpose: a page whose explanation is not written yet simply shows no panel. */
 export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
-  overview: {
-    title: 'What does the overview dashboard show?',
-    summary: 'The overview gathers the few numbers that describe who owns the company today. It reads the same records as every other page, so the figures agree across the app.',
-    why: 'Ownership percentages drive control, dilution and exit payouts, so a stale number here quietly misleads every decision built on it.',
-    points: [
-      'Fully diluted share count adds options, restricted stock units, warrants, convertible instruments and the unallocated option pool to the shares already issued.',
-      'A 409A valuation is an independent appraisal of common stock fair market value, named after Section 409A of the United States Internal Revenue Code.',
-      'Dilution lowers a holder\'s percentage when new shares are issued, even though the number of shares they hold does not change.',
-      'The option pool is shares reserved for future grants, and an exhausted pool is commonly enlarged as part of the next financing.',
-      'Warnings on this page flag records that contradict each other, such as a class with more shares outstanding than it has authorized.',
-    ],
-    seeAlso: [
-      { to: '/cap-table', label: 'Cap table' },
-      { to: '/compliance/409a', label: '409A valuations' },
-      { to: '/model/round', label: 'Model a round' },
-    ],
-  },
   'cap-table': {
     title: 'What is a capitalization table?',
     summary: 'A capitalization table, shortened to cap table, is the record of every share, option and convertible instrument a company has issued. It names each holder and how much each one owns.',
@@ -74,7 +57,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     ],
     seeAlso: [
       { to: '/share-classes', label: 'Share classes' },
-      { to: '/certificates', label: 'Certificates' },
+      { to: '/certificates', label: 'Share & certificates' },
       { to: '/model/exit', label: 'Exit waterfall' },
     ],
   },
@@ -88,10 +71,11 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Withholding and reporting follow the holder\'s own tax status, which is why the record carries a tax residence and a tax form.',
       'A former employee stays on the register while they still hold shares or an option that has not expired.',
       'Accredited investor is a status defined by United States securities rules, and private placements under Regulation D depend on who qualifies.',
+      'A seat on the board is recorded apart from the relationship, with the dates it ran and the investor who designated the director, so an angel who holds shares and sits on the board is both an investor and a director.',
     ],
     seeAlso: [
       { to: '/cap-table', label: 'Cap table' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/portal', label: 'My equity' },
     ],
   },
@@ -108,7 +92,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     ],
     seeAlso: [
       { to: '/stakeholders', label: 'Stakeholders' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/cap-table', label: 'Cap table' },
     ],
   },
@@ -124,7 +108,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Preferred stock converts into common at a stated ratio, and that conversion is typically automatic in a qualifying initial public offering.',
     ],
     seeAlso: [
-      { to: '/certificates', label: 'Certificates' },
+      { to: '/certificates', label: 'Share & certificates' },
       { to: '/model/exit', label: 'Exit waterfall' },
       { to: '/cap-table', label: 'Cap table' },
     ],
@@ -158,7 +142,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Rule 144 sets how long restricted shares must be held before they can be resold, and that clock starts on the holding start date recorded here.',
     ],
     seeAlso: [
-      { to: '/certificates', label: 'Certificates' },
+      { to: '/certificates', label: 'Share & certificates' },
       { to: '/compliance/83b', label: '83(b) elections' },
       { to: '/ledger', label: 'Transactions' },
     ],
@@ -192,7 +176,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'The $100,000 incentive stock option limit is measured per person per calendar year, so the test covers every incentive stock option the holder has rather than this grant alone.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/plans', label: 'Plans and vesting' },
       { to: '/compliance/iso-100k', label: 'ISO $100K limit' },
     ],
@@ -209,7 +193,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Shares from cancelled or forfeited awards return to the pool only if the plan allows it.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/cap-table', label: 'Cap table' },
       { to: '/model/round', label: 'Model a round' },
     ],
@@ -226,7 +210,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Candidates commonly ask for the exercise price, the vesting schedule, the shares outstanding and the exercise window after leaving.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/plans', label: 'Plans and vesting' },
       { to: '/compliance/409a', label: '409A valuations' },
     ],
@@ -243,7 +227,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'A value shown for private shares is an estimate from the latest valuation, and private shares are usually hard to sell.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/83b', label: '83(b) elections' },
       { to: '/documents', label: 'Documents' },
     ],
@@ -260,7 +244,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'The expense uses no cash, but it lowers reported profit, and the offsetting entry increases equity.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/409a', label: '409A valuations' },
       { to: '/reports', label: 'Reports' },
     ],
@@ -311,7 +295,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'A warrant that is never exercised before its expiry date delivers nothing to the holder.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/cap-table', label: 'Cap table' },
       { to: '/model/exit', label: 'Exit waterfall' },
     ],
@@ -364,7 +348,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     seeAlso: [
       { to: '/share-classes', label: 'Share classes' },
       { to: '/convertibles', label: 'SAFEs and notes' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
     ],
   },
   compliance: {
@@ -382,7 +366,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     seeAlso: [
       { to: '/compliance/409a', label: '409A valuations' },
       { to: '/compliance/83b', label: '83(b) elections' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
     ],
   },
   '409a': {
@@ -397,7 +381,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'The tax and the extra 20 percent fall on the option holder, while the company carries the reporting and withholding duties.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/iso-100k', label: 'ISO $100K limit' },
       { to: '/compliance', label: 'Compliance & tax' },
     ],
@@ -415,7 +399,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     ],
     seeAlso: [
       { to: '/compliance/409a', label: '409A valuations' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/iso-100k', label: 'ISO $100K limit' },
     ],
   },
@@ -431,7 +415,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Early exercise rights and accelerated vesting can make a large amount first exercisable in one year and often carry a holder past the limit.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/409a', label: '409A valuations' },
       { to: '/compliance/form-3921', label: 'Form 3921' },
     ],
@@ -448,7 +432,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'Rule 701 is a federal exemption only, so state securities rules still apply to the same grants.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/plans', label: 'Plans and vesting' },
       { to: '/compliance', label: 'Compliance & tax' },
     ],
@@ -465,7 +449,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'The election is irrevocable without Internal Revenue Service consent, and tax already paid is not recovered if the shares are forfeited.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/plans', label: 'Plans and vesting' },
       { to: '/compliance', label: 'Compliance & tax' },
     ],
@@ -482,7 +466,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'An employee exercise of a nonqualified stock option is not reported here, because the spread runs through payroll and appears on Form W-2.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/iso-100k', label: 'ISO $100K limit' },
       { to: '/compliance', label: 'Compliance & tax' },
     ],
@@ -516,7 +500,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'An unsigned draft is not evidence of what was agreed, so the signed copy is the record.',
     ],
     seeAlso: [
-      { to: '/certificates', label: 'Certificates' },
+      { to: '/certificates', label: 'Share & certificates' },
       { to: '/templates', label: 'Templates' },
       { to: '/consents', label: 'Board consents' },
     ],
@@ -534,7 +518,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     ],
     seeAlso: [
       { to: '/documents', label: 'Documents' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/offers', label: 'Offer letters' },
     ],
   },
@@ -562,12 +546,13 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     points: [
       'Boards approve share issuances, option grants and the fair market value used to set option strike prices.',
       'Under Delaware law, board action by written consent requires every director to consent rather than a majority.',
+      'The directors are the stakeholders with a board seat on the consent\'s effective date, so a founder who is not on the board does not vote, and a director who has left keeps a record of the seat but no vote.',
       'Stockholder action by written consent, where the charter allows it, needs the votes that would carry the matter with every voting share present.',
       'Increasing the option pool usually needs stockholder approval too, and an incentive stock option plan must be approved by stockholders within 12 months of adoption.',
       'A grant dates from board approval unless the approval names a later date, so equity described in an offer letter is not granted until then.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/409a', label: '409A valuations' },
       { to: '/documents', label: 'Documents' },
     ],
@@ -585,7 +570,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
     ],
     seeAlso: [
       { to: '/cap-table', label: 'Cap table' },
-      { to: '/certificates', label: 'Certificates' },
+      { to: '/certificates', label: 'Share & certificates' },
       { to: '/audit', label: 'Audit log' },
     ],
   },
@@ -642,11 +627,11 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
   },
   import: {
     title: 'How does importing a cap table work?',
-    summary: 'An import reads a spreadsheet or an export from another provider, maps each column to a field, and previews every row before writing anything.',
+    summary: 'An import reads a spreadsheet or an export from another provider, works out what each tab holds and which column is which, and checks every row before anything is saved.',
     why: 'An import sets the opening balances for every later calculation. An error carried in at the start reappears in ownership percentages, compliance checks and every report.',
     points: [
       'Order matters during an import, because people are created first, then certificates, then equity awards, then convertible instruments.',
-      'The preview shows what each row would create, with errors and warnings, and nothing is saved until the import is committed.',
+      'The check shows what happens to each row, with what needs an answer or a fix, and nothing is saved until Import is pressed.',
       'Reconciliation means comparing the imported totals for each share class against the signed certificates and the board consents behind them.',
       'Outstanding shares, the size of the option pool and the fully diluted total are the figures usually reconciled first.',
       'Original grant dates and vesting start dates carry over from the source file, because vesting math and tax treatment depend on them.',
@@ -703,7 +688,7 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'These figures ignore liquidation preferences and conversion terms, which decide what a holding actually pays at an exit.',
     ],
     seeAlso: [
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/compliance/409a', label: '409A valuations' },
       { to: '/model/exit', label: 'Exit waterfall' },
     ],
@@ -716,12 +701,12 @@ export const CONCEPTS: Partial<Record<ConceptId, Concept>> = {
       'The snapshot carries real stakeholder names, share counts and the terms recorded against them to the provider you chose, so asking a question means sharing that information with that company.',
       'The whole snapshot can be read before anything is sent, from the link under the question box or from these settings.',
       'Nothing asked here changes a record, because the assistant only reads the snapshot and writes text back.',
-      'Any figure worth acting on should be confirmed on the page that owns it, such as the cap table, equity awards or the exit waterfall.',
+      'Any figure worth acting on should be confirmed on the page that owns it, such as the cap table, equity grants or the exit waterfall.',
       'The key is stored for you rather than for the company, so it works across every company you can open, and it can be replaced or deleted here in Preferences.',
     ],
     seeAlso: [
       { to: '/cap-table', label: 'Cap table' },
-      { to: '/grants', label: 'Equity awards' },
+      { to: '/grants', label: 'Equity grants' },
       { to: '/model/exit', label: 'Exit waterfall' },
     ],
   },

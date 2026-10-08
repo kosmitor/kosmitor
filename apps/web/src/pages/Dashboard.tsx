@@ -3,17 +3,21 @@ import { useSession } from '../session.tsx';
 import { useQuery } from '../api.ts';
 import {
   Card, CardHeader, PageHeader, Stat, Badge, Loading, ErrorNote, EmptyState,
-  Table, TH, TD, TR, MiniBar, Button, Banner, StatusBadge, Avatar,
+  MiniBar, Button, Banner, StatusBadge, Avatar,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { OwnershipDonut, ChartLegend } from '../charts.tsx';
 import { Icon } from '../icons.tsx';
 import { money, shares, percent, pps, date, relativeDate, dateTime, RELATION_LABELS } from '../format.ts';
 import { config } from '../config.ts';
 import { scoreGauge } from './compliance/shared.tsx';
+import { ActionList, NothingWaiting, type MyAction } from '../MyActions.tsx';
 
 export default function Dashboard() {
-  const { companyId, company } = useSession();
+  const { companyId, company, canEdit } = useSession();
   const { data, error, loading, reload } = useQuery<any>(companyId ? `/c/${companyId}/dashboard` : null, [companyId]);
+  const { data: mine, error: pendingError } = useQuery<{ items: MyAction[] }>(companyId ? `/c/${companyId}/my-actions` : null, [companyId]);
+  const pending = mine?.items ?? null;
 
   if (loading) return <Loading label="Building your overview" />;
   if (error) return <ErrorNote error={error} onRetry={reload} />;
@@ -26,10 +30,18 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader concept="overview"
+      <PageHeader
         title={company?.name ?? 'Overview'}
         subtitle={`Fully diluted position as of ${date(data.asOf)}`}
       />
+
+      {canEdit && data.topHolders.length === 0 && (
+        <p className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-brand-200 bg-brand-50/60 px-4 py-3 text-[13px] text-ink-700">
+          <Icon name="inbox" className="size-4 text-brand-600" />
+          Have a spreadsheet or a Pulley or Carta export?
+          <Link to="/import" className="font-medium text-brand-600 hover:text-brand-700">Import your cap table</Link>
+        </p>
+      )}
 
       {data.warnings?.length > 0 && (
         <div className="mb-5">
@@ -53,7 +65,8 @@ export default function Dashboard() {
           tone={poolPct < config.alerts.optionPoolLow ? 'warning' : 'default'} />
       </div>
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-3">
+      {/* Cards that may shrink, so a wide table scrolls inside its card rather than widening the page on a phone. */}
+      <div className="mt-5 grid gap-5 lg:grid-cols-3 [&>*]:min-w-0">
         <Card className="lg:col-span-1">
           <CardHeader title="Ownership" subtitle="Fully diluted, by group" />
           <OwnershipDonut data={data.groups} centerLabel="Fully diluted"
@@ -63,52 +76,45 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="lg:col-span-2" padded={false}>
-          <div className="p-5 pb-0">
-            <CardHeader title="Largest holders" subtitle="By fully diluted ownership"
-              action={<Link to="/cap-table"><Button size="sm" variant="ghost">View all</Button></Link>} />
-          </div>
-          <Table>
-            <thead>
-              <tr>
-                <TH>Holder</TH>
-                <TH align="right">Shares</TH>
-                <TH align="right">Options</TH>
-                <TH align="right">Fully diluted</TH>
-                <TH width={140}>Ownership</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {data.topHolders.map((r: any) => (
-                <TR key={r.stakeholderId}>
-                  <TD>
-                    <Link to={`/stakeholders/${r.stakeholderId}`} className="flex items-center gap-2.5 hover:text-brand-700">
-                      <Avatar name={r.name} size={26} />
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">{r.name}</span>
-                        <span className="block text-[11px] text-ink-500">{RELATION_LABELS[r.relation] ?? r.relation}</span>
-                      </span>
-                    </Link>
-                  </TD>
-                  <TD align="right" mono>{shares(r.outstanding)}</TD>
-                  <TD align="right" mono className="text-ink-600">{r.optionsOutstanding ? shares(r.optionsOutstanding) : '—'}</TD>
-                  <TD align="right" mono className="font-medium">{shares(r.fullyDiluted)}</TD>
-                  <TD>
-                    <div className="flex items-center gap-2">
-                      <MiniBar value={r.fullyDilutedPct} />
-                      <span className="w-12 shrink-0 text-right text-[12px] tabular text-ink-600">
-                        {percent(r.fullyDilutedPct, 1)}
-                      </span>
-                    </div>
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        {/* Largest first, as the cap table orders its holders. The card stretches to the height of the one beside it (grid). */}
+        <DataTable className="grid lg:col-span-2" title="Largest holders" subtitle="By fully diluted ownership" caption="Largest holders"
+          actions={<Link to="/cap-table"><Button size="sm" variant="ghost">View all</Button></Link>}
+          rows={data.topHolders} rowKey={(r) => r.stakeholderId}
+          defaultSort={{ key: 'fullyDiluted', direction: 'desc' }}
+          empty={<p className="px-5 py-8 text-center text-[13px] text-ink-500">No holders yet.</p>}
+          columns={[
+            {
+              key: 'holder', label: 'Holder', value: (r) => r.name,
+              cell: (r) => (
+                <Link to={`/stakeholders/${r.stakeholderId}`} className="flex items-center gap-2.5 hover:text-brand-700">
+                  <Avatar name={r.name} size={26} />
+                  <span className="min-w-0">
+                    {/* Two thirds of the page wide beside the chart, the card has room for a name 12rem long
+                        beside the figures in a 1280-pixel window; a longer one is cut there, whole on hover. */}
+                    <span className="block max-w-48 truncate font-medium" title={r.name}>{r.name}</span>
+                    <span className="block text-[11px] text-ink-500">{RELATION_LABELS[r.relation] ?? r.relation}</span>
+                  </span>
+                </Link>
+              ),
+            },
+            { key: 'shares', label: 'Shares', type: 'number', value: (r) => r.outstanding },
+            { key: 'options', label: 'Options', type: 'number', value: (r) => r.optionsOutstanding || null, className: 'text-ink-600' },
+            { key: 'fullyDiluted', label: 'Fully diluted', type: 'number', value: (r) => r.fullyDiluted, className: 'font-medium' },
+            {
+              key: 'ownership', label: 'Ownership', width: 120, value: (r) => r.fullyDilutedPct,
+              cell: (r) => (
+                <div className="flex items-center gap-2">
+                  <MiniBar value={r.fullyDilutedPct} />
+                  <span className="w-12 shrink-0 text-right text-[12px] tabular text-ink-600">
+                    {percent(r.fullyDilutedPct, 1)}
+                  </span>
+                </div>
+              ),
+            },
+          ]} />
       </div>
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-3">
+      <div className="mt-5 grid gap-5 lg:grid-cols-3 [&>*]:min-w-0">
         <Card>
           <CardHeader title="Compliance & tax" subtitle="Automated checks across the company"
             action={<Link to="/compliance"><Button size="sm" variant="ghost">Review</Button></Link>} />
@@ -123,7 +129,7 @@ export default function Dashboard() {
               <span className="text-lg font-semibold tabular">{data.compliance.score}</span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {data.compliance.errors > 0 && <Badge tone="danger">{data.compliance.errors} to fix</Badge>}
                 {data.compliance.warnings > 0 && <Badge tone="warning">{data.compliance.warnings} to review</Badge>}
                 {data.compliance.errors === 0 && data.compliance.warnings === 0 && <Badge tone="success">All clear</Badge>}
@@ -191,29 +197,32 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+      <div className="mt-5 grid gap-5 lg:grid-cols-2 [&>*]:min-w-0">
+        {/* The same list as the header's tasks button, then any task recorded for the company. */}
         <Card padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Open tasks" subtitle="Things waiting on you" /></div>
-          {data.openTasks.length === 0
-            ? <EmptyState title="Nothing outstanding" description="You have no open tasks." />
-            : (
-              <ul className="divide-y divide-ink-100">
-                {data.openTasks.map((task: any) => (
-                  <li key={task.id} className="flex items-start gap-3 px-5 py-3">
-                    <span className="mt-1 grid size-5 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-600">
-                      <Icon name="clock" className="size-3" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-medium text-ink-800">{task.title}</p>
-                      {task.detail && <p className="mt-0.5 text-[12px] leading-snug text-ink-500">{task.detail}</p>}
-                    </div>
-                    {task.dueDate && (
-                      <span className="shrink-0 text-[11px] text-ink-500">{relativeDate(task.dueDate)}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div className="p-5 pb-0"><CardHeader title="My pending actions" subtitle="What needs you" /></div>
+          {pendingError ? <p className="px-5 pb-5 text-[13px] text-ink-500">Your pending actions could not be loaded.</p>
+            : pending === null ? <Loading label="Looking for what needs you" />
+              : pending.length === 0 && data.openTasks.length === 0 ? <NothingWaiting />
+                : <ActionList items={pending} className="[&>li>a]:px-5" />}
+          {data.openTasks.length > 0 && (
+            <ul className="divide-y divide-ink-100 border-t border-ink-100">
+              {data.openTasks.map((task: any) => (
+                <li key={task.id} className="flex items-start gap-3 px-5 py-3">
+                  <span className="mt-1 grid size-5 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-600">
+                    <Icon name="clock" className="size-3" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[13px] font-medium text-ink-800">{task.title}</p>
+                    {task.detail && <p className="mt-0.5 text-[12px] leading-snug text-ink-500">{task.detail}</p>}
+                  </div>
+                  {task.dueDate && (
+                    <span className="shrink-0 text-[11px] text-ink-500">{relativeDate(task.dueDate)}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
 
         <Card padded={false}>

@@ -40,7 +40,7 @@ const common = (await one<{ id: string }>('SELECT id FROM share_classes WHERE co
 const schedule = (await one<{ id: string; name: string }>("SELECT id, name FROM vesting_schedules WHERE company_id = ? AND kind = 'TIME' ORDER BY duration_months DESC LIMIT 1", cid))!;
 await insert('pools', { id: 'pool_1', companyId: cid, name: '2026 Stock Plan', shareClassId: common, authorized: 1_000_000, returnForfeitures: 1, planType: 'STOCK_PLAN', createdAt: now });
 await insert('stakeholders', { id: 'stk_priya', companyId: cid, name: 'Priya Raman', email: 'priya@example.com', type: 'INDIVIDUAL', relation: 'EMPLOYEE', title: 'VP Engineering', createdAt: now });
-await insert('stakeholders', { id: 'stk_dana', companyId: cid, name: 'Dana Okafor', email: 'dana@example.com', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', createdAt: now });
+await insert('stakeholders', { id: 'stk_dana', companyId: cid, name: 'Dana Okafor', email: 'dana@example.com', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', boardSeat: 1, createdAt: now });
 const grant = {
   stakeholderId: 'stk_priya', poolId: 'pool_1', type: 'ISO', quantity: 48_000, strikePrice: 960_000, grantDate: '2026-09-21',
   vestingStartDate: '2026-09-01', vestingScheduleId: schedule.id, ptepMonths: 3, fmvAtGrant: 960_000,

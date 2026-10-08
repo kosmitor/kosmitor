@@ -596,10 +596,10 @@ function sumFullyDiluted(rowById: Map<string, CapTableRow>, data: CompanyData, a
  */
 export const GROUP_LABELS: Record<string, string> = {
   FOUNDER: 'Founders', EMPLOYEE: 'Employees', FORMER_EMPLOYEE: 'Former employees',
-  INVESTOR: 'Investors', ADVISOR: 'Advisors', BOARD_MEMBER: 'Board', CONTRACTOR: 'Contractors', OTHER: 'Other',
+  INVESTOR: 'Investors', ADVISOR: 'Advisors', BOARD_MEMBER: 'Board members', CONTRACTOR: 'Contractors', OTHER: 'Other',
 };
 export const GROUP_ORDER: string[] = [
-  'Founders', 'Employees', 'Former employees', 'Advisors', 'Board', 'Contractors',
+  'Founders', 'Employees', 'Former employees', 'Advisors', 'Board members', 'Contractors',
   'Investors', 'Other', 'Unallocated pool',
 ];
 

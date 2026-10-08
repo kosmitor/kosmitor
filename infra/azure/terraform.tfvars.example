@@ -103,6 +103,14 @@ alert_email     = "ops@example.com"
 # Comma separated; empty accepts any Google account.
 # google_allowed_domains = "example.com"
 
+# --- 409A valuation desk ----------------------------------------------------------
+
+# The evaluators each 409A request is sent to, each in an email of their own with the
+# same private link, so none sees the others; replies from the company reach the first.
+# Up to 10. Wins over valuationDesk.email in the param file; the desk itself is
+# switched on there (valuationDesk.enabled).
+# valuation_desk_emails = ["valuations@example.com", "second.evaluator@example.com"]
+
 # --- Monitoring -------------------------------------------------------------------
 
 # log_retention_days = 90

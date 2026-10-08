@@ -9,6 +9,7 @@ import {
 import { Icon } from '../icons.tsx';
 import { date, dateTime, shares, percent } from '../format.ts';
 import { config } from '../config.ts';
+import { directorsOn, reselectDirectors } from '../board.ts';
 
 /** The share of voting shares a stockholder consent needs unless it says otherwise (equity.stockholderConsentThreshold). */
 const THRESHOLD = config.equity.stockholderConsentThreshold;
@@ -36,7 +37,8 @@ export default function Consents() {
   const [busy, setBusy] = useState(false);
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
-  const directors = (stakeholders ?? []).filter((s) => s.relation === 'BOARD_MEMBER' || s.relation === 'FOUNDER');
+  // The board on the consent's effective date: whoever holds a seat then, whatever their relationship.
+  const directors = directorsOn(stakeholders, form.effectiveDate);
   /** Holders of voting shares today, for a stockholder consent. */
   const voters: { stakeholderId: string; name: string; weight: number }[] = useMemo(() => (capTable?.table?.rows ?? [])
     .map((r: any) => ({ stakeholderId: r.stakeholderId, name: r.name, weight: r.votes > 0 ? r.votes : r.outstanding }))
@@ -45,17 +47,18 @@ export default function Consents() {
   const totalVotes = voters.reduce((s, v) => s + v.weight, 0);
 
   const openNew = (kind: Kind) => {
-    setForm({ ...blank, kind, type: kind === 'STOCKHOLDER' ? 'STOCKHOLDER_CONSENT' : 'WRITTEN_CONSENT', directorIds: directors.map((d) => d.id), stakeholderIds: voters.map((v) => v.stakeholderId) });
+    setForm({ ...blank, kind, type: kind === 'STOCKHOLDER' ? 'STOCKHOLDER_CONSENT' : 'WRITTEN_CONSENT', directorIds: directorsOn(stakeholders, blank.effectiveDate).map((d) => d.id), stakeholderIds: voters.map((v) => v.stakeholderId) });
     setCreating(true);
   };
   const create = async () => {
+    const directorIds = form.kind === 'BOARD' ? form.directorIds.filter((d) => directors.some((x) => x.id === d)) : [];
+    if (form.kind === 'BOARD' && directorIds.length === 0) { toast('Choose at least one director.', 'error'); return; }
     setBusy(true);
     try {
       await api(`/c/${companyId}/consents`, {
         body: {
           kind: form.kind, title: form.title, type: form.type, body: form.body,
-          effectiveDate: form.effectiveDate, meetingDate: form.meetingDate || null,
-          directorIds: form.kind === 'BOARD' ? form.directorIds : [],
+          effectiveDate: form.effectiveDate, meetingDate: form.meetingDate || null, directorIds,
           stakeholderIds: form.kind === 'STOCKHOLDER' ? form.stakeholderIds : [],
           threshold: form.kind === 'STOCKHOLDER' ? Number(form.threshold) / 100 : undefined,
         },
@@ -208,7 +211,11 @@ export default function Consents() {
             </Field>
           )}
           <Field label="Effective date">
-            <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} />
+            <Input type="date" value={form.effectiveDate} onChange={(e) => setForm({
+              ...form, effectiveDate: e.target.value,
+              // Another day can mean another board: who joined it by then is asked too, and who left is not.
+              ...(form.kind === 'BOARD' ? { directorIds: reselectDirectors(form.directorIds, stakeholders, form.effectiveDate, e.target.value) } : {}),
+            })} />
           </Field>
         </FormGrid>
         <Field label="Resolution text">
@@ -218,7 +225,7 @@ export default function Consents() {
           <Field label="Directors">
             <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-ink-200 p-2.5">
               {directors.length === 0
-                ? <p className="text-[12px] text-ink-500">No stakeholders are marked as board members or founders.</p>
+                ? <p className="text-[12px] text-ink-500">Nobody holds a board seat on this date. Give each director a seat on their stakeholder record.</p>
                 : directors.map((d) => (
                   <Checkbox key={d.id} label={d.name} checked={form.directorIds.includes(d.id)}
                     onChange={(v) => setForm({ ...form, directorIds: v ? [...form.directorIds, d.id] : form.directorIds.filter((x) => x !== d.id) })} />

@@ -8,12 +8,19 @@ import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
 import { sendMail, mailConfigured, type Message } from '../mail.ts';
 import { config } from '../config.ts';
 import { renderEmail, paragraphsOf } from '../email.ts';
+import { directorsOn } from '../board.ts';
+import { today } from '@kosmitor/core';
 
-export const AUDIENCES: Record<string, { label: string; relations: string[] | null }> = {
+/**
+ * Who an update can go to. The board is whoever holds a seat today, by the seat's own
+ * dates and whatever their relationship, so an investor who is a director gets both the
+ * investor and the board updates, and a founder without a seat gets neither of the board's.
+ */
+export const AUDIENCES: Record<string, { label: string; relations: string[] | null; directors?: boolean }> = {
   ALL: { label: 'Everyone on the cap table', relations: null },
   INVESTORS: { label: 'Investors', relations: ['INVESTOR'] },
   TEAM: { label: 'Team (founders, employees, advisors, contractors)', relations: ['FOUNDER', 'EMPLOYEE', 'ADVISOR', 'CONTRACTOR'] },
-  BOARD: { label: 'Board members and founders', relations: ['BOARD_MEMBER', 'FOUNDER'] },
+  BOARD: { label: 'Board of directors', relations: [], directors: true },
   CUSTOM: { label: 'Chosen stakeholders', relations: [] },
 };
 
@@ -42,10 +49,11 @@ async function updateRow(ctx: Ctx, id: string): Promise<UpdateRow> {
 
 /** Stakeholders an audience resolves to, right now. */
 export async function resolveAudience(companyId: string, audience: string, recipientIds: string[]): Promise<{ id: string; name: string; email: string | null; relation: string }[]> {
-  const rows = await all<{ id: string; name: string; email: string | null; relation: string; termination_date: string | null }>(
-    'SELECT id, name, email, relation, termination_date FROM stakeholders WHERE company_id = ? ORDER BY name', companyId);
   const spec = AUDIENCES[audience];
   if (!spec) throw badRequest('Unknown audience.');
+  if (spec.directors) return (await directorsOn(companyId, today())).map(({ id, name, email, relation }) => ({ id, name, email, relation }));
+  const rows = await all<{ id: string; name: string; email: string | null; relation: string; termination_date: string | null }>(
+    'SELECT id, name, email, relation, termination_date FROM stakeholders WHERE company_id = ? ORDER BY name', companyId);
   if (audience === 'CUSTOM') return rows.filter((s) => recipientIds.includes(s.id));
   return rows.filter((s) => !s.termination_date && (spec.relations === null || spec.relations.includes(s.relation)));
 }

@@ -6,8 +6,10 @@ import { useSearchQuery } from '../hooks.ts';
 import { FormModal, FormGrid } from '../crud.tsx';
 import {
   PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field,
-  Select, EmptyState, ConfirmDialog, StatusBadge, Textarea, useToast, Modal, SearchInput, Checkbox, Avatar, ActionMenu,
+  Select, EmptyState, ConfirmDialog, StatusBadge, Textarea, useToast, Modal, Checkbox, Avatar, ActionMenu, cx,
 } from '../ui.tsx';
+import { TableCard, TableSearch } from '../DataTable.tsx';
+import { sortRows, type Sort } from '../sortable.tsx';
 import type { ActionItem } from '../pickers.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
@@ -31,11 +33,12 @@ const DRAG_HINT = 'Drag documents onto a folder to move them. Shift-click select
 // On a phone the tree keeps the name, a menu of actions and any signature
 // waiting; the columns that describe a document come back as the screen widens.
 const COLUMNS: TreeColumn[] = [
-  { key: 'category', label: 'Category', className: 'hidden md:table-cell' },
-  { key: 'related', label: 'Related to', className: 'hidden md:table-cell' },
+  { key: 'category', label: 'Category', className: 'hidden md:table-cell', sortable: true },
+  // A holder's name and the holding under it keep to one line each, as names do in every table.
+  { key: 'related', label: 'Related to', className: 'hidden whitespace-nowrap md:table-cell', sortable: true },
   { key: 'signatures', label: 'Signatures', className: 'hidden md:table-cell' },
-  { key: 'created', label: 'Created', className: 'hidden whitespace-nowrap sm:table-cell' },
-  { key: 'status', label: 'Status', className: 'hidden sm:table-cell' },
+  { key: 'created', label: 'Created', className: 'hidden whitespace-nowrap sm:table-cell', sortable: true },
+  { key: 'status', label: 'Status', className: 'hidden sm:table-cell', sortable: true },
   { key: 'actions', label: '', align: 'right', className: 'whitespace-nowrap' },
 ];
 /** Shown while searching in place of folders made on the page, which hold nothing to match. */
@@ -126,6 +129,12 @@ export default function Documents() {
     return q ? documents.filter((d) => d.name.toLowerCase().includes(q)) : documents;
   }, [documents, search]);
   const allFolders = useMemo(() => listFolders(buildFolderTree(documents, madeFolders)).map((f) => f.path), [documents, madeFolders]);
+
+  // A heading sorts the documents inside each folder; until one is clicked they keep the order they came in.
+  const [sort, setSort] = useState<Sort<string> | null>(null);
+  const sortBy = (key: string) => setSort((s) => (s?.key === key
+    ? { key, direction: s.direction === 'asc' ? 'desc' : 'asc' }
+    : { key, direction: 'asc' }));
 
   // The documents selected in the tree, to move together. A selection only
   // ever holds documents on screen: one a search hides or that is deleted is
@@ -293,6 +302,25 @@ export default function Documents() {
     return found;
   }, [issuances, awards, convertibles, warrants]);
 
+  // The documents in the order a heading asks for. Kept from render to render, so the
+  // tree (DocumentTree.tsx), which rebuilds its folders when the list changes, is not
+  // rebuilt on every render while a sort is on, a drag passing over the rows included.
+  const ordered = useMemo(() => {
+    if (!sort) return shown;
+    /** What each sortable column sorts by: its words as shown, or the time a document was created. */
+    const sortValue = (d: any, key: string): string | null => {
+      switch (key) {
+        case 'name': return d.name;
+        case 'category': return categoryLabel(d.category);
+        case 'related': return (d.stakeholderId ? nameOf.get(d.stakeholderId) : null) ?? (d.securityId ? holdingOf.get(d.securityId)?.label : null) ?? null;
+        case 'created': return d.createdAt ?? null;
+        case 'status': return d.status ?? null;
+        default: return null;
+      }
+    };
+    return sortRows(shown, sort, sortValue);
+  }, [shown, sort, nameOf, holdingOf]);
+
   const create = async () => {
     const problem = folderProblem(form.folder);
     if (problem) { toast(problem, 'error'); return; }
@@ -338,7 +366,7 @@ export default function Documents() {
     <>
       <span className="block font-medium">{d.name}</span>
       {d.fileName && (
-        <span className="mt-0.5 block text-[11px] text-ink-500">
+        <span className="mt-0.5 block whitespace-normal text-[11px] text-ink-500">
           {d.fileName}{d.sizeBytes ? ` · ${fileSize(d.sizeBytes)}` : ''}
         </span>
       )}
@@ -349,7 +377,8 @@ export default function Documents() {
     const mySig = (d.signatures ?? []).find((s: any) => s.status === 'PENDING');
     // Until the screen has room for every column and the buttons as well, every
     // action but signing is in one menu, so the document's name keeps the width.
-    // Beside the sidebar on a laptop the buttons alone would leave it a few letters.
+    // Beside the sidebar on a laptop, a 1280-pixel window included, the buttons
+    // alone would leave it a few letters, so they show from 2xl up.
     const menu: ActionItem[] = [
       ...(readable(d) ? [{ label: 'Read', icon: 'eye', onClick: () => setReading(d) }] : []),
       ...(d.fileName && !isPdfDocument(d) ? [{ label: 'Download', icon: 'download', onClick: () => void download(d) }] : []),
@@ -361,7 +390,7 @@ export default function Documents() {
     ];
     return (
       <span className="flex items-center justify-end gap-1">
-        <span className="hidden items-center gap-1 xl:flex">
+        <span className="hidden items-center gap-1 2xl:flex">
           {readable(d) && (
             <Button size="sm" variant="ghost" onClick={() => setReading(d)} aria-label="Read the document" title="Read the document">
               <Icon name="eye" className="size-4" />
@@ -378,7 +407,7 @@ export default function Documents() {
           <Button size="sm" variant="primary" onClick={() => { setSignature(''); setSigning(mySig); }}>Sign</Button>
         )}
         {canEdit && (
-          <span className="hidden items-center gap-1 xl:flex">
+          <span className="hidden items-center gap-1 2xl:flex">
             <Button size="sm" variant="ghost" onClick={() => setMoving({ docs: [d], selection: null })} aria-label="Move to folder" title="Move to folder">
               <Icon name="folder" className="size-4" />
             </Button>
@@ -387,7 +416,7 @@ export default function Documents() {
             </Button>
           </span>
         )}
-        <span className="xl:hidden"><ActionMenu items={menu} label={`Actions for ${d.name}`} /></span>
+        <span className="2xl:hidden"><ActionMenu items={menu} label={`Actions for ${d.name}`} /></span>
       </span>
     );
   };
@@ -468,10 +497,12 @@ export default function Documents() {
           description="Store financing agreements, grant notices, valuations and board materials here."
           action={canEdit && <Button variant="primary" onClick={() => setCreating(true)}>New document</Button>} /></Card>
       ) : (
-        <Card padded={false}>
-          <div ref={treeArea}>
-            <DocumentTree label="Documents" documents={shown} extraFolders={searching ? NO_FOLDERS : madeFolders}
+        <TableCard fullSize="Documents, full size">
+          {(full) => (
+          <div ref={treeArea} className={full ? 'flex min-h-0 flex-1 flex-col' : undefined}>
+            <DocumentTree label="Documents" documents={ordered} extraFolders={searching ? NO_FOLDERS : madeFolders}
               expansion={expansion} canEdit={canEdit} columns={COLUMNS} renderName={renderName} renderCells={renderCells}
+              sort={sort} onSort={sortBy}
               selected={selected} onSelect={setSelected}
               onOpen={setViewing}
               onMove={(docs, folder, asSelection) => move(docs.map((d) => ({ id: d.id, to: folder })), { selection: asSelection ? selected : null })}
@@ -482,9 +513,13 @@ export default function Documents() {
                 // must not move when it does, or the next click lands on another row.
                 // So from a tablet up it is one row whatever is in it: the search box
                 // gives way and the hint is cut short, rather than either wrapping.
-                // On a phone the search box has a line to itself.
-                <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap">
-                  <div className="w-full sm:w-72 sm:min-w-40"><SearchInput value={search} onChange={setSearch} placeholder="Search documents" /></div>
+                // On a phone the search box has a line to itself, and the Full size button
+                // goes at the end of the line below, beside New folder or the bar; with
+                // neither (a viewer), it sits beside the search box. From a tablet up it
+                // follows the whole row.
+                <div className="contents sm:flex sm:min-w-0 sm:flex-1 sm:flex-nowrap sm:items-center sm:gap-3">
+                  <TableSearch label="Search documents" placeholder="Search documents" value={search} onChange={setSearch}
+                    className={cx('sm:w-72 sm:min-w-40 sm:flex-initial', canEdit && 'max-sm:basis-full')} />
                   {canEdit && (picked.length > 0 ? (
                     <>
                       {/* In the row New folder has on a phone, and no taller, so the rows below stay put. */}
@@ -500,12 +535,14 @@ export default function Documents() {
                       <Button className="shrink-0 sm:ml-auto" icon={<Icon name="folderPlus" className="size-4" />} onClick={() => setCreatingFolder(true)}>New folder</Button>
                     </>
                   ))}
+                  {canEdit && <span aria-hidden className="flex-1 sm:hidden" />}
                 </div>
               }
               empty={<EmptyState icon={<Icon name="search" className="size-10" />} title="No documents match"
                 description="Try another name, or clear the search to see every folder." />} />
           </div>
-        </Card>
+          )}
+        </TableCard>
       )}
 
       <datalist id={folderListId}>

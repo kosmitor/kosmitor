@@ -13,3 +13,4 @@ export * from './ledger.ts';
 export * from './accounting.ts';
 export * from './config-types.ts';
 export * from './policy.ts';
+export * from './board.ts';

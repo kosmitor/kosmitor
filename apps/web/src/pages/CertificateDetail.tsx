@@ -83,7 +83,7 @@ export default function CertificateDetail() {
     return errorStatus === 404 ? (
       <RecordMissing icon="certificate" title="That certificate is not here"
         description="It may have been deleted, or it belongs to another holder."
-        to="/certificates" label="Back to certificates" />
+        to="/certificates" label="Back to Share & certificates" />
     ) : <ErrorNote error={error} onRetry={reload} />;
   }
   if (!data) return null;
@@ -164,7 +164,7 @@ export default function CertificateDetail() {
   ];
 
   return (
-    <RecordPage back="/certificates" backLabel="All certificates"
+    <RecordPage back="/certificates" backLabel="Share & certificates"
       title={`${certificateNo} Shares`} status={issuance.status}
       badges={shareClass && <Badge tone={shareClass.kind === 'PREFERRED' ? 'purple' : 'neutral'}>{shareClass.name}</Badge>}
       subtitle={`${shares(issuance.quantity)} shares issued ${date(issuance.issueDate)}`}

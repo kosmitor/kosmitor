@@ -13,6 +13,9 @@ export type Cell = string | number | boolean | null | undefined;
 export type ImportKind = 'stakeholders' | 'captable' | 'grants' | 'convertibles';
 export type FieldType = 'text' | 'number' | 'money' | 'price' | 'percent' | 'date' | 'boolean' | 'enum';
 export type DateOrder = 'auto' | 'MDY' | 'DMY';
+/** How a file writes numbers: 1,234.56 ('en') or 1.234,56 ('eu'). */
+export type NumberFormat = 'en' | 'eu';
+export const NUMBER_FORMATS: NumberFormat[] = ['en', 'eu'];
 
 export interface FieldSpec {
   key: string;
@@ -254,7 +257,36 @@ export function coerceText(v: Cell): Coerced<string> {
   return ok(String(v).trim());
 }
 
-export function coerceNumber(v: Cell): Coerced<number> {
+/** Currency signs and the spaces, underscores and apostrophes some locales group digits with ("1 234", "1'000"). */
+const NUMBER_NOISE = /[$€£¥\s_'’  ]/g;
+/** One separator once, after one to three digits and before exactly three: "1,000" and "500.000" read either way. */
+const AMBIGUOUS_GROUPING = /^-?[1-9]\d{0,2}[.,]\d{3}$/;
+
+/**
+ * The digits of a number as written, as Number() reads them. With both
+ * separators the last is the decimal point ("1,234.56", "1.234,56"); one kind
+ * used more than once groups thousands ("1,000,000", "1.000.000"); one used
+ * once is a decimal point ("0,0001", "1.5") unless it could also group
+ * thousands ("1,000", "500.000"), where the file's format decides: commas
+ * group in 'en', dots in 'eu'.
+ */
+function plainDigits(s: string, format: NumberFormat): string {
+  const commas = s.split(',').length - 1;
+  const dots = s.split('.').length - 1;
+  if (commas && dots) return s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  if (commas + dots === 0) return s;
+  const separator = commas ? ',' : '.';
+  if (commas + dots > 1) return s.split(separator).join('');
+  if (AMBIGUOUS_GROUPING.test(s) && (separator === ',') === (format === 'en')) return s.replace(separator, '');
+  return s.replace(',', '.');
+}
+
+/** True for a value like "1,000" or "500.000", which means a thousand times more in one number format than in the other. */
+export function isAmbiguousNumber(v: Cell): boolean {
+  return typeof v === 'string' && AMBIGUOUS_GROUPING.test(v.trim().replace(NUMBER_NOISE, ''));
+}
+
+export function coerceNumber(v: Cell, format: NumberFormat = 'en'): Coerced<number> {
   if (blank(v)) return empty();
   if (typeof v === 'number') return Number.isFinite(v) ? ok(v) : bad('is not a number');
   if (typeof v === 'boolean') return bad('is not a number');
@@ -262,36 +294,37 @@ export function coerceNumber(v: Cell): Coerced<number> {
   if (/^(-|—|n\/?a|none|null|uncapped|no cap|tbd)$/i.test(s)) return empty();
   let negative = false;
   if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1); }
-  s = s.replace(/[$€£¥,\s_]/g, '');
-  const scaled = /^(-?\d+(?:\.\d+)?)\s*([kmb])$/i.exec(s);
-  if (scaled) {
-    const mult = { k: 1e3, m: 1e6, b: 1e9 }[scaled[2].toLowerCase() as 'k' | 'm' | 'b'];
-    s = String(Number(scaled[1]) * mult);
-  }
+  s = s.replace(NUMBER_NOISE, '');
   if (s.endsWith('%')) return bad(`"${v}" is a percentage, not a number`);
-  const n = Number(s);
-  if (!Number.isFinite(n)) return bad(`"${v}" is not a number`);
+  let multiplier = 1;
+  const scaled = /^(-?[\d.,]+)([kmb])$/i.exec(s);
+  if (scaled) {
+    multiplier = { k: 1e3, m: 1e6, b: 1e9 }[scaled[2].toLowerCase() as 'k' | 'm' | 'b'];
+    s = scaled[1];
+  }
+  const n = Number(plainDigits(s, format)) * multiplier;
+  if (s === '' || !Number.isFinite(n)) return bad(`"${v}" is not a number`);
   return ok(negative ? -n : n);
 }
 
 /** Dollars to integer cents. */
-export function coerceMoney(v: Cell): Coerced<number> {
-  const n = coerceNumber(v);
+export function coerceMoney(v: Cell, format: NumberFormat = 'en'): Coerced<number> {
+  const n = coerceNumber(v, format);
   return n.value == null ? n : ok(Math.round(n.value * 100));
 }
 
 /** Dollars per share to integer micro-cents. */
-export function coercePrice(v: Cell): Coerced<number> {
-  const n = coerceNumber(v);
+export function coercePrice(v: Cell, format: NumberFormat = 'en'): Coerced<number> {
+  const n = coerceNumber(v, format);
   return n.value == null ? n : ok(Math.round(n.value * 1_000_000));
 }
 
 /** "20%", "20" and "0.2" all become 0.2; values at or below 1 are already fractions. */
-export function coercePercent(v: Cell): Coerced<number> {
+export function coercePercent(v: Cell, format: NumberFormat = 'en'): Coerced<number> {
   if (blank(v)) return empty();
   const s = String(v).trim();
   const hasSign = s.endsWith('%');
-  const n = coerceNumber(hasSign ? s.slice(0, -1) : s);
+  const n = coerceNumber(hasSign ? s.slice(0, -1) : s, format);
   if (n.value == null) return n.error ? bad(`"${v}" is not a percentage`) : n;
   const fraction = hasSign || n.value > 1 ? n.value / 100 : n.value;
   if (fraction < 0 || fraction > 1) return bad(`"${v}" is not a percentage between 0 and 100`);
@@ -361,6 +394,67 @@ export function coerceDate(v: Cell, order: DateOrder = config().locale.importDat
 
 const withRaw = (c: Coerced<string>, raw: string): Coerced<string> => (c.error ? bad(`"${raw}" ${c.error}`) : c);
 
+/** The first two numbers of a date written as text like 03/04/2024 or 15.01.24, which the day-month order decides; null for any other cell. */
+export function dateParts(v: Cell): [number, number] | null {
+  if (typeof v !== 'string') return null;
+  const m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/.exec(v.trim());
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+
+/** Where a sheet shows how it writes something: the cell as written and its 1-based row in the spreadsheet. */
+export interface Evidence { text: string; row: number }
+
+export interface NumberFormatReading {
+  format: NumberFormat;
+  /** 'file' when a value can only be read one way, 'delimiter' for a semicolon CSV, 'default' from locale.locale. */
+  decidedBy: 'file' | 'delimiter' | 'default';
+  evidence: Evidence | null;
+  /** Values that can only be read as 'en' and others only as 'eu': the majority won. */
+  mixed: boolean;
+}
+
+/** Text that is only a number, with what grouping and currency it carries taken away. */
+const numberText = (c: Cell): string | null => {
+  if (typeof c !== 'string') return null;
+  const s = c.trim().replace(/^\((.*)\)$/, '$1').replace(NUMBER_NOISE, '').replace(/%$/, '').replace(/[kmb]$/i, '');
+  return /^-?\d[\d.,]*$/.test(s) && /[.,]/.test(s) ? s : null;
+};
+/** Written only the European way: "1.234,56", "1.000.000", "0,0001", "1,5". */
+const ONLY_EU = [/^-?\d{1,3}(\.\d{3})+,\d+$/, /^-?\d{1,3}(\.\d{3}){2,}$/, /^-?\d+,\d+$/];
+/** Written only the English way: "1,234.56", "1,000,000", "0.0001", "1.5". */
+const ONLY_EN = [/^-?\d{1,3}(,\d{3})+\.\d+$/, /^-?\d{1,3}(,\d{3}){2,}$/, /^-?\d+\.\d+$/];
+
+/** The decimal separator of locale.locale decides when the file does not. */
+const localeFormat = (): NumberFormat => {
+  try { return new Intl.NumberFormat(config().locale.locale).format(1.5).includes(',') ? 'eu' : 'en'; } catch { return 'en'; }
+};
+
+/**
+ * How a sheet writes its numbers, from the values that can only be read one way:
+ * "0,0001" or "1.234,56" only as 1.234,56, "0.0001" or "1,234,567" only as
+ * 1,234.56. "1,000" and "500.000" say nothing. With no telling value, a CSV
+ * separated by semicolons is taken as European, and anything else follows
+ * locale.locale. `firstRow` is the spreadsheet row of rows[0], for the evidence.
+ */
+export function detectNumberFormat(rows: Cell[][], delimiter: string | null = null, firstRow = 1): NumberFormatReading {
+  let eu: Evidence | null = null, en: Evidence | null = null;
+  let euCount = 0, enCount = 0;
+  rows.slice(0, 5000).forEach((row, i) => {
+    for (const cell of row) {
+      const s = numberText(cell);
+      if (!s || AMBIGUOUS_GROUPING.test(s)) continue;
+      if (ONLY_EU.some((p) => p.test(s))) { euCount++; eu ??= { text: String(cell).trim(), row: firstRow + i }; }
+      else if (ONLY_EN.some((p) => p.test(s))) { enCount++; en ??= { text: String(cell).trim(), row: firstRow + i }; }
+    }
+  });
+  if (euCount || enCount) {
+    const format: NumberFormat = euCount > enCount ? 'eu' : 'en';
+    return { format, decidedBy: 'file', evidence: format === 'eu' ? eu : en, mixed: euCount > 0 && enCount > 0 };
+  }
+  if (delimiter === ';') return { format: 'eu', decidedBy: 'delimiter', evidence: null, mixed: false };
+  return { format: localeFormat(), decidedBy: 'default', evidence: null, mixed: false };
+}
+
 // ---------------------------------------------------------------------------
 // Enumerations — tolerant of the many ways spreadsheets spell them
 // ---------------------------------------------------------------------------
@@ -421,6 +515,10 @@ export function coerceRelation(v: Cell): Coerced<string> {
   if (/advisor|adviser|advisory/.test(s)) return ok('ADVISOR');
   if (/contractor|consultant|freelance/.test(s)) return ok('CONTRACTOR');
   if (/investor|fund|angel|vc|venture|lp|shareholder|lender/.test(s)) return ok('INVESTOR');
+  // A board member is given a seat (boardSeatOf in engine.ts), so what only sounds like one is not:
+  // an observer attends without a seat, and a "director of" something is a job title.
+  if (/observer/.test(s)) return ok('OTHER');
+  if (/director of/.test(s)) return ok('EMPLOYEE');
   if (/board|director/.test(s)) return ok('BOARD_MEMBER');
   if (/other|misc/.test(s)) return ok('OTHER');
   return bad(`"${v}" is not a recognised relationship`);
@@ -448,7 +546,8 @@ export function guessStakeholderType(name: string): 'INDIVIDUAL' | 'ENTITY' | 'F
 /** "4y/1y monthly", "48/12", "4 years, 1 year cliff", "fully vested". */
 export function parseVestingShorthand(text: string): { durationMonths: number; cliffMonths: number; frequency: 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'; fullyVested: boolean } | null {
   const t = text.toLowerCase().trim();
-  if (!t) return null;
+  // A shorthand is a phrase: the cliff patterns below would take time over a long run of digits.
+  if (!t || t.length > 300) return null;
   if (/^(fully\s*vested|immediate(ly)?|vested|none|n\/?a|no vesting|100\s*%)$/.test(t)) {
     return { durationMonths: 0, cliffMonths: 0, frequency: 'MONTHLY', fullyVested: true };
   }
@@ -520,6 +619,12 @@ export interface SheetDetection {
   requiredCount: number;
   mapped: number;
   reason: string | null;
+  /**
+   * Required fields of `kind` with no column and no fixed value. Empty when the
+   * sheet is ready; set when the sheet is plainly a ledger short of a column
+   * (certificates with no share class), so the person is asked for it.
+   */
+  missing: string[];
 }
 
 const KIND_ORDER: ImportKind[] = ['stakeholders', 'captable', 'grants', 'convertibles'];
@@ -551,7 +656,12 @@ export function suggestForSheet(kind: ImportKind, sheetName: string | null, head
   const required = IMPORT_KINDS[kind].fields.filter((f) => f.required);
   const score = required.filter((f) => mapping[f.key] != null || f.key in constants).length;
   const mapped = Object.values(mapping).filter((v) => v != null).length + Object.keys(constants).length;
-  return { mapping, constants, score, requiredCount: required.length, mapped };
+  return { mapping, constants, score, requiredCount: required.length, mapped, missing: missingFields(kind, { mapping, constants }) };
+}
+
+/** Required fields of a kind that a suggestion leaves without a column or a fixed value. */
+export function missingFields(kind: ImportKind, s: { mapping: Record<string, unknown>; constants?: Record<string, string> }): string[] {
+  return IMPORT_KINDS[kind].fields.filter((f) => f.required && s.mapping[f.key] == null && !(f.key in (s.constants ?? {}))).map((f) => f.key);
 }
 
 /**
@@ -560,38 +670,58 @@ export function suggestForSheet(kind: ImportKind, sheetName: string | null, head
  * name implies); summary and ownership tabs fail that test and are left out.
  * Among candidates the most specific wins — more required fields covered, then
  * what the name says, then the caller's preference, then the most columns used.
+ *
+ * A ledger short of one column is still a ledger: rows of holders and share
+ * counts (or amounts) with no share class column are certificates that need
+ * the class, not a stakeholder list whose numbers can be dropped. Such a sheet
+ * comes back with its kind and the fields it is `missing`, so the person is
+ * asked for them instead of losing the columns without a word.
  */
 export function detectSheet(name: string, headers: Cell[], rowCount: number, preferred: ImportKind | null = null): SheetDetection {
   const hint = kindHintFromName(name);
   const perKind = KIND_ORDER.map((kind) => ({ kind, ...suggestForSheet(kind, name, headers) }));
   const fallback = perKind.find((k) => k.kind === (preferred ?? 'captable'))!;
-  if (rowCount <= 0) return { ...fallback, kind: null, reason: 'No data rows below the header' };
+  if (rowCount <= 0) return { ...fallback, kind: null, missing: [], reason: 'No data rows below the header' };
+
+  // A holder column and a share count or amount, but not every required column: a ledger with a gap. A sheet
+  // named for people ("Shareholders") needs one more ledger column than that, since a people list may carry a total.
+  const nearLedger = perKind
+    .filter((k) => k.kind !== 'stakeholders' && k.score < k.requiredCount && k.score >= (hint === 'stakeholders' ? 3 : 2)
+      && k.mapping.stakeholderName != null && (k.mapping.quantity != null || k.mapping.principal != null)
+      && (hint == null || hint === k.kind || hint === 'stakeholders'))
+    .sort((a, b) => b.score - a.score || (hint === b.kind ? 1 : 0) - (hint === a.kind ? 1 : 0)
+      || (preferred === b.kind ? 1 : 0) - (preferred === a.kind ? 1 : 0) || b.mapped - a.mapped)[0];
+  const withGap = (k: typeof perKind[number]): SheetDetection => {
+    const labels = k.missing.map((key) => IMPORT_KINDS[k.kind].fields.find((f) => f.key === key)!.label.toLowerCase());
+    return { ...k, reason: `Looks like ${IMPORT_KINDS[k.kind].label.toLowerCase()}, but no column holds the ${labels.join(' or the ')}.` };
+  };
 
   // A stakeholder list carries contact details; an ownership summary has a name, maybe a type, and numbers.
   const isPeopleList = (k: typeof perKind[number]): boolean =>
     hint === 'stakeholders' || STAKEHOLDER_EVIDENCE.some((f) => k.mapping[f] != null);
   const candidates = perKind.filter((k) => k.score === k.requiredCount && (k.kind !== 'stakeholders' || isPeopleList(k)));
   if (candidates.length === 0) {
+    if (nearLedger) return withGap(nearLedger);
     const closest = [...perKind].filter((k) => k.kind !== 'stakeholders').sort((a, b) => b.score - a.score || b.mapped - a.mapped)[0];
     if (closest.score < 2) {
       const people = perKind.find((k) => k.kind === 'stakeholders')!;
       return {
-        ...fallback, kind: null,
+        ...fallback, kind: null, missing: [],
         reason: people.mapping.stakeholderName != null
           ? 'Names without contact details or ledger columns — looks like an ownership summary, not a stakeholder list.'
           : 'No ledger columns — looks like a summary.',
       };
     }
-    const missing = IMPORT_KINDS[closest.kind].fields
-      .filter((f) => f.required && closest.mapping[f.key] == null && !(f.key in closest.constants))
-      .map((f) => f.label.toLowerCase());
+    const missing = missingFields(closest.kind, closest).map((key) => IMPORT_KINDS[closest.kind].fields.find((f) => f.key === key)!.label.toLowerCase());
     return {
-      ...fallback, kind: null,
+      ...fallback, kind: null, missing: [],
       reason: `Not a ${IMPORT_KINDS[closest.kind].label.toLowerCase()} sheet — no column for ${missing.join(', ')}. Probably a summary.`,
     };
   }
   const rank = (k: typeof candidates[number]): number =>
     k.score * 1000 + (hint === k.kind ? 100 : 0) + (preferred === k.kind ? 10 : 0) + Math.min(k.mapped, 9);
   const best = candidates.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+  // Only a stakeholder list fits, yet the sheet has share counts or amounts: read as people, they would be dropped.
+  if (best.kind === 'stakeholders' && nearLedger) return withGap(nearLedger);
   return { ...best, reason: null };
 }

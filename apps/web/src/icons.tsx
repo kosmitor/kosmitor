@@ -56,6 +56,8 @@ const PATHS: Record<string, string> = {
   more: 'M5.6 12h.8M11.6 12h.8M17.6 12h.8',
   send: 'M20.5 3.5 10 14M20.5 3.5l-6.7 17-3.8-6.5-6.5-3.8 17-6.7Z',
   eye: 'M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12ZM12 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Z',
+  // A clipboard with a tick: the header's "My pending actions".
+  tasks: 'M9 3.75h6v3H9zM9 5.25H6.5A1.5 1.5 0 0 0 5 6.75V19.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V6.75a1.5 1.5 0 0 0-1.5-1.5H15M8.75 13.5l2.25 2.25 4.25-4.5',
 };
 
 export type IconName = keyof typeof PATHS;

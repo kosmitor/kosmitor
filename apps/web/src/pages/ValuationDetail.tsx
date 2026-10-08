@@ -14,8 +14,9 @@ import { useSession } from '../session.tsx';
 import { useQuery } from '../api.ts';
 import { RecordPage, RecordSection, RecordColumns, RecordMissing } from '../RecordPage.tsx';
 import {
-  Badge, Loading, ErrorNote, EmptyState, KeyValue, Banner, Table, TH, TD, TR,
+  Badge, Loading, ErrorNote, EmptyState, KeyValue, Banner,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
 import { money, shares, pps, date, relativeDate, dateTime, today, AWARD_LABELS } from '../format.ts';
@@ -27,6 +28,9 @@ const VALUATION_TYPES: Record<string, string> = {
   '409A': '409A valuation', PREFERRED_PRICE: 'Preferred round price',
   BOARD_ESTIMATE: 'Board estimate', SECONDARY: 'Secondary transaction',
 };
+
+/** A grant's name in the table: its label, or the end of its id when it has none. */
+const grantName = (g: { label?: string | null; id: string }): string => g.label ?? String(g.id).slice(-6).toUpperCase();
 
 export default function ValuationDetail() {
   const { id } = useParams<{ id: string }>();
@@ -66,7 +70,7 @@ export default function ValuationDetail() {
       : !reportDocument && reportLink
         ? [{ label: 'Open the report', icon: 'external' as const, onClick: () => window.open(reportLink, '_blank', 'noopener') }]
         : []),
-    { label: 'See the equity awards', icon: 'award' as const, onClick: () => navigate('/grants') },
+    { label: 'Open Equity grants', icon: 'award' as const, onClick: () => navigate('/grants') },
     ...(canEdit
       ? [{ label: 'Edit on the valuations page', icon: 'edit' as const, onClick: () => navigate('/compliance/409a') }] : []),
   ];
@@ -147,47 +151,44 @@ export default function ValuationDetail() {
         </p>
       </RecordSection>
 
-      <RecordSection title="Grants priced off this valuation"
+      <DataTable className="mt-5" title="Grants priced off this valuation" caption="Grants priced off this valuation"
         subtitle={supersededBy
           ? `Granted between ${date(valuation.effectiveDate)} and ${date(supersededBy)}`
-          : `Granted since ${date(valuation.effectiveDate)}`}>
-        {pricedGrants.length === 0 ? (
-          <EmptyState title="No grants were made under this valuation"
-            description="Grants made while this was the most recent valuation appear here with the strike price they were given." />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Grant</TH><TH>Holder</TH><TH>Type</TH>
-                <TH align="right">Shares</TH><TH align="right">Strike price</TH>
-                <TH>Grant date</TH><TH>Against this valuation</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {pricedGrants.map((g: any) => (
-                <TR key={g.id} className={g.belowFairMarketValue ? 'bg-red-50/40' : undefined}>
-                  <TD className="font-medium">
-                    <Link to={`/grants/${g.id}`}
-                      className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
-                      {g.label ?? String(g.id).slice(-6).toUpperCase()}
-                    </Link>
-                  </TD>
-                  <TD className="text-ink-600">{g.holder}</TD>
-                  <TD><Badge tone={g.type === 'ISO' ? 'brand' : g.type === 'RSU' ? 'info' : 'neutral'}>{AWARD_LABELS[g.type] ?? g.type}</Badge></TD>
-                  <TD align="right" mono>{shares(g.quantity)}</TD>
-                  <TD align="right" mono className={g.belowFairMarketValue ? 'font-medium text-red-700' : undefined}>{pps(g.strikePrice)}</TD>
-                  <TD className="text-ink-600">{date(g.grantDate)}</TD>
-                  <TD>
-                    {g.belowFairMarketValue
-                      ? <Badge tone="danger">Below fair market value</Badge>
-                      : <Badge tone="success">At or above</Badge>}
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </RecordSection>
+          : `Granted since ${date(valuation.effectiveDate)}`}
+        rows={pricedGrants} rowKey={(g) => g.id}
+        search={{ placeholder: 'Search by grant, holder or type', by: (g) => [grantName(g), g.holder, AWARD_LABELS[g.type] ?? g.type] }}
+        rowTone={(g) => (g.belowFairMarketValue ? 'red' : undefined)}
+        empty={<EmptyState title="No grants were made under this valuation"
+          description="Grants made while this was the most recent valuation appear here with the strike price they were given." />}
+        columns={[
+          {
+            key: 'grant', label: 'Grant', value: (g) => grantName(g),
+            className: 'font-medium',
+            cell: (g) => (
+              <Link to={`/grants/${g.id}`}
+                className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
+                {grantName(g)}
+              </Link>
+            ),
+          },
+          { key: 'holder', label: 'Holder', value: (g) => g.holder, className: 'whitespace-nowrap text-ink-600' },
+          {
+            key: 'type', label: 'Type', value: (g) => AWARD_LABELS[g.type] ?? g.type,
+            cell: (g) => <Badge tone={g.type === 'ISO' ? 'brand' : g.type === 'RSU' ? 'info' : 'neutral'}>{AWARD_LABELS[g.type] ?? g.type}</Badge>,
+          },
+          { key: 'quantity', label: 'Shares', type: 'number', value: (g) => g.quantity },
+          {
+            key: 'strikePrice', label: 'Strike price', type: 'price', value: (g) => g.strikePrice,
+            className: (g) => (g.belowFairMarketValue ? 'font-medium text-red-700' : undefined),
+          },
+          { key: 'grantDate', label: 'Grant date', type: 'date', value: (g) => g.grantDate, className: 'text-ink-600' },
+          {
+            key: 'against', label: 'Against this valuation', value: (g) => (g.belowFairMarketValue ? 'Below' : 'At or above'),
+            cell: (g) => (g.belowFairMarketValue
+              ? <Badge tone="danger">Below fair market value</Badge>
+              : <Badge tone="success">At or above</Badge>),
+          },
+        ]} />
 
       <RecordSection title="Documents" subtitle="Everything filed under valuations for this company, newest first">
         {documents.length === 0 ? (

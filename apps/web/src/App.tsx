@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './session.tsx';
-import { Avatar, Button, Loading, cx } from './ui.tsx';
+import { Avatar, Loading, cx } from './ui.tsx';
 import { Icon, Logo } from './icons.tsx';
 import { NAV, type NavItem, type Requirement } from './nav.ts';
-import { SearchPalette, SearchButton } from './search.tsx';
+import { SearchPalette } from './search.tsx';
+import { AppHeader } from './AppHeader.tsx';
 import { config, PRODUCT } from './config.ts';
 
 import SignIn from './pages/SignIn.tsx';
@@ -46,7 +47,6 @@ const Team = lazy(() => import('./pages/Team.tsx'));
 const Company = lazy(() => import('./pages/Company.tsx'));
 const Portal = lazy(() => import('./pages/Portal.tsx'));
 const Preferences = lazy(() => import('./pages/Preferences.tsx'));
-import { AccountMenu } from './AccountMenu.tsx';
 import { AssistantLauncher } from './assistant/AssistantLauncher.tsx';
 import { AssistantPanelProvider, useAssistantPanel } from './assistant/shared.tsx';
 const Onboarding = lazy(() => import('./pages/Onboarding.tsx'));
@@ -63,7 +63,7 @@ function isWithin(item: NavItem, pathname: string): boolean {
   return (item.to != null && item.to !== '/' && under(item.to)) || (item.children ?? []).some((child) => under(child.to));
 }
 
-function Sidebar({ open, onClose, onSearch }: { open: boolean; onClose: () => void; onSearch: () => void }) {
+function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { company, companies, selectCompany, canEdit, canViewAll, isAdmin } = useSession();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const location = useLocation();
@@ -92,8 +92,8 @@ function Sidebar({ open, onClose, onSearch }: { open: boolean; onClose: () => vo
         // and away from screen readers; sliding it off screen alone left it reachable.
         open ? 'translate-x-0' : '-translate-x-full max-lg:invisible',
       )}>
-        {/* Brand + company switcher */}
-        <div className="relative border-b border-ink-100 p-3">
+        {/* Brand + company switcher, as tall as the header beside it so the lines under them meet. */}
+        <div className="relative flex h-14 shrink-0 items-center border-b border-ink-200 px-3">
           <button onClick={() => setSwitcherOpen((v) => !v)}
             className="flex w-full items-center gap-2.5 rounded-lg p-1.5 text-left hover:bg-ink-50">
             <Logo className="size-8 shrink-0 text-brand-600" />
@@ -126,8 +126,6 @@ function Sidebar({ open, onClose, onSearch }: { open: boolean; onClose: () => vo
             </div>
           )}
         </div>
-
-        <div className="px-3 pt-3"><SearchButton onClick={() => { onClose(); onSearch(); }} /></div>
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
@@ -215,11 +213,6 @@ function Sidebar({ open, onClose, onSearch }: { open: boolean; onClose: () => vo
             );
           })}
         </nav>
-
-        {/* The person: their own equity, their preferences, and signing out. */}
-        <div className="border-t border-ink-100 p-2">
-          <AccountMenu onNavigate={onClose} />
-        </div>
       </aside>
     </>
   );
@@ -261,19 +254,10 @@ function Shell() {
 
   return (
     <div className="min-h-screen">
-      <Sidebar open={navOpen} onClose={() => setNavOpen(false)} onSearch={() => setSearchOpen(true)} />
+      <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
       <div className="min-h-screen bg-canvas lg:pl-60">
-        <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b border-ink-200 bg-white/85 px-4 backdrop-blur lg:hidden">
-          <Button variant="ghost" size="sm" onClick={openNav} aria-label="Open navigation">
-            <Icon name="menu" className="size-5" />
-          </Button>
-          <span className="text-sm font-semibold">{PRODUCT}</span>
-          <button onClick={() => setSearchOpen(true)} aria-label="Search"
-            className="ml-auto rounded-md p-1.5 text-ink-500 hover:bg-ink-100 hover:text-ink-800">
-            <Icon name="search" className="size-5" />
-          </button>
-        </header>
+        <AppHeader onOpenNav={openNav} onSearch={() => setSearchOpen(true)} />
         {isSample && (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-[13px] text-amber-900">
             This is the sample company. Explore every screen freely; its records cannot be changed.
@@ -331,7 +315,7 @@ function Shell() {
             <Route path="/team" element={<Team />} />
             <Route path="/settings" element={<Navigate to="/company" replace />} />
             <Route path="/onboarding" element={<Onboarding />} />
-            <Route path="/import" element={<ImportData />} />
+            <Route path="/import/*" element={<ImportData />} />
             <Route path="*" element={<Navigate to="/" replace />} />
               </>
             )}

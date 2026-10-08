@@ -62,7 +62,7 @@ resource "azurerm_container_app_environment" "main" {
 
 locals {
   # The app's environment. APP_URL, ALLOWED_ORIGINS, PG_POOL_MAX, TRUST_PROXY,
-  # MAIL_FROM and GOOGLE_* win over kosmitor.config.json in the image, which (with
+  # MAIL_FROM, GOOGLE_* and VALUATION_DESK_EMAIL win over kosmitor.config.json in the image, which (with
   # kosmitor.config.local.json when the build context has one) supplies every
   # other setting. Container Apps ingress is a proxy in front of every request,
   # so the client address comes from X-Forwarded-For.
@@ -80,6 +80,7 @@ locals {
     { MAIL_FROM = local.mail_from },
     var.google_client_id != "" ? { GOOGLE_CLIENT_ID = var.google_client_id } : {},
     var.google_allowed_domains != "" ? { GOOGLE_ALLOWED_DOMAINS = var.google_allowed_domains } : {},
+    length(var.valuation_desk_emails) > 0 ? { VALUATION_DESK_EMAIL = join(",", var.valuation_desk_emails) } : {},
   )
 }
 
@@ -218,6 +219,15 @@ resource "azurerm_container_app" "main" {
     terraform_data.image,
     azurerm_communication_service_email_domain_association.custom,
   ]
+
+  lifecycle {
+    # Images up to v21 read VALUATION_DESK_EMAIL as one address and refuse a list,
+    # so a revision with several would not start. Stops the plan instead.
+    precondition {
+      condition     = length(var.valuation_desk_emails) <= 1 || !can(regex("^v([0-9]|1[0-9]|2[01])$", var.image_tag))
+      error_message = "valuation_desk_emails lists more than one address, which needs an image built after v21: image_tag ${var.image_tag} reads one address and would not start."
+    }
+  }
 }
 
 # --- Scheduled jobs from the same image -------------------------------------

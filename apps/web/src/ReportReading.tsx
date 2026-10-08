@@ -1,13 +1,15 @@
 /**
- * What the server read from a 409A report the valuation team uploaded, shared by
- * the team's page and the company's.
+ * What the server read from a 409A report, shared by the valuation team's page
+ * and the company's: a report the team uploaded, or one the company imports on
+ * its 409A page.
  *
  * The server reads the PDF's text and picks out the fair market value per common
- * share, the valuation date and the method (report-detect.ts). Each value comes
- * with the words it was read from and how sure the reading is, so a person can
- * see where it came from and check it. Nothing here records anything: the team
- * confirms the values when it delivers the report, and the company records the
- * 409A only after someone there has checked them and pressed the button.
+ * share, the valuation date and the method (report-detect.ts), and for an import
+ * the firm that prepared the report and the company's value as well. Each value
+ * comes with the words it was read from and how sure the reading is, so a person
+ * can see where it came from and check it. Nothing here records anything: the
+ * team confirms the values when it delivers the report, and the company records
+ * the 409A only after someone there has checked them and pressed the button.
  */
 import { useId, useState } from 'react';
 import { Icon } from './icons.tsx';
@@ -36,6 +38,20 @@ export interface ReportDetection {
   valuationDate: Detected<string> | null;
   method: Detected<string> | null;
   candidates: { fairMarketValue: Detected<number>[]; valuationDate: Detected<string>[] };
+}
+
+/** The company's value a report states, in cents: its enterprise value, or its equity value where it states no enterprise value as surely. */
+export interface CompanyValue extends Detected<number> {
+  basis: 'enterprise' | 'equity';
+  /** Set when the figure is from a table in thousands or millions: `text` is as the table writes it. */
+  units?: 'thousands' | 'millions';
+}
+
+/** Everything read from a report the company imports: what the team's page reads, and the appraiser and the company's value. */
+export interface ReportReading extends ReportDetection {
+  /** The firm that prepared the report, never the company it values. */
+  appraiser: Detected<string> | null;
+  enterpriseValue: CompanyValue | null;
 }
 
 /** The report as the team's page sees it. */
@@ -103,21 +119,21 @@ function Context({ detected }: { detected: Detected<unknown> }) {
 }
 
 /** The small text buttons in a note: a taller hit area than the line they sit on, without moving the line. */
-const NOTE_BUTTON = '-my-1 py-1 font-medium text-brand-600 hover:text-brand-700';
+const NOTE_BUTTON = '-my-1 whitespace-nowrap py-1 font-medium text-brand-600 hover:text-brand-700';
 
 /**
- * The line under a field the report filled in. While the field holds what was
- * read, it says so, and asks for a second look when the reading was not sure of
- * itself. Once someone has typed something else, it says what the report reads
- * instead, with a button to put it back. Either way, the words it came from are
- * a click away.
+ * The line under a field the report filled in, kept to a few words. While the
+ * field holds what was read, it says so, and asks for a second look when the
+ * reading was not sure of itself. Once someone has typed something else, it says
+ * what the report reads instead, with a button to put it back. Either way, the
+ * words it came from, and any longer explanation, are behind "Show where".
  *
  * The note sits outside the field's label, so its sentence carries `id` for the
  * field to name in aria-describedby: a screen reader then says where the value
  * came from when the field is reached, not only what it holds. Its buttons name
  * the field, since a page has one note for each.
  */
-export function ReadNote({ id, field, detected, shown, matches, onUse, unconfirmed = false }: {
+export function ReadNote({ id, field, detected, shown, matches, onUse, unconfirmed = false, caveat, detail }: {
   /** For the field's aria-describedby. */
   id: string;
   /** What the field holds, in words: "fair market value", "valuation date". */
@@ -131,11 +147,15 @@ export function ReadNote({ id, field, detected, shown, matches, onUse, unconfirm
   onUse: () => void;
   /** On the company's form: the team did not enter this value when it delivered the report, so only the reading stands behind it. */
   unconfirmed?: boolean;
+  /** What else to know about the value while the field holds it, in a few words after the note: "It is an equity value." */
+  caveat?: string;
+  /** The longer explanation, shown with the words the value came from rather than under the field. */
+  detail?: string;
 }) {
   const [open, setOpen] = useState(false);
   const whereId = useId();
   const unsure = detected.confidence !== 'high';
-  const warn = matches && (unsure || unconfirmed);
+  const warn = matches && (unsure || unconfirmed || !!caveat);
   return (
     <div className="mt-1.5 text-[12px]">
       <p className={cx('flex items-start gap-1.5', warn ? 'text-amber-800' : 'text-ink-500')}>
@@ -144,8 +164,10 @@ export function ReadNote({ id, field, detected, shown, matches, onUse, unconfirm
           <span id={id}>
             {matches
               ? unconfirmed ? 'Read from the report, not entered by the team. Check it.'
-                : unsure ? 'Read from the report. Check this one.' : 'Read from the report.'
-              : `The report reads ${shown}.`}
+                : unsure ? 'Read from the report. Check it.' : 'Read from the report.'
+              // A name that ends its own sentence ("Inc.") needs no second full stop.
+              : `The report reads ${shown}${/[.!?]$/.test(shown) ? '' : '.'}`}
+            {matches && caveat && ` ${caveat}`}
           </span>
           {!matches && (
             <>
@@ -162,10 +184,13 @@ export function ReadNote({ id, field, detected, shown, matches, onUse, unconfirm
         </span>
       </p>
       {/* A report's table can come out as one long run of leader dots before the price, so the words break anywhere rather than run off a phone's screen. */}
-      <p id={whereId} hidden={!open} className="mt-1 rounded-md bg-ink-50 px-2.5 py-1.5 leading-relaxed text-ink-700 [overflow-wrap:anywhere]">
-        <span className="mr-1.5 whitespace-nowrap font-medium text-ink-500">Page {detected.page}:</span>
-        “<Context detected={detected} />”
-      </p>
+      <div id={whereId} hidden={!open} className="mt-1 rounded-md bg-ink-50 px-2.5 py-1.5 leading-relaxed text-ink-700 [overflow-wrap:anywhere]">
+        <p>
+          <span className="mr-1.5 whitespace-nowrap font-medium text-ink-500">Page {detected.page}:</span>
+          “<Context detected={detected} />”
+        </p>
+        {detail && <p className="mt-1 text-ink-600">{detail}</p>}
+      </div>
     </div>
   );
 }

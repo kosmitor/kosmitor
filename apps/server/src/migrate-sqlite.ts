@@ -14,7 +14,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SERVER_DIR } from './env.ts';
-import { migrate, close, transaction, pool } from './db.ts';
+import { migrate, close, transaction, pool, ONCE } from './db.ts';
 
 const source = resolve(process.argv[2] ?? resolve(SERVER_DIR, 'data/captable.db'));
 if (!existsSync(source)) {
@@ -34,6 +34,7 @@ const present = new Set(
   (sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name));
 
 let copied = 0;
+const seatless: string[] = [];
 await transaction(async () => {
   const client = pool; // inside transaction() every query already uses the transaction's connection
   void client;
@@ -48,9 +49,16 @@ await transaction(async () => {
       });
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       const { run } = await import('./db.ts');
-      copied += await run(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`, ...values);
+      const added = await run(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`, ...values);
+      copied += added;
+      if (table === 'stakeholders' && added && !('board_seat' in row)) seatless.push(String(row.id));
     }
     if (rows.length) console.log(`${table}: ${rows.length} row${rows.length === 1 ? '' : 's'}`);
+  }
+  // SQLite predates board seats, and migrate() gave them out before these rows arrived: they get theirs the same way.
+  if (seatless.length) {
+    const { run } = await import('./db.ts');
+    await run(`${ONCE.find((step) => step.name === '2026-10-07-board-seats')!.sql} AND id IN (${seatless.map(() => '?').join(', ')})`, ...seatless);
   }
 });
 sqlite.close();

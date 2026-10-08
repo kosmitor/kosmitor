@@ -108,7 +108,7 @@ export default function Company() {
       <PageHeader concept="company-settings" title="Company" subtitle="Legal identity, the people who act for the company, and how this workspace behaves"
         actions={<Button variant="primary" onClick={save} loading={busy}>Save changes</Button>} />
 
-      <div className="grid gap-5 lg:grid-cols-3">
+      <div className="grid gap-5 lg:grid-cols-3 [&>*]:min-w-0">
         <div className="space-y-5 lg:col-span-2">
           <Card id="company">
             <CardHeader title="Company details" />
@@ -193,7 +193,7 @@ export default function Company() {
           <Card id="exercise-requests">
             <CardHeader title="Exercise requests" subtitle="Let option holders ask to exercise from My equity" />
             <Checkbox label="Accept exercise requests from holders" checked={form.exerciseRequestsEnabled}
-              hint="Requests land on Equity awards for review; nothing is recorded until you complete them."
+              hint="Requests land on Equity grants for review; nothing is recorded until you complete them."
               onChange={(v) => setForm({ ...form, exerciseRequestsEnabled: v })} />
             <div className="mt-4">
               <Field label="Payment instructions" hint="Shown to the holder once a request is approved — bank and wire details, who to notify, deadlines.">

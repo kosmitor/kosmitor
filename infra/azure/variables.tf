@@ -286,6 +286,32 @@ variable "google_allowed_domains" {
   default     = ""
 }
 
+variable "valuation_desk_emails" {
+  description = "The evaluators each new 409A request is emailed to, passed as VALUATION_DESK_EMAIL (comma separated). Each address gets an email of its own with the same private request link, so none sees the others; replies to the recap and status emails reach the first. Empty leaves valuationDesk.email from the param file. Removing an address does not take back the request links it was already sent (docs/valuation-desk.md). More than one needs an image newer than v21, which stops at start on a list."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  # The rule the server checks each address with (SINGLE_ADDRESS in apps/server/src/mail.ts),
+  # so a plan refuses what would otherwise stop the new revision at start. JavaScript's \s
+  # also matches Unicode spaces (a non-breaking space pasted from a document, say) and
+  # Terraform's matches only ASCII ones, so \v, \p{Z} and U+FEFF stand in for the rest.
+  validation {
+    condition     = alltrue([for e in var.valuation_desk_emails : can(regex("^[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+@[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+\\.[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+$", e))])
+    error_message = "Each entry of valuation_desk_emails must be one email address, with no name, spaces, commas or semicolons."
+  }
+
+  validation {
+    condition     = length(distinct([for e in var.valuation_desk_emails : lower(e)])) == length(var.valuation_desk_emails)
+    error_message = "valuation_desk_emails lists the same address twice."
+  }
+
+  validation {
+    condition     = length(var.valuation_desk_emails) <= 10
+    error_message = "valuation_desk_emails can hold at most 10 addresses (the server's limit)."
+  }
+}
+
 variable "tags" {
   description = "Extra tags for every resource."
   type        = map(string)

@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { useSession } from '../session.tsx';
 import { api } from '../api.ts';
 import {
-  PageHeader, Card, CardHeader, Table, TH, TD, TR, Badge, Button, Input, Field,
+  PageHeader, Card, CardHeader, Badge, Button, Input, Field,
   Stat, ErrorNote, Banner, Checkbox, EmptyState, Loading, KeyValue, InfoDot, SegmentedControl,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { PayoutCurve, PerShareCurve } from '../charts.tsx';
 import { Icon } from '../icons.tsx';
 import { money, shares, pps, percent, multiple, today, parseMoney, currencySymbol, RELATION_LABELS, amountHint } from '../format.ts';
@@ -14,6 +15,18 @@ import { config } from '../config.ts';
 const PRESETS = config.modeling.exitPresetsMillions;
 /** Whole currency units the way the exit value field reads them back: digits grouped with commas. */
 const grouped = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+/** An amount in a payout table, short ($1.2M), or a dash where it is nothing. */
+const compact = (field: string) => (row: any): string => (row[field] ? money(row[field], { compact: true }) : '—');
+/** What happened to a class at this exit, and the badge's tone. */
+function outcomeOf(c: any): [string, 'neutral' | 'brand' | 'warning' | 'purple' | 'info'] {
+  if (c.kind === 'COMMON') return ['Common', 'neutral'];
+  if (c.converted) return ['Converted to common', 'brand'];
+  if (c.cappedOut) return ['Participation capped', 'warning'];
+  if (c.kind === 'PREFERRED') return ['Took preference', 'purple'];
+  return ['Cashed out', 'info'];
+}
+/** A holder's proceeds from warrants, RSUs and convertibles, the table's Other. */
+const otherOf = (p: any): number => p.fromWarrants + p.fromRsus + p.fromConvertibles;
 
 export default function ModelExit() {
   const { companyId, canViewAll } = useSession();
@@ -76,7 +89,7 @@ export default function ModelExit() {
         subtitle="Who gets paid what, in what order, at any exit value"
         actions={<Button variant="primary" onClick={() => void run()} loading={running} icon={<Icon name="waterfall" />}>Run waterfall</Button>} />
 
-      <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
+      <div className="grid gap-5 lg:grid-cols-[340px_1fr] [&>*]:min-w-0">
         <div className="space-y-5">
           <Card>
             <CardHeader title="Exit assumptions" />
@@ -170,88 +183,60 @@ export default function ModelExit() {
                   tone={result.optionsUnderwater > 0 ? 'warning' : 'positive'} />
               </div>
 
-              <Card padded={false}>
-                <div className="p-5 pb-0">
-                  <CardHeader title="Distribution by share class"
-                    subtitle="Preferences pay by seniority; classes convert whenever converting beats taking the preference" />
-                </div>
-                <Table>
-                  <thead>
-                    <tr>
-                      <TH>Class</TH><TH align="right">Shares</TH>
-                      <TH align="right">Preference claim</TH><TH align="right">Preference paid</TH>
-                      <TH align="right">Participation</TH><TH align="right">Total</TH>
-                      <TH align="right">Per share</TH><TH align="right">Return</TH><TH>Outcome</TH>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.classPayouts.map((c: any) => (
-                      <TR key={c.shareClassId}>
-                        <TD>
-                          <span className="flex items-center gap-2">
-                            <span className="font-medium">{c.name}</span>
-                            {c.kind === 'PREFERRED' && <Badge tone="neutral">Rank {c.seniority}</Badge>}
-                          </span>
-                        </TD>
-                        <TD align="right" mono>{shares(c.shares)}</TD>
-                        <TD align="right" mono className="text-ink-600">{c.preferenceClaim ? money(c.preferenceClaim, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono>{c.preferencePaid ? money(c.preferencePaid, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono>{c.participation ? money(c.participation, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono className="font-semibold">{money(c.total, { compact: true })}</TD>
-                        <TD align="right" mono>{pps(c.perShare)}</TD>
-                        <TD align="right" mono className={c.multiple >= 1 ? 'text-secondary-800' : 'text-red-600'}>
-                          {c.kind === 'COMMON' ? '—' : multiple(c.multiple)}
-                        </TD>
-                        <TD>
-                          {c.kind === 'COMMON' ? <Badge tone="neutral">Common</Badge>
-                            : c.converted ? <Badge tone="brand">Converted to common</Badge>
-                            : c.cappedOut ? <Badge tone="warning">Participation capped</Badge>
-                            : c.kind === 'PREFERRED' ? <Badge tone="purple">Took preference</Badge>
-                            : <Badge tone="info">Cashed out</Badge>}
-                        </TD>
-                      </TR>
-                    ))}
-                  </tbody>
-                </Table>
-              </Card>
+              <DataTable title="Distribution by share class" caption="Distribution by share class"
+                subtitle="Preferences pay by seniority; classes convert whenever converting beats taking the preference"
+                rows={result.classPayouts} rowKey={(c: any) => c.shareClassId}
+                search={{ placeholder: 'Search classes', label: 'Search share classes', by: (c: any) => [c.name, outcomeOf(c)[0]] }}
+                columns={[
+                  {
+                    key: 'class', label: 'Class', value: (c) => c.name,
+                    cell: (c) => (
+                      <span className="flex items-center gap-2">
+                        <span className="font-medium">{c.name}</span>
+                        {c.kind === 'PREFERRED' && <Badge tone="neutral">Rank {c.seniority}</Badge>}
+                      </span>
+                    ),
+                  },
+                  { key: 'shares', label: 'Shares', type: 'number', value: (c) => c.shares },
+                  { key: 'claim', label: 'Preference claim', type: 'money', value: (c) => c.preferenceClaim || null, cell: compact('preferenceClaim'), className: 'text-ink-600' },
+                  { key: 'paid', label: 'Preference paid', type: 'money', value: (c) => c.preferencePaid || null, cell: compact('preferencePaid') },
+                  { key: 'participation', label: 'Participation', type: 'money', value: (c) => c.participation || null, cell: compact('participation') },
+                  { key: 'total', label: 'Total', type: 'money', value: (c) => c.total, cell: (c) => money(c.total, { compact: true }), className: 'font-semibold' },
+                  { key: 'perShare', label: 'Per share', type: 'price', value: (c) => c.perShare },
+                  {
+                    key: 'return', label: 'Return', type: 'number', value: (c) => (c.kind === 'COMMON' ? null : c.multiple),
+                    cell: (c) => (c.kind === 'COMMON' ? '—' : multiple(c.multiple)), className: (c) => (c.multiple >= 1 ? 'text-secondary-800' : 'text-red-600'),
+                  },
+                  { key: 'outcome', label: 'Outcome', value: (c) => outcomeOf(c)[0], cell: (c) => <Badge tone={outcomeOf(c)[1]}>{outcomeOf(c)[0]}</Badge> },
+                ]} />
 
-              <Card padded={false}>
-                <div className="p-5 pb-0">
-                  <CardHeader title="Proceeds by stakeholder" subtitle="Net of the cost to exercise options and warrants" />
-                </div>
-                <Table>
-                  <thead>
-                    <tr>
-                      <TH>Stakeholder</TH><TH>Relationship</TH>
-                      <TH align="right">From preferred</TH><TH align="right">From common</TH>
-                      <TH align="right">From options</TH><TH align="right">Other</TH>
-                      <TH align="right">Total</TH><TH align="right">Invested</TH>
-                      <TH align="right">Return</TH><TH align="right">% of exit</TH>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.stakeholderPayouts.map((p: any) => (
-                      <TR key={p.stakeholderId}>
-                        <TD className="font-medium">{p.name}</TD>
-                        <TD><Badge tone="neutral">{RELATION_LABELS[p.relation] ?? p.relation}</Badge></TD>
-                        <TD align="right" mono>{p.fromPreferred ? money(p.fromPreferred, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono>{p.fromCommon ? money(p.fromCommon, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono>{p.fromOptions ? money(p.fromOptions, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono className="text-ink-600">
-                          {p.fromWarrants + p.fromRsus + p.fromConvertibles
-                            ? money(p.fromWarrants + p.fromRsus + p.fromConvertibles, { compact: true }) : '—'}
-                        </TD>
-                        <TD align="right" mono className="font-semibold">{money(p.total, { compact: true })}</TD>
-                        <TD align="right" mono className="text-ink-600">{p.invested ? money(p.invested, { compact: true }) : '—'}</TD>
-                        <TD align="right" mono className={p.multiple >= 1 ? 'text-secondary-800' : 'text-red-600'}>
-                          {p.invested > 100 ? multiple(p.multiple) : '—'}
-                        </TD>
-                        <TD align="right" mono>{percent(p.pctOfExit)}</TD>
-                      </TR>
-                    ))}
-                  </tbody>
-                </Table>
-              </Card>
+              <DataTable title="Proceeds by stakeholder" caption="Proceeds by stakeholder"
+                subtitle="Net of the cost to exercise options and warrants"
+                rows={result.stakeholderPayouts} rowKey={(p: any) => p.stakeholderId}
+                // The engine lists the holders largest payout first.
+                defaultSort={{ key: 'total', direction: 'desc' }}
+                search={{ placeholder: 'Search stakeholders', label: 'Search stakeholders by name or relationship', by: (p: any) => [p.name, RELATION_LABELS[p.relation] ?? p.relation] }}
+                columns={[
+                  { key: 'name', label: 'Stakeholder', value: (p) => p.name, className: 'font-medium' },
+                  {
+                    key: 'relation', label: 'Relationship', value: (p) => RELATION_LABELS[p.relation] ?? p.relation,
+                    cell: (p) => <Badge tone="neutral">{RELATION_LABELS[p.relation] ?? p.relation}</Badge>,
+                  },
+                  { key: 'preferred', label: 'From preferred', type: 'money', value: (p) => p.fromPreferred || null, cell: compact('fromPreferred') },
+                  { key: 'common', label: 'From common', type: 'money', value: (p) => p.fromCommon || null, cell: compact('fromCommon') },
+                  { key: 'options', label: 'From options', type: 'money', value: (p) => p.fromOptions || null, cell: compact('fromOptions') },
+                  {
+                    key: 'other', label: 'Other', type: 'money', value: (p) => otherOf(p) || null, className: 'text-ink-600',
+                    cell: (p) => (otherOf(p) ? money(otherOf(p), { compact: true }) : '—'),
+                  },
+                  { key: 'total', label: 'Total', type: 'money', value: (p) => p.total, cell: (p) => money(p.total, { compact: true }), className: 'font-semibold' },
+                  { key: 'invested', label: 'Invested', type: 'money', value: (p) => p.invested || null, cell: compact('invested'), className: 'text-ink-600' },
+                  {
+                    key: 'return', label: 'Return', type: 'number', value: (p) => (p.invested > 100 ? p.multiple : null),
+                    cell: (p) => (p.invested > 100 ? multiple(p.multiple) : '—'), className: (p) => (p.multiple >= 1 ? 'text-secondary-800' : 'text-red-600'),
+                  },
+                  { key: 'pctOfExit', label: '% of exit', type: 'number', value: (p) => p.pctOfExit, cell: (p) => percent(p.pctOfExit) },
+                ]} />
 
               {curveData.data.length > 0 && (
                 <Card>

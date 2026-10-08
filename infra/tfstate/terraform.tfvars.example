@@ -1,0 +1,44 @@
+# Settings for the state storage. Copy to terraform.tfvars (ignored by git) and
+# fill in the first block; everything below it is optional and shows the
+# default. variables.tf describes each one in full.
+
+# --- Required -----------------------------------------------------------------
+
+subscription_id = "<your-subscription-id>"
+
+# Who may read and write state, by Entra ID object id. Yours:
+#   az ad signed-in-user show --query id -o tsv
+# Add a colleague's or a CI service principal's next to it (a service principal's
+# is az ad sp show --id <app-id> --query id -o tsv). Every writer can read every
+# stack's state, secrets included.
+state_writer_object_ids = ["<your-object-id>"]
+
+# --- Adopting existing storage ------------------------------------------------
+
+# An account that already exists, such as one made by the Azure CLI script that
+# preceded this stack; leave unset for a new one (tfstate plus 12 random hex
+# characters). README.md, "Adopting existing storage".
+# storage_account_name = "<your-state-storage-account>"
+
+# --- Names and region ---------------------------------------------------------
+
+# The original deployment keeps everything in the United States. The region must
+# offer Standard_GZRS, so only the US regions with availability zones are
+# accepted (centralus, eastus, eastus2, southcentralus, westus2, westus3); another
+# is refused unless allow_non_us = true.
+# location            = "eastus2"
+# allow_non_us        = false
+# resource_group_name = "rg-terraform-state"
+# container_name      = "tfstate"
+
+# --- Recovery -----------------------------------------------------------------
+
+# Earlier versions of each state are deleted this many days after they were
+# written; soft delete then keeps them, and deleted states and containers,
+# soft_delete_days more.
+# version_retention_days = 90
+# soft_delete_days       = 30
+
+# tags = {
+#   owner = "platform-team"
+# }

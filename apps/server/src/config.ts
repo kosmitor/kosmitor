@@ -42,6 +42,7 @@ interface Schema {
   minLength?: number;
   maxLength?: number;
   minItems?: number;
+  maxItems?: number;
   pattern?: string;
 }
 
@@ -91,6 +92,7 @@ export function checkAgainstSchema(value: unknown, schema: Schema, complete: boo
   }
   if (Array.isArray(value)) {
     if (schema.minItems !== undefined && value.length < schema.minItems) errors.push(`${where} needs at least ${schema.minItems} entr${schema.minItems === 1 ? 'y' : 'ies'}`);
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) errors.push(`${where} can hold at most ${schema.maxItems} entr${schema.maxItems === 1 ? 'y' : 'ies'}`);
     // A list replaces the default whole, so its entries are always checked in full.
     if (schema.items) value.forEach((item, i) => checkAgainstSchema(item, schema.items!, true, `${path}[${i}]`, errors));
   }
@@ -121,6 +123,12 @@ function checkTogether(c: KosmitorConfig): string[] {
   if (c.limits.reportRows > c.limits.reportMaxRows) errors.push('limits.reportRows cannot be more than limits.reportMaxRows');
   if (c.limits.reportPreviewRows > c.limits.reportMaxRows) errors.push('limits.reportPreviewRows cannot be more than limits.reportMaxRows');
   if (!c.valuationDesk.intake.plans.some((p) => p.value === 'NEITHER')) errors.push('valuationDesk.intake.plans must keep the NEITHER answer');
+  // noticesPerHour counts emails, one per address, so a list longer than it could never be sent a notice.
+  const desk = c.valuationDesk.email;
+  const evaluators = new Set((desk == null ? [] : Array.isArray(desk) ? desk : [desk]).map((a) => a.trim().toLowerCase())).size;
+  if (evaluators > c.valuationDesk.noticesPerHour) {
+    errors.push(`valuationDesk.noticesPerHour (${c.valuationDesk.noticesPerHour}) counts one email per address, so it cannot be fewer than the ${evaluators} addresses in valuationDesk.email`);
+  }
   const sumsToOne = (w: number[]) => Math.abs(w.reduce((a, b) => a + b, 0) - 1) < 1e-6;
   if (!sumsToOne(c.equity.backLoadedWeights)) errors.push('equity.backLoadedWeights must add up to 1');
   if (c.equity.cliffMonths > c.equity.vestingMonths) errors.push('equity.cliffMonths cannot be longer than equity.vestingMonths');
@@ -179,8 +187,11 @@ export function mergeSettings(base: JsonObject, change: JsonObject): JsonObject 
 
 const list = (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean);
 
-/** Environment variables that set one entry each, for values that differ per deployment. */
-const ENV: { name: string; path: string; parse: (v: string) => Json }[] = [
+/**
+ * Environment variables that set one entry each, for values that differ per
+ * deployment. `problem` names a mistake the schema's message would not explain.
+ */
+const ENV: { name: string; path: string; parse: (v: string) => Json; problem?: (v: string) => string | null }[] = [
   { name: 'APP_URL', path: 'app.url', parse: (v) => v.replace(/\/+$/, '') },
   { name: 'PORT', path: 'server.port', parse: Number },
   { name: 'ALLOWED_ORIGINS', path: 'server.allowedOrigins', parse: (v) => list(v).map((o) => o.replace(/\/+$/, '')) },
@@ -190,7 +201,13 @@ const ENV: { name: string; path: string; parse: (v: string) => Json }[] = [
   { name: 'VERIFY_EMAIL', path: 'auth.verifyEmail', parse: (v) => (/^(1|true|yes|on)$/i.test(v) ? true : /^(0|false|no|off)$/i.test(v) ? false : v) },
   { name: 'GOOGLE_CLIENT_ID', path: 'auth.google.clientId', parse: (v) => v },
   { name: 'GOOGLE_ALLOWED_DOMAINS', path: 'auth.google.allowedDomains', parse: (v) => list(v).map((d) => d.toLowerCase().replace(/^@/, '')) },
-  { name: 'VALUATION_DESK_EMAIL', path: 'valuationDesk.email', parse: (v) => v.toLowerCase() },
+  // One address stays a string, as it always was; several, comma separated, become a
+  // list, each address once, so one written twice does not count twice against its limit.
+  { name: 'VALUATION_DESK_EMAIL', path: 'valuationDesk.email', parse: (v) => {
+    const addresses = [...new Set(list(v).map((a) => a.toLowerCase()))];
+    return addresses.length === 1 ? addresses[0] : addresses;
+  }, problem: (v) => (list(v).some((a) => a.split('@').length > 2)
+    ? 'an entry holds more than one @: separate several addresses with commas, not spaces or semicolons' : null) },
   { name: 'BACKUP_CONTAINER', path: 'backup.container', parse: (v) => v },
   { name: 'BACKUP_PREFIX', path: 'backup.prefix', parse: (v) => v },
   { name: 'DRILL_DATABASE', path: 'backup.drillDatabase', parse: (v) => v },
@@ -199,20 +216,26 @@ const ENV: { name: string; path: string; parse: (v: string) => Json }[] = [
 /** Which environment variable sets which entry, for the docs. */
 export const ENV_OVERRIDES: readonly { name: string; path: string }[] = ENV.map(({ name, path }) => ({ name, path }));
 
-/** The environment variables above, as one more layer of changes. An empty variable counts as unset. */
-export function environmentLayer(env: NodeJS.ProcessEnv = process.env): { layer: JsonObject; used: string[] } {
+/**
+ * The environment variables above, as one more layer of changes, and what is
+ * plainly wrong with any of them. An empty variable counts as unset.
+ */
+export function environmentLayer(env: NodeJS.ProcessEnv = process.env): { layer: JsonObject; used: string[]; problems: string[] } {
   const layer: JsonObject = {};
   const used: string[] = [];
-  for (const { name, path, parse } of ENV) {
+  const problems: string[] = [];
+  for (const { name, path, parse, problem } of ENV) {
     const raw = env[name]?.trim();
     if (!raw) continue;
     used.push(name);
+    const wrong = problem?.(raw);
+    if (wrong) problems.push(`environment (${name}): ${wrong}`);
     const keys = path.split('.');
     let node = layer;
     for (const key of keys.slice(0, -1)) node = (node[key] ??= {}) as JsonObject;
     node[keys.at(-1)!] = parse(raw);
   }
-  return { layer, used };
+  return { layer, used, problems };
 }
 
 function deepFreeze<T>(value: T): T {
@@ -253,8 +276,9 @@ export function loadConfig(extra: JsonObject = {}): KosmitorConfig {
     errors.push(...checkAgainstSchema(layer, schema, false).map((e) => `${file}: ${e}`));
     merged = mergeSettings(merged, layer);
   }
-  const { layer: envLayer, used } = environmentLayer();
+  const { layer: envLayer, used, problems } = environmentLayer();
   if (used.length) {
+    errors.push(...problems);
     errors.push(...checkAgainstSchema(envLayer, schema, false).map((e) => `environment (${used.join(', ')}): ${e}`));
     merged = mergeSettings(merged, envLayer);
   }

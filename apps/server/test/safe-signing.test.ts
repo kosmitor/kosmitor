@@ -38,7 +38,7 @@ const cid = (await call('POST', '/api/companies', { name: 'Raiseco', legalName: 
 const now = new Date().toISOString();
 await insert('stakeholders', { id: 'stk_halcyon', companyId: cid, name: 'Halcyon Ventures', email: 'deals@halcyon.example.com', type: 'FUND', relation: 'INVESTOR', createdAt: now });
 await insert('stakeholders', { id: 'stk_noor', companyId: cid, name: 'Noor Haddad', email: 'noor@example.com', type: 'INDIVIDUAL', relation: 'INVESTOR', createdAt: now });
-await insert('stakeholders', { id: 'stk_dana', companyId: cid, name: 'Dana Okafor', email: 'dana@example.com', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', createdAt: now });
+await insert('stakeholders', { id: 'stk_dana', companyId: cid, name: 'Dana Okafor', email: 'dana@example.com', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', boardSeat: 1, createdAt: now });
 const terms = { instrument: 'SAFE_POST', valuationCap: 1_200_000_000, discount: 0.2, mfn: true, proRataRight: true };
 const signing = { signerName: 'Avery Stone', signerTitle: 'Chief Executive Officer', message: 'Thank you for backing us.' };
 

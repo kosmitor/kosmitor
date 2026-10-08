@@ -2,10 +2,14 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../../session.tsx';
 import { useQuery, api } from '../../api.ts';
-import { Card, Table, TH, TD, TR, Loading, ErrorNote, EmptyState, Stat, Banner, Button, Input, Field, Modal, ActionMenu, useToast } from '../../ui.tsx';
+import { Loading, ErrorNote, EmptyState, Stat, Banner, Button, Input, Field, Modal, ActionMenu, useToast } from '../../ui.tsx';
+import { DataTable } from '../../DataTable.tsx';
 import { shares, date, relativeDate } from '../../format.ts';
 import { SecurityDocuments } from '../../SecurityDocuments.tsx';
-import { StatusBadge } from './shared.tsx';
+import { StatusBadge, statusLabel } from './shared.tsx';
+
+/** A certificate's number, or the end of its id when it has none. */
+const certificateOf = (r: any): string => r.certificateNo ?? String(r.issuanceId).slice(-6).toUpperCase();
 
 /** Every restricted certificate and where its 83(b) election stands. */
 export default function Elections83b() {
@@ -48,53 +52,53 @@ export default function Elections83b() {
           </Banner>
         </div>
       )}
-      <Card padded={false}>
-        {data.rows.length === 0 ? (
-          <EmptyState title="No restricted stock outstanding" description="Certificates that vest over time or were early-exercised appear here with their election window." />
-        ) : (
-          <Table>
-            <thead>
-              <tr><TH>Certificate</TH><TH>Holder</TH><TH>Class</TH><TH align="right">Shares</TH><TH>Issued</TH><TH>Deadline</TH><TH>Restricted because</TH><TH>Election</TH><TH width={140} /></tr>
-            </thead>
-            <tbody>
-              {data.rows.map((r: any) => (
-                <TR key={r.issuanceId} className={r.status === 'CLOSED' ? 'bg-red-50/30' : r.status === 'OPEN' ? 'bg-amber-50/30' : undefined}>
-                  {/* Every row is one issuance, so the certificate number opens that certificate. */}
-                  <TD mono>
-                    <Link to={`/certificates/${r.issuanceId}`}
-                      className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
-                      {r.certificateNo ?? String(r.issuanceId).slice(-6).toUpperCase()}
-                    </Link>
-                  </TD>
-                  <TD className="font-medium">{r.stakeholderName}</TD>
-                  <TD className="text-ink-600">{r.shareClassName ?? '—'}</TD>
-                  <TD align="right" mono>{shares(r.quantity)}</TD>
-                  <TD className="text-ink-600">{date(r.issueDate)}</TD>
-                  <TD><span className="block text-ink-800">{date(r.deadline)}</span><span className="block text-[11px] text-ink-500">{r.status === 'OPEN' ? `${r.daysLeft} day${r.daysLeft === 1 ? '' : 's'} left` : relativeDate(r.deadline)}</span></TD>
-                  <TD className="text-ink-600">{r.reason}</TD>
-                  <TD><StatusBadge status={r.status} />{r.filedOn && <span className="ml-2 text-[12px] text-ink-500">{date(r.filedOn)}</span>}</TD>
-                  {/* Three actions will not sit side by side in this column, so only the
-                      one an administrator reaches for every time stays a button. */}
-                  <TD align="right">
-                    <span className="flex justify-end gap-1">
-                      {canEdit && (
-                        <Button size="sm" onClick={() => { setRecording(r); setFiledOn(r.filedOn ?? ''); }}>{r.filedOn ? 'Edit date' : 'Record filing'}</Button>
-                      )}
-                      <ActionMenu items={[
-                        { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(r) },
-                        ...(canEdit
-                          ? [{ label: 'Election letter', icon: 'external' as const,
-                            onClick: () => window.open(`/api/c/${companyId}/compliance/83b/${r.issuanceId}/print`, '_blank', 'noopener') }]
-                          : []),
-                      ]} />
-                    </span>
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="Restricted certificates" rows={data.rows} rowKey={(r) => r.issuanceId}
+        search={{ placeholder: 'Search by certificate, holder or class', label: 'Search restricted certificates',
+          by: (r) => [certificateOf(r), r.stakeholderName, r.shareClassName] }}
+        rowTone={(r) => (r.status === 'CLOSED' ? 'red' : r.status === 'OPEN' ? 'amber' : undefined)}
+        empty={<EmptyState title="No restricted stock outstanding" description="Certificates that vest over time or were early-exercised appear here with their election window." />}
+        columns={[
+          // Every row is one issuance, so the certificate number opens that certificate.
+          { key: 'certificate', label: 'Certificate', value: certificateOf, className: 'tabular',
+            cell: (r) => (
+              <Link to={`/certificates/${r.issuanceId}`}
+                className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
+                {certificateOf(r)}
+              </Link>
+            ) },
+          { key: 'holder', label: 'Holder', value: (r) => r.stakeholderName, className: 'font-medium' },
+          { key: 'class', label: 'Class', value: (r) => r.shareClassName, className: 'text-ink-600' },
+          { key: 'shares', label: 'Shares', type: 'number', value: (r) => r.quantity },
+          { key: 'issued', label: 'Issued', type: 'date', value: (r) => r.issueDate, className: 'text-ink-600' },
+          { key: 'deadline', label: 'Deadline', type: 'date', value: (r) => r.deadline,
+            cell: (r) => (
+              <>
+                <span className="block text-ink-800">{date(r.deadline)}</span>
+                <span className="block text-[11px] text-ink-500">{r.status === 'OPEN' ? `${r.daysLeft} day${r.daysLeft === 1 ? '' : 's'} left` : relativeDate(r.deadline)}</span>
+              </>
+            ) },
+          { key: 'reason', label: 'Restricted because', value: (r) => r.reason, className: 'text-ink-600' },
+          // By what the badge says, then the day it was filed.
+          { key: 'election', label: 'Election', value: (r) => `${statusLabel(r.status)} ${r.filedOn ?? ''}`.trim(),
+            cell: (r) => <><StatusBadge status={r.status} />{r.filedOn && <span className="ml-2 text-[12px] text-ink-500">{date(r.filedOn)}</span>}</> },
+          // Three actions will not sit side by side in this column, so only the
+          // one an administrator reaches for every time stays a button.
+          { key: 'actions', label: '', width: 140, align: 'right',
+            cell: (r) => (
+              <span className="flex justify-end gap-1">
+                {canEdit && (
+                  <Button size="sm" onClick={() => { setRecording(r); setFiledOn(r.filedOn ?? ''); }}>{r.filedOn ? 'Edit date' : 'Record filing'}</Button>
+                )}
+                <ActionMenu items={[
+                  { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(r) },
+                  ...(canEdit
+                    ? [{ label: 'Election letter', icon: 'external' as const,
+                      onClick: () => window.open(`/api/c/${companyId}/compliance/83b/${r.issuanceId}/print`, '_blank', 'noopener') }]
+                    : []),
+                ]} />
+              </span>
+            ) },
+        ]} />
 
       {/* An election belongs to a certificate that exists, so it is filed against
           that certificate rather than against a subject of its own. */}

@@ -5,6 +5,7 @@ import { normalizeSplits, splitFactor } from './splits.ts';
 import { addDays, addMonths, daysBetween, shareValue, today, roundShares, floorShares, formatMoney, businessDayOnOrAfter, maxDate, fmtDate, pct } from './util.ts';
 import { valuationRefresh, describeRefreshTrigger, longDate, safeHarborLapse } from './valuation-refresh.ts';
 import { enginePolicy, DEFAULT_ENGINE_POLICY, type EnginePolicy } from './policy.ts';
+import { isDirector } from './board.ts';
 
 export type Severity = 'ERROR' | 'WARNING' | 'INFO';
 
@@ -1113,7 +1114,8 @@ export function beneficialOwnershipReport(
     const ownershipPct = pct(row.fullyDiluted, table.totals.asConverted + own);
     const reasons: BeneficialOwner['reasons'] = [];
     if (ownershipPct >= OWNERSHIP_THRESHOLD) reasons.push('ownership');
-    const controls = holder.relation === 'FOUNDER' || holder.relation === 'BOARD_MEMBER' || (title != null && SENIOR_OFFICER.test(title));
+    // A director is whoever holds a board seat that day, whatever the relation says.
+    const controls = holder.relation === 'FOUNDER' || isDirector(holder, asOf) || (title != null && SENIOR_OFFICER.test(title));
     if (controls && holder.type === 'INDIVIDUAL') reasons.push('control');
     if (reasons.length === 0) continue;
     const firstDates = [

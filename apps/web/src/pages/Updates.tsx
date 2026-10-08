@@ -3,13 +3,16 @@ import { FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
 import { useQuery, api } from '../api.ts';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field, Select, EmptyState,
+  PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field, Select, EmptyState,
   ConfirmDialog, SegmentedControl, useToast, Textarea, Modal, Banner, KeyValue, Checkbox,
 } from '../ui.tsx';
 import { Icon } from '../icons.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { date, dateTime, currencySymbol } from '../format.ts';
 
 interface Metric { label: string; value: string }
+/** Who an update goes to, as the list says it: a count of the people chosen, or the audience's name. */
+const audienceOf = (u: any): string => (u.audience === 'CUSTOM' ? `${u.recipientIds.length} chosen` : u.audienceLabel);
 const blank = { title: '', period: '', body: '', audience: 'INVESTORS', recipientIds: [] as string[], metrics: [{ label: '', value: '' }] as Metric[] };
 
 /** Company updates to investors and the team, with who was emailed and who has read them. */
@@ -108,46 +111,39 @@ export default function Updates() {
         ))}
       </div>
 
-      <Card padded={false}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 p-4">
-          <SegmentedControl value={filter} onChange={setFilter} options={[{ value: 'ALL', label: 'All' }, { value: 'DRAFT', label: 'Drafts' }, { value: 'SENT', label: 'Sent' }]} />
-        </div>
-        {rows.length === 0 ? (
-          <EmptyState title="No updates yet" description="Share progress with investors and the team. Recipients read updates in their portal and by email."
-            action={canEdit && <Button variant="primary" onClick={openNew}>New update</Button>} />
-        ) : (
-          <Table>
-            <thead>
-              <tr><TH>Update</TH><TH>Audience</TH><TH>Status</TH><TH align="right">Recipients</TH><TH align="right">Emailed</TH><TH align="right">Opened</TH>{canEdit && <TH width={230} />}</tr>
-            </thead>
-            <tbody>
-              {rows.map((u) => (
-                <TR key={u.id}>
-                  <TD>
-                    <button type="button" className="text-left font-medium text-ink-900 hover:text-brand-700" onClick={() => setViewing(u)}>{u.title}</button>
-                    <span className="block text-[12px] text-ink-500">{u.period ? `${u.period} · ` : ''}{u.status === 'SENT' ? `Sent ${date(String(u.sentAt).slice(0, 10))}${u.sentBy ? ` by ${u.sentBy}` : ''}` : `Drafted ${date(String(u.createdAt).slice(0, 10))}`}</span>
-                  </TD>
-                  <TD className="text-ink-600">{u.audience === 'CUSTOM' ? `${u.recipientIds.length} chosen` : u.audienceLabel}</TD>
-                  <TD><Badge tone={u.status === 'SENT' ? 'success' : 'neutral'}>{u.status === 'SENT' ? 'Sent' : 'Draft'}</Badge></TD>
-                  <TD align="right" mono>{u.status === 'SENT' ? u.recipientCount : '—'}</TD>
-                  <TD align="right" mono>{u.status === 'SENT' ? u.emailedCount : '—'}</TD>
-                  <TD align="right" mono>{u.status === 'SENT' ? `${u.viewedCount} (${u.recipientCount ? Math.round((u.viewedCount / u.recipientCount) * 100) : 0}%)` : '—'}</TD>
-                  {canEdit && (
-                    <TD align="right">
-                      <span className="flex flex-wrap justify-end gap-1">
-                        {u.status === 'SENT' && <Button size="sm" variant="ghost" loading={busy} onClick={() => void openDetail(u)}>Recipients</Button>}
-                        {u.status === 'DRAFT' && <Button size="sm" variant="primary" loading={busy} onClick={() => void openSend(u)}>Send</Button>}
-                        {u.status === 'DRAFT' && <Button size="sm" variant="ghost" aria-label="Edit" onClick={() => openEdit(u)}><Icon name="edit" className="size-4" /></Button>}
-                        <Button size="sm" variant="ghost" aria-label="Delete" onClick={() => setDeleting(u)}><Icon name="trash" className="size-4" /></Button>
-                      </span>
-                    </TD>
-                  )}
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="Investor updates" rows={rows} rowKey={(u) => u.id}
+        controls={<SegmentedControl value={filter} onChange={setFilter} options={[{ value: 'ALL', label: 'All' }, { value: 'DRAFT', label: 'Drafts' }, { value: 'SENT', label: 'Sent' }]} />}
+        search={{ placeholder: 'Search by title, period or audience', label: 'Search updates', by: (u) => [u.title, u.period, audienceOf(u)] }}
+        empty={<EmptyState title="No updates yet" description="Share progress with investors and the team. Recipients read updates in their portal and by email."
+          action={canEdit && <Button variant="primary" onClick={openNew}>New update</Button>} />}
+        columns={[
+          // The title keeps to one line, as a name does (a long one is cut, and shown whole on hover); the line under it may wrap.
+          { key: 'update', label: 'Update', value: (u) => u.title,
+            cell: (u) => (
+              <>
+                <button type="button" title={u.title} onClick={() => setViewing(u)}
+                  className="block max-w-72 truncate text-left font-medium text-ink-900 hover:text-brand-700">{u.title}</button>
+                <span className="block text-[12px] text-ink-500">{u.period ? `${u.period} · ` : ''}{u.status === 'SENT' ? `Sent ${date(String(u.sentAt).slice(0, 10))}${u.sentBy ? ` by ${u.sentBy}` : ''}` : `Drafted ${date(String(u.createdAt).slice(0, 10))}`}</span>
+              </>
+            ) },
+          { key: 'audience', label: 'Audience', value: audienceOf, className: 'text-ink-600' },
+          { key: 'status', label: 'Status', value: (u) => (u.status === 'SENT' ? 'Sent' : 'Draft'),
+            cell: (u) => <Badge tone={u.status === 'SENT' ? 'success' : 'neutral'}>{u.status === 'SENT' ? 'Sent' : 'Draft'}</Badge> },
+          // A draft has reached nobody yet, so its figures are blank and sort last.
+          { key: 'recipients', label: 'Recipients', type: 'number', value: (u) => (u.status === 'SENT' ? u.recipientCount : null) },
+          { key: 'emailed', label: 'Emailed', type: 'number', value: (u) => (u.status === 'SENT' ? u.emailedCount : null) },
+          { key: 'opened', label: 'Opened', type: 'number', value: (u) => (u.status === 'SENT' ? u.viewedCount : null),
+            cell: (u) => (u.status === 'SENT' ? `${u.viewedCount} (${u.recipientCount ? Math.round((u.viewedCount / u.recipientCount) * 100) : 0}%)` : '—') },
+          { key: 'actions', label: '', width: 230, align: 'right', hidden: !canEdit,
+            cell: (u) => (
+              <span className="flex justify-end gap-1">
+                {u.status === 'SENT' && <Button size="sm" variant="ghost" loading={busy} onClick={() => void openDetail(u)}>Recipients</Button>}
+                {u.status === 'DRAFT' && <Button size="sm" variant="primary" loading={busy} onClick={() => void openSend(u)}>Send</Button>}
+                {u.status === 'DRAFT' && <Button size="sm" variant="ghost" aria-label="Edit" onClick={() => openEdit(u)}><Icon name="edit" className="size-4" /></Button>}
+                <Button size="sm" variant="ghost" aria-label="Delete" onClick={() => setDeleting(u)}><Icon name="trash" className="size-4" /></Button>
+              </span>
+            ) },
+        ]} />
 
       <FormModal open={!!editing} onClose={() => setEditing(null)} busy={busy} size="lg"
         title={editing?.id ? 'Edit update' : 'New update'} onSubmit={save} submitLabel={editing?.id ? 'Save draft' : 'Save draft'}
@@ -194,7 +190,9 @@ export default function Updates() {
         footer={<><Button onClick={() => { setSending(null); setSendPreview(null); }}>Cancel</Button><Button variant="primary" loading={busy} onClick={() => void send()} disabled={!sendPreview?.preview?.length}>Send to {sendPreview?.preview?.length ?? 0}</Button></>}>
         {sendPreview && (
           sendPreview.preview.length === 0
-            ? <Banner tone="warning" title="Nobody matches this audience">Add stakeholders with the right relationship, or choose recipients one by one.</Banner>
+            ? <Banner tone="warning" title="Nobody matches this audience">{sending?.audience === 'BOARD'
+              ? 'Nobody holds a board seat today. Give each director a seat on their stakeholder record, or choose recipients one by one.'
+              : 'Add stakeholders with the right relationship, or choose recipients one by one.'}</Banner>
             : (
               <ul className="max-h-72 space-y-1 overflow-auto">
                 {sendPreview.preview.map((r: any) => (
@@ -224,19 +222,17 @@ export default function Updates() {
 
       <Modal open={!!detail} onClose={() => setDetail(null)} title={detail ? `Recipients — ${detail.title}` : 'Recipients'} size="lg" footer={<Button onClick={() => setDetail(null)}>Close</Button>}>
         {detail && (
-          <Table>
-            <thead><tr><TH>Recipient</TH><TH>Email</TH><TH>Delivery</TH><TH>Opened</TH></tr></thead>
-            <tbody>
-              {detail.recipients.map((r: any) => (
-                <TR key={r.id}>
-                  <TD className="font-medium">{r.name ?? nameOf.get(r.stakeholderId) ?? '—'}</TD>
-                  <TD className="text-ink-600">{r.email ?? <span className="text-ink-400">None on file</span>}</TD>
-                  <TD>{r.emailed ? <Badge tone="success">Emailed</Badge> : <Badge tone="neutral">Portal only</Badge>}</TD>
-                  <TD className="text-ink-600">{r.viewedAt ? dateTime(r.viewedAt) : <span className="text-ink-400">Not yet</span>}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
+          <DataTable frame="box" caption={`Recipients of ${detail.title}`} rows={detail.recipients} rowKey={(r) => r.id}
+            empty={<p className="px-5 py-8 text-center text-[13px] text-ink-500">Nobody received this update.</p>}
+            columns={[
+              { key: 'recipient', label: 'Recipient', value: (r) => r.name ?? nameOf.get(r.stakeholderId), className: 'font-medium' },
+              { key: 'email', label: 'Email', value: (r) => r.email, className: 'text-ink-600',
+                cell: (r) => r.email ?? <span className="text-ink-400">None on file</span> },
+              { key: 'delivery', label: 'Delivery', value: (r) => (r.emailed ? 'Emailed' : 'Portal only'),
+                cell: (r) => (r.emailed ? <Badge tone="success">Emailed</Badge> : <Badge tone="neutral">Portal only</Badge>) },
+              { key: 'opened', label: 'Opened', type: 'date', value: (r) => r.viewedAt, className: 'text-ink-600',
+                cell: (r) => (r.viewedAt ? dateTime(r.viewedAt) : <span className="text-ink-400">Not yet</span>) },
+            ]} />
         )}
       </Modal>
 

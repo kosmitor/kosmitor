@@ -1,0 +1,12 @@
+# Where this stack's own state lives: in the container it manages, under a key
+# no other stack uses. terraform output -raw backend_hcl prints every line but
+# the key (backend.tf.example has the steps); or copy this file to backend.hcl
+# and fill in the subscription and the account. subscription_id is the one
+# holding the account, so the backend signs in to its tenant whichever
+# subscription az has selected.
+subscription_id      = "<subscription-id>"
+resource_group_name  = "rg-terraform-state"
+storage_account_name = "<your-state-storage-account>"
+container_name       = "tfstate"
+key                  = "tfstate.tfstate"
+use_azuread_auth     = true

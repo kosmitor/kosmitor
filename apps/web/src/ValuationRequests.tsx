@@ -481,7 +481,9 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   /** Sends what has not gone yet, and says exactly what went: nothing more, and to whom it really went. */
   const send = async (requestId: string, again = false) => {
     type Outcome = 'sent' | 'failed' | 'not needed';
-    const res = await api<{ recap: Outcome; recapTo: string | null; recapError: string | null; desk: Outcome; deskError: string | null }>(
+    // The team's list can hold several addresses, and the notice can reach some of them only.
+    type DeskOutcome = Outcome | 'partial';
+    const res = await api<{ recap: Outcome; recapTo: string | null; recapError: string | null; desk: DeskOutcome; deskError: string | null }>(
       `/c/${companyId}/valuation-requests/${requestId}/send`, { body: again ? { again: true } : {} });
     const recapTo = res.recapTo && res.recapTo !== user?.name ? res.recapTo : 'you';
     const noMail = [res.deskError, res.recapError].filter(Boolean).every((e) => /Mail is not set up/.test(String(e)));
@@ -489,6 +491,9 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
       toast('Request saved. Mail is not set up on this server, so nothing was emailed.', 'info');
     } else if (res.desk === 'failed') {
       toast(`Request saved, but it did not reach the ${DESK}. ${res.deskError ?? ''}${res.recap === 'sent' ? ` A recap went to ${recapTo}.` : ''}`, 'error');
+    } else if (res.desk === 'partial') {
+      const recap = res.recap === 'sent' ? ` A recap is on its way to ${recapTo}.` : res.recap === 'failed' ? ` The recap email did not go out. ${res.recapError ?? ''}` : '';
+      toast(`Sent to the ${DESK}${again ? ' with a new link' : ''}. ${res.deskError ?? ''}${recap}`, 'error');
     } else if (res.recap === 'failed') {
       toast(`${res.desk === 'sent' ? `Sent to the ${DESK}. ` : ''}The recap email did not go out. ${res.recapError ?? ''}`, 'error');
     } else {

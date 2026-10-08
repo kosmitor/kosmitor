@@ -4,14 +4,15 @@ import { useCrud, FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
 import { useQuery, downloadFile } from '../api.ts';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Loading, ErrorNote, Button, Input, Field,
+  PageHeader, Loading, ErrorNote, Button, Input, Field,
   Select, EmptyState, ConfirmDialog, StatusBadge, Checkbox, Badge, Modal, ActionMenu, useToast,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { SecurityDocuments } from '../SecurityDocuments.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
 import { readableDocumentPath, documentFilename, categoryLabel, documentAccess, downloadDocumentPath } from '../documents.ts';
-import { shares, pps, money, date, dateTime, today, parseShares, parsePPS } from '../format.ts';
+import { shares, money, dateTime, today, parseShares, parsePPS } from '../format.ts';
 
 const blank = {
   stakeholderId: '', shareClassId: '', quantity: '', strikePrice: '',
@@ -114,100 +115,90 @@ export default function Warrants() {
 
   const total = crud.items.filter((w) => w.status === 'OUTSTANDING')
     .reduce((s, w) => s + (w.quantity - w.exercisedQuantity), 0);
+  /** What the unexercised shares are worth over their strike at today's fair market value, in cents: 0 when underwater. */
+  const intrinsicOf = (w: any): number => Math.max(0, Math.round(((w.quantity - w.exercisedQuantity) * (fmv - w.strikePrice)) / 1e4));
 
   return (
     <>
       <PageHeader concept="warrants" title="Warrants" subtitle={`${shares(total)} shares under outstanding warrants`}
         actions={canEdit && <Button variant="primary" icon={<Icon name="plus" />} onClick={openNew}>Issue warrant</Button>} />
 
-      <Card padded={false}>
-        {crud.items.length === 0 ? (
+      {/* The server sends the newest warrant first, which is the order the table opens in.
+          With no warrants there is nothing to search, so the empty state stands alone. */}
+      <DataTable caption="Warrants" rows={crud.items} rowKey={(w) => w.id}
+        defaultSort={{ key: 'issued', direction: 'desc' }}
+        search={{ placeholder: 'Search by holder or class', by: (w) => [nameOf.get(w.stakeholderId), classOf.get(w.shareClassId)] }}
+        empty={(
           <EmptyState title="No warrants"
             description="Warrants are usually issued alongside venture debt or to strategic partners."
             action={canEdit && <Button variant="primary" onClick={openNew}>Issue warrant</Button>} />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Holder</TH><TH>Class</TH>
-                <TH align="right">Shares</TH><TH align="right">Exercised</TH>
-                <TH align="right">Strike</TH><TH align="right">Intrinsic value</TH>
-                <TH>Issued</TH><TH>Expires</TH><TH>Exercise</TH><TH>Status</TH>
-                <TH width={90} />
-              </tr>
-            </thead>
-            <tbody>
-              {crud.items.map((w) => {
-                const outstanding = w.quantity - w.exercisedQuantity;
-                const intrinsic = Math.max(0, Math.round((outstanding * (fmv - w.strikePrice)) / 1e4));
-                const filed = filedOn.get(w.id) ?? [];
-                return (
-                  <TR key={w.id}>
-                    <TD>
-                      {/* A warrant carries no number of its own, so the row menu is what
-                          opens it and the name keeps going to the person. */}
-                      <Link to={`/stakeholders/${w.stakeholderId}`} className="font-medium hover:text-brand-700">
-                        {nameOf.get(w.stakeholderId) ?? '—'}
-                      </Link>
-                    </TD>
-                    <TD><Badge tone="purple">{classOf.get(w.shareClassId) ?? '—'}</Badge></TD>
-                    <TD align="right" mono>{shares(w.quantity)}</TD>
-                    <TD align="right" mono className="text-ink-600">{w.exercisedQuantity ? shares(w.exercisedQuantity) : '—'}</TD>
-                    <TD align="right" mono>{pps(w.strikePrice)}</TD>
-                    <TD align="right" mono className={intrinsic > 0 ? 'text-secondary-800' : 'text-ink-400'}>
-                      {intrinsic > 0 ? money(intrinsic, { compact: true }) : 'Underwater'}
-                    </TD>
-                    <TD className="text-ink-600">{date(w.issueDate)}</TD>
-                    <TD className="text-ink-600">{w.expirationDate ? date(w.expirationDate) : '—'}</TD>
-                    <TD className="text-[12px] text-ink-600">{w.netExercise ? 'Net exercise' : 'Cash'}</TD>
-                    <TD>
-                      <StatusBadge status={w.status} />
-                      {filed.map((d) => {
-                        const access = documentAccess(companyId!, d);
-                        // A document that is neither a file nor text has nothing behind it,
-                        // so it is named but not offered as something that can be opened.
-                        return access === 'none' ? (
-                          <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
-                            {d.name}
-                          </span>
-                        ) : (
-                          <button key={d.id} className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
-                            title={access === 'read' ? `Read ${d.name}` : `Download ${d.name}`}
-                            onClick={() => { if (access === 'read') setReading(d); else void download(d); }}>
-                            {d.name}
-                          </button>
-                        );
-                      })}
-                    </TD>
-                    {/* The paperwork is worth reading whether or not you may change anything,
-                        so the menu is here for every role and only its edits are gated. */}
-                    <TD align="right">
-                      <span className="flex flex-nowrap items-center justify-end gap-1">
-                        {canEdit && (
-                          <Button size="sm" variant="ghost" onClick={() => openEdit(w)} aria-label="Edit" title="Edit">
-                            <Icon name="edit" className="size-4" />
-                          </Button>
-                        )}
-                        <ActionMenu items={[
-                          { label: 'Open the warrant', icon: 'ticket', onClick: () => navigate(`/warrants/${w.id}`) },
-                          { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(w) },
-                          ...(canEdit && w.status === 'OUTSTANDING' ? [
-                            { label: 'Exercise the warrant', icon: 'convert' as const,
-                              onClick: () => { setExercise({ quantity: String(outstanding), exerciseDate: today(), method: 'CASH' }); setExercising(w); } },
-                            { label: 'Cancel or expire', icon: 'trash' as const, danger: true,
-                              onClick: () => { setClose({ date: w.expirationDate && w.expirationDate <= today() ? w.expirationDate : today(), reason: 'EXPIRED' }); setClosing(w); } },
-                          ] : []),
-                          ...(canEdit ? [{ label: 'Delete the warrant', icon: 'trash' as const, danger: true, onClick: () => setConfirmDelete(w) }] : []),
-                        ]} />
-                      </span>
-                    </TD>
-                  </TR>
-                );
-              })}
-            </tbody>
-          </Table>
         )}
-      </Card>
+        columns={[
+          { key: 'holder', label: 'Holder', value: (w) => nameOf.get(w.stakeholderId),
+            cell: (w) => (
+              // A warrant carries no number of its own, so the row menu is what
+              // opens it and the name keeps going to the person.
+              <Link to={`/stakeholders/${w.stakeholderId}`} className="font-medium hover:text-brand-700">
+                {nameOf.get(w.stakeholderId) ?? '—'}
+              </Link>
+            ) },
+          { key: 'class', label: 'Class', value: (w) => classOf.get(w.shareClassId),
+            cell: (w) => <Badge tone="purple">{classOf.get(w.shareClassId) ?? '—'}</Badge> },
+          { key: 'shares', label: 'Shares', type: 'number', value: (w) => w.quantity },
+          { key: 'exercised', label: 'Exercised', type: 'number', value: (w) => w.exercisedQuantity || null, className: 'text-ink-600' },
+          { key: 'strike', label: 'Strike', type: 'price', value: (w) => w.strikePrice },
+          { key: 'intrinsic', label: 'Intrinsic value', type: 'money', value: intrinsicOf,
+            className: (w) => (intrinsicOf(w) > 0 ? 'text-secondary-800' : 'text-ink-400'),
+            cell: (w) => (intrinsicOf(w) > 0 ? money(intrinsicOf(w), { compact: true }) : 'Underwater') },
+          { key: 'issued', label: 'Issued', type: 'date', value: (w) => w.issueDate, className: 'text-ink-600' },
+          { key: 'expires', label: 'Expires', type: 'date', value: (w) => w.expirationDate, className: 'text-ink-600' },
+          { key: 'exercise', label: 'Exercise', value: (w) => (w.netExercise ? 'Net exercise' : 'Cash'), className: 'whitespace-nowrap text-[12px] text-ink-600' },
+          { key: 'status', label: 'Status', value: (w) => w.status,
+            cell: (w) => (
+              <>
+                <StatusBadge status={w.status} />
+                {(filedOn.get(w.id) ?? []).map((d) => {
+                  const access = documentAccess(companyId!, d);
+                  // A document that is neither a file nor text has nothing behind it,
+                  // so it is named but not offered as something that can be opened.
+                  return access === 'none' ? (
+                    <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
+                      {d.name}
+                    </span>
+                  ) : (
+                    <button key={d.id} className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
+                      title={access === 'read' ? `Read ${d.name}` : `Download ${d.name}`}
+                      onClick={() => { if (access === 'read') setReading(d); else void download(d); }}>
+                      {d.name}
+                    </button>
+                  );
+                })}
+              </>
+            ) },
+          // The paperwork is worth reading whether or not you may change anything,
+          // so the menu is here for every role and only its edits are gated.
+          { key: 'actions', label: '', width: 90, align: 'right',
+            cell: (w) => (
+              <span className="flex flex-nowrap items-center justify-end gap-1">
+                {canEdit && (
+                  <Button size="sm" variant="ghost" onClick={() => openEdit(w)} aria-label="Edit" title="Edit">
+                    <Icon name="edit" className="size-4" />
+                  </Button>
+                )}
+                <ActionMenu items={[
+                  { label: 'Open the warrant', icon: 'ticket', onClick: () => navigate(`/warrants/${w.id}`) },
+                  { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(w) },
+                  ...(canEdit && w.status === 'OUTSTANDING' ? [
+                    { label: 'Exercise the warrant', icon: 'convert' as const,
+                      onClick: () => { setExercise({ quantity: String(w.quantity - w.exercisedQuantity), exerciseDate: today(), method: 'CASH' }); setExercising(w); } },
+                    { label: 'Cancel or expire', icon: 'trash' as const, danger: true,
+                      onClick: () => { setClose({ date: w.expirationDate && w.expirationDate <= today() ? w.expirationDate : today(), reason: 'EXPIRED' }); setClosing(w); } },
+                  ] : []),
+                  ...(canEdit ? [{ label: 'Delete the warrant', icon: 'trash' as const, danger: true, onClick: () => setConfirmDelete(w) }] : []),
+                ]} />
+              </span>
+            ) },
+        ]} />
 
       <FormModal open={!!editing} onClose={() => setEditing(null)} busy={crud.busy}
         title={editing?.id ? 'Edit warrant' : 'Issue warrant'} onSubmit={save}

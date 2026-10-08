@@ -45,7 +45,7 @@ for (const [id, name, email, relation, qty] of [
   ['stk_avery', 'Avery Stone', 'avery@example.com', 'FOUNDER', 6_000_000], ['stk_halcyon', 'Halcyon Ventures', 'deals@halcyon.example.com', 'INVESTOR', 3_000_000],
   ['stk_noor', 'Noor Haddad', 'noor@example.com', 'INVESTOR', 1_000_000], ['stk_priya', 'Priya Raman', 'priya@example.com', 'EMPLOYEE', 0],
 ] as [string, string, string, string, number][]) {
-  await insert('stakeholders', { id, companyId: cid, name, email, type: 'INDIVIDUAL', relation, createdAt: now });
+  await insert('stakeholders', { id, companyId: cid, name, email, type: 'INDIVIDUAL', relation, boardSeat: id === 'stk_avery' ? 1 : 0, createdAt: now });   // the founder sits on the board
   if (qty) await insertSecurity('issuances', { id: `iss_${id}`, companyId: cid, certificateNo: `CS-${id}`, stakeholderId: id, shareClassId: common, quantity: qty, pricePerShare: 100, issueDate: '2024-01-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
 }
 

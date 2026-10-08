@@ -89,7 +89,8 @@ export interface KosmitorConfig {
   valuationDesk: {
     enabled: boolean;
     name: string | null;
-    email: string | null;
+    /** One address, or a list with one per evaluator; each gets an email of its own. */
+    email: string | string[] | null;
     linkOpenDays: number;
     linkClosedDays: number;
     requestsPerCompanyPerDay: number;
@@ -118,6 +119,9 @@ export interface KosmitorConfig {
     importUploadMb: number;
     importMaxRows: number;
     importMaxSheets: number;
+    importJsonMb: number;
+    importUnzippedMb: number;
+    importMaxTotalRows: number;
     ledgerPageSize: number;
     ledgerMaxPageSize: number;
     reportRows: number;

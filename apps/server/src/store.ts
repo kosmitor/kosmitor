@@ -85,6 +85,8 @@ export function companyDataFromRows(rows: CompanyRows): CompanyData {
       startDate: (r.startDate as string) ?? null, terminationDate: (r.terminationDate as string) ?? null,
       taxCountry: (r.taxCountry as string) ?? null, taxState: (r.taxState as string) ?? null,
       entityGroupId: (r.entityGroupId as string) ?? null,
+      boardSeat: bool(r.boardSeat), boardSeatStart: (r.boardSeatStart as string) ?? null, boardSeatEnd: (r.boardSeatEnd as string) ?? null,
+      boardDesignatedBy: (r.boardDesignatedBy as string) ?? null,
     })),
     issuances: issuances.map((r) => ({
       id: r.id as string, certificateNo: (r.certificateNo as string) ?? null,

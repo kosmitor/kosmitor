@@ -33,7 +33,7 @@ await import('../src/routes/files.ts');
 await import('../src/routes/workflows.ts');
 await import('../src/routes/valuation-report.ts');
 await import('../src/routes/valuation-requests.ts');
-const { composeDeskEmail, composeRecapEmail, composeClosedEmail, composeStatusEmail, refreshWithText, structureOf, deskAddress, readIntake, intakeLines, intakeTables } =
+const { composeDeskEmail, composeRecapEmail, composeClosedEmail, composeStatusEmail, refreshWithText, structureOf, deskAddresses, deskReplyTo, readIntake, intakeLines, intakeTables } =
   await import('../src/routes/valuation-requests.ts');
 const { config, configure, resetConfig, deskName, mailSignature, publicConfig } = await import('../src/config.ts');
 /** The service is off by default; these tests are about it running, so they turn it on. */
@@ -677,10 +677,11 @@ test('the team’s address is set per server, there is none unless it is given o
     delete process.env.VALUATION_DESK_EMAIL;
     process.env.NODE_ENV = 'test';
     offerTheDesk();
-    assert.equal(deskAddress(), null);
+    assert.deepEqual(deskAddresses(), []);
+    assert.equal(deskReplyTo(), null);
     process.env.NODE_ENV = 'production';
     offerTheDesk();
-    assert.equal(deskAddress(), null, 'production has no built-in inbox either');
+    assert.deepEqual(deskAddresses(), [], 'production has no built-in inbox either');
 
     // A request is still saved, and the person who asked is told the team was not.
     await forgetLimits();
@@ -696,17 +697,20 @@ test('the team’s address is set per server, there is none unless it is given o
     assert.ok(!outbox.some((m) => m.subject.startsWith('New 409A request')), 'no notice went to anyone');
     await call('PATCH', `/api/c/${other}/valuation-requests/${req.json.id}`, { status: 'CANCELLED' }, admin);
 
-    assert.throws(() => configure({ valuationDesk: { email: 'desk@example.test,cc' } }), /valuationDesk\.email/, 'a list is not an address, so the file is refused');
-    assert.equal(deskAddress(), null, 'and the refused change is not left in force');
-    process.env.VALUATION_DESK_EMAIL = 'desk@example.test, other@example.test';
+    // Several addresses go in a list; a string holds one, so commas in it are refused rather than read as a list.
+    assert.throws(() => configure({ valuationDesk: { email: 'desk@example.test,cc' } }), /valuationDesk\.email/, 'a string with a comma is not an address, so the file is refused');
+    assert.throws(() => configure({ valuationDesk: { email: ['desk@example.test', 'cc'] } }), /valuationDesk\.email\[1\]/, 'nor is an entry of a list that is not one');
+    assert.deepEqual(deskAddresses(), [], 'and the refused changes are not left in force');
+    process.env.VALUATION_DESK_EMAIL = 'desk@example.test, cc';
     resetConfig();
-    assert.throws(() => config(), /valuationDesk\.email/, 'and a list in the environment stops the server at start');
+    assert.throws(() => config(), /VALUATION_DESK_EMAIL.*valuationDesk\.email\[1\]/, 'and a bad entry in the environment stops the server at start');
   } finally {
     restore('VALUATION_DESK_EMAIL', saved.email);
     restore('NODE_ENV', saved.env);
     offerTheDesk();
   }
-  assert.equal(deskAddress(), 'desk@example.test');
+  assert.deepEqual(deskAddresses(), ['desk@example.test']);
+  assert.equal(deskReplyTo(), 'desk@example.test');
 });
 
 test('the service is off unless the param file turns it on, and off it takes no new request and tells the team nothing', async () => {

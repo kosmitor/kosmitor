@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useCrud, FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field,
+  PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field,
   Select, EmptyState, ConfirmDialog, Checkbox, KeyValue, InfoDot,
   Textarea,
 } from '../ui.tsx';
@@ -114,7 +114,7 @@ export default function ShareClasses() {
                       {c.kind === 'PREFERRED' ? 'Preferred' : 'Common'}
                     </Badge>
                     {c.kind === 'PREFERRED' && <Badge tone="brand">Seniority {c.seniority}</Badge>}
-                    {c.payToPlay && <Badge tone="warning">Pay to play</Badge>}
+                    {!!c.payToPlay && <Badge tone="warning">Pay to play</Badge>}
                   </div>
                   <p className="mt-1 text-[13px] text-ink-500">Authorized {date(c.issueDate)}</p>
                 </div>

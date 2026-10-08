@@ -1,7 +1,8 @@
 /**
- * The signed-in person, at the foot of the sidebar, and what belongs to them
- * rather than to the company: their own equity, their preferences, and signing
- * out.
+ * The signed-in person, as their avatar in the top right corner of the header,
+ * and what belongs to them rather than to the company: their own equity, their
+ * preferences, and signing out. The menu opens with their name and address, which
+ * the avatar alone does not show.
  *
  * It follows the WAI-ARIA menu button pattern. The trigger says it opens a menu
  * and whether it is open. Opening moves focus in: to the first item, or to the
@@ -10,8 +11,7 @@
  * whatever comes next, from the trigger. Escape, choosing an item, or focus
  * moving anywhere else closes it and returns focus to the trigger.
  *
- * The menu is portalled because the sidebar scrolls, and a menu inside a
- * scrolling box gets cut off at its edge.
+ * The menu is portalled so the header's blur and its edge never clip it.
  */
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -25,10 +25,7 @@ interface Item { label: string; icon: IconName; to?: string; run?: () => void }
 
 const isAt = (pathname: string, to?: string) => !!to && (pathname === to || pathname.startsWith(`${to}/`));
 
-export function AccountMenu({ onNavigate }: {
-  /** Called after an item is chosen, so the sidebar can close itself on a phone. */
-  onNavigate: () => void;
-}) {
+export function AccountMenu() {
   const { user, signOut } = useSession();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -37,7 +34,7 @@ export function AccountMenu({ onNavigate }: {
   const opening = useRef<'first' | 'last'>('first');
   const anchor = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
-  const style = useAnchored(open, anchor, popup, true);
+  const style = useAnchored(open, anchor, popup, false);
   useOutsideClose(open, [anchor, popup], () => setOpen(false));
 
   const items: Item[] = [
@@ -61,7 +58,6 @@ export function AccountMenu({ onNavigate }: {
 
   const choose = (item: Item) => {
     close();
-    onNavigate();
     if (item.to) navigate(item.to);
     else item.run?.();
   };
@@ -121,21 +117,22 @@ export function AccountMenu({ onNavigate }: {
       <button ref={anchor} type="button" aria-haspopup="menu" aria-expanded={open}
         aria-label={`Account menu for ${user?.name ?? 'you'}${here ? `, current page: ${here.label}` : ''}`}
         onClick={() => { opening.current = 'first'; setOpen((v) => !v); }} onKeyDown={onTriggerKey}
-        className={cx('flex w-full items-center gap-2 rounded-lg p-1.5 text-left transition-colors',
+        title={user?.name}
+        className={cx('grid size-9 place-items-center rounded-full transition-colors',
           'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500',
-          here ? 'bg-brand-50' : open ? 'bg-ink-100' : 'hover:bg-ink-50')}>
+          // A ring marks the avatar while My equity or Preferences is open, the way
+          // a sidebar link marks the page it leads to.
+          here ? 'ring-2 ring-brand-500 ring-offset-1' : open ? 'bg-ink-100' : 'hover:bg-ink-100')}>
         <Avatar name={user?.name ?? '?'} size={28} color={user?.avatarColor ?? undefined} src={user?.avatarUrl} />
-        <span className="min-w-0 flex-1">
-          <span className={cx('block truncate text-[12px] font-medium', here ? 'text-brand-700' : 'text-ink-900')}>{user?.name}</span>
-          <span className="block truncate text-[11px] text-ink-500">{here ? here.label : user?.email}</span>
-        </span>
-        {/* Points the way the menu opens: up, since it sits at the foot of the sidebar. */}
-        <Icon name="chevron" className={cx('size-4 shrink-0 text-ink-400 transition-transform', open ? '' : 'rotate-180')} />
       </button>
 
       {open && createPortal(
         <div ref={popup} role="menu" aria-label="Account" style={style} onKeyDown={onMenuKey} onBlur={onMenuBlur}
-          className="animate-in overflow-auto rounded-lg border border-ink-200 bg-white py-1 shadow-xl outline-none">
+          className="animate-in w-60 overflow-auto rounded-lg border border-ink-200 bg-white py-1 shadow-xl outline-none">
+          <div role="presentation" className="mb-1 border-b border-ink-100 px-3 pb-2 pt-1.5">
+            <p className="truncate text-[13px] font-medium text-ink-900">{user?.name}</p>
+            <p className="truncate text-[12px] text-ink-500">{user?.email}</p>
+          </div>
           {items.map(row)}
           <div role="separator" className="my-1 border-t border-ink-100" />
           {row(signOutItem)}

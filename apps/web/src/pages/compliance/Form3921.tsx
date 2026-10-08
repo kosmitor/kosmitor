@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../../session.tsx';
 import { useQuery, api, downloadFile } from '../../api.ts';
-import { Card, CardHeader, Table, TH, TD, TR, Loading, ErrorNote, EmptyState, Stat, Banner, Button, Input, Field, Select, Modal, KeyValue, useToast } from '../../ui.tsx';
+import { Card, CardHeader, Loading, ErrorNote, EmptyState, Stat, Banner, Button, Input, Field, Select, Modal, KeyValue, useToast } from '../../ui.tsx';
+import { DataTable } from '../../DataTable.tsx';
 import { Icon } from '../../icons.tsx';
-import { shares, date, pps, money, relativeDate } from '../../format.ts';
+import { date, relativeDate } from '../../format.ts';
 import { SecurityDocuments } from '../../SecurityDocuments.tsx';
 import { StatusBadge } from './shared.tsx';
 
@@ -46,6 +47,8 @@ export default function Form3921() {
 
   return (
     <>
+      {/* The tax year picks the forms for the whole page, the figures under it included, so it heads
+          the page, as the fiscal year does on stock-based compensation, with the files made from it. */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Field label="Tax year" className="w-40">
           <Select value={String(data.year)} onChange={(e) => setYear(e.target.value)}>
@@ -89,49 +92,39 @@ export default function Form3921() {
         </Banner>
       </div>
 
-      <Card padded={false}>
-        <div className="p-5 pb-0"><CardHeader title={`Exercises in ${data.year}`} subtitle="One form per row — the box numbers follow the IRS form" /></div>
-        {data.rows.length === 0 ? (
-          <EmptyState title={`No ISO exercises in ${data.year}`} description="Exercises recorded on the Equity awards page appear here in the year they happen." />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Employee</TH><TH>Grant</TH><TH>Box 1 · Granted</TH><TH>Box 2 · Exercised</TH>
-                <TH align="right">Box 3 · Exercise price</TH><TH align="right">Box 4 · FMV at exercise</TH><TH align="right">Box 5 · Shares</TH><TH align="right">Spread</TH><TH width={56} />
-              </tr>
-            </thead>
-            <tbody>
-              {data.rows.map((r: any) => (
-                <TR key={r.exerciseId}>
-                  <TD><span className="block font-medium">{r.stakeholderName}</span>{!r.address && <span className="block text-[11px] text-amber-700">No address on record</span>}</TD>
-                  {/* One row is one exercise of one grant, so the grant is what it opens. */}
-                  <TD>
-                    <Link to={`/grants/${r.awardId}`}
-                      className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
-                      {r.awardLabel ?? String(r.awardId).slice(-6).toUpperCase()}
-                    </Link>
-                  </TD>
-                  <TD className="text-ink-600">{date(r.grantDate)}</TD>
-                  <TD className="text-ink-600">{date(r.exerciseDate)}</TD>
-                  <TD align="right" mono>{pps(r.exercisePrice)}</TD>
-                  <TD align="right" mono>{pps(r.fmvAtExercise)}</TD>
-                  <TD align="right" mono>{shares(r.quantity)}</TD>
-                  <TD align="right" mono className="text-ink-600">{money(r.spread)}</TD>
-                  {/* The form reports an exercise of a grant that exists, so the copies
-                      and the receipts are filed against that grant. */}
-                  <TD align="right">
-                    <Button size="sm" variant="ghost" onClick={() => setDocumentsFor(r)}
-                      aria-label={`Documents for ${r.stakeholderName}'s grant`} title={`Documents for ${r.stakeholderName}'s grant`}>
-                      <Icon name="document" className="size-4" />
-                    </Button>
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable title={`Exercises in ${data.year}`} subtitle="One form per row — the box numbers follow the IRS form"
+        caption={`ISO exercises in ${data.year}`} rows={data.rows} rowKey={(r) => r.exerciseId}
+        search={{ placeholder: 'Search by employee or grant', label: `Search ISO exercises in ${data.year}`,
+          by: (r) => [r.stakeholderName, r.awardLabel] }}
+        busy={loading}
+        empty={<EmptyState title={`No ISO exercises in ${data.year}`} description="Exercises recorded on the Equity grants page appear here in the year they happen." />}
+        columns={[
+          { key: 'employee', label: 'Employee', value: (r) => r.stakeholderName,
+            cell: (r) => <><span className="block font-medium">{r.stakeholderName}</span>{!r.address && <span className="block text-[11px] text-amber-700">No address on record</span>}</> },
+          // One row is one exercise of one grant, so the grant is what it opens.
+          { key: 'grant', label: 'Grant', value: (r) => r.awardLabel ?? String(r.awardId).slice(-6).toUpperCase(), className: 'whitespace-nowrap',
+            cell: (r) => (
+              <Link to={`/grants/${r.awardId}`}
+                className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
+                {r.awardLabel ?? String(r.awardId).slice(-6).toUpperCase()}
+              </Link>
+            ) },
+          { key: 'granted', label: 'Box 1 · Granted', type: 'date', value: (r) => r.grantDate, className: 'text-ink-600' },
+          { key: 'exercised', label: 'Box 2 · Exercised', type: 'date', value: (r) => r.exerciseDate, className: 'text-ink-600' },
+          { key: 'price', label: 'Box 3 · Exercise price', type: 'price', value: (r) => r.exercisePrice },
+          { key: 'fmv', label: 'Box 4 · FMV at exercise', type: 'price', value: (r) => r.fmvAtExercise },
+          { key: 'shares', label: 'Box 5 · Shares', type: 'number', value: (r) => r.quantity },
+          { key: 'spread', label: 'Spread', type: 'money', value: (r) => r.spread, className: 'text-ink-600' },
+          // The form reports an exercise of a grant that exists, so the copies
+          // and the receipts are filed against that grant.
+          { key: 'documents', label: '', width: 56, align: 'right',
+            cell: (r) => (
+              <Button size="sm" variant="ghost" onClick={() => setDocumentsFor(r)}
+                aria-label={`Documents for ${r.stakeholderName}'s grant`} title={`Documents for ${r.stakeholderName}'s grant`}>
+                <Icon name="document" className="size-4" />
+              </Button>
+            ) },
+        ]} />
 
       {years.length > 1 && (
         <Card className="mt-5">

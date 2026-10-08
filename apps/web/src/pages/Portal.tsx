@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { useSession } from '../session.tsx';
 import { useQuery, api, downloadFile } from '../api.ts';
 import {
-  PageHeader, Card, CardHeader, Stat, Badge, Loading, ErrorNote, EmptyState, Button,
-  Table, TH, TD, TR, MiniBar, KeyValue, Field, Input, Select, Modal, useToast, Banner, InfoDot, StatusBadge,
+  PageHeader, Card, CardHeader, Stat, Badge, Loading, ErrorNote, Button,
+  MiniBar, KeyValue, Field, Input, Select, Modal, useToast, Banner, InfoDot, StatusBadge,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { VestingChart } from '../charts.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
@@ -148,8 +149,11 @@ export default function Portal() {
           <Banner tone="warning" title={`${data.pendingSignatures.length} document${data.pendingSignatures.length > 1 ? 's' : ''} awaiting your signature`}>
             <div className="mt-2 flex flex-wrap gap-2">
               {data.pendingSignatures.map((s: any) => (
-                <Button key={s.id} size="sm" variant="primary"
-                  onClick={() => { setSignature(''); setSigning(s); }}>Review &amp; sign{s.documentName ? ` · ${s.documentName}` : ''}</Button>
+                // A long document name is cut short inside the button rather than pushing it out of the banner.
+                <Button key={s.id} size="sm" variant="primary" className="max-w-full" title={s.documentName ?? undefined}
+                  onClick={() => { setSignature(''); setSigning(s); }}>
+                  <span className="min-w-0 truncate">Review &amp; sign{s.documentName ? ` · ${s.documentName}` : ''}</span>
+                </Button>
               ))}
             </div>
           </Banner>
@@ -237,97 +241,86 @@ export default function Portal() {
       )}
 
       {data.issuances.length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Shares you own" subtitle="Certificates issued in your name" /></div>
-          <Table>
-            <thead>
-              <tr><TH>Certificate</TH><TH align="right">Shares</TH><TH align="right">Price paid</TH>
-                <TH>Issued</TH><TH>83(b) election</TH></tr>
-            </thead>
-            <tbody>
-              {data.issuances.map((i: any) => (
-                <TR key={i.id}>
-                  <TD className="font-medium">{i.certificateNo ?? i.id.slice(-6).toUpperCase()}</TD>
-                  <TD align="right" mono>{shares(i.quantity)}</TD>
-                  <TD align="right" mono>{pps(i.pricePerShare)}</TD>
-                  <TD className="text-ink-600">{date(i.issueDate)}</TD>
-                  <TD>{i.election83bFiledOn
-                    ? <Badge tone="success">Filed {date(i.election83bFiledOn)}</Badge>
-                    : i.vestingScheduleId || i.earlyExercised
-                      ? <span className="flex flex-wrap items-center gap-2"><Badge tone="warning">Not filed</Badge><button type="button" className="text-[12px] text-brand-600 hover:text-brand-700" onClick={() => window.open(`/api/c/${companyId}/compliance/83b/${i.id}/print`, '_blank', 'noopener')}>Election letter</button></span>
-                      : <span className="text-ink-400">Not applicable</span>}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable className="mt-5" title="Shares you own" subtitle="Certificates issued in your name" caption="Shares you own"
+          rows={data.issuances} rowKey={(i) => i.id}
+          columns={[
+            { key: 'certificate', label: 'Certificate', value: (i) => i.certificateNo ?? i.id.slice(-6).toUpperCase(), className: 'font-medium' },
+            { key: 'quantity', label: 'Shares', type: 'number', value: (i) => i.quantity },
+            { key: 'price', label: 'Price paid', type: 'price', value: (i) => i.pricePerShare },
+            { key: 'issued', label: 'Issued', type: 'date', value: (i) => i.issueDate, className: 'text-ink-600' },
+            {
+              key: 'election', label: '83(b) election',
+              cell: (i) => (i.election83bFiledOn
+                ? <Badge tone="success">Filed {date(i.election83bFiledOn)}</Badge>
+                : i.vestingScheduleId || i.earlyExercised
+                  ? <span className="flex flex-wrap items-center gap-2"><Badge tone="warning">Not filed</Badge><button type="button" className="text-[12px] text-brand-600 hover:text-brand-700" onClick={() => window.open(`/api/c/${companyId}/compliance/83b/${i.id}/print`, '_blank', 'noopener')}>Election letter</button></span>
+                  : <span className="text-ink-400">Not applicable</span>),
+            },
+          ]} />
       )}
 
       {data.convertibles.length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Your convertible instruments" /></div>
-          <Table>
-            <thead>
-              <tr><TH>Instrument</TH><TH align="right">Principal</TH><TH align="right">Cap</TH>
-                <TH align="right">Discount</TH><TH>Issued</TH><TH>Status</TH></tr>
-            </thead>
-            <tbody>
-              {data.convertibles.map((c: any) => (
-                <TR key={c.id}>
-                  <TD>{INSTRUMENT_LABELS[c.instrument] ?? c.instrument}</TD>
-                  <TD align="right" mono>{money(c.principal, { compact: true })}</TD>
-                  <TD align="right" mono>{c.valuationCap ? money(c.valuationCap, { compact: true }) : 'Uncapped'}</TD>
-                  <TD align="right" mono>{c.discount ? percent(c.discount, 0) : '—'}</TD>
-                  <TD className="text-ink-600">{date(c.issueDate)}</TD>
-                  <TD><Badge tone={c.status === 'OUTSTANDING' ? 'success' : 'neutral'}>{c.status.toLowerCase()}</Badge></TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable className="mt-5" title="Your convertible instruments" caption="Your convertible instruments"
+          rows={data.convertibles} rowKey={(c) => c.id}
+          columns={[
+            { key: 'instrument', label: 'Instrument', value: (c) => INSTRUMENT_LABELS[c.instrument] ?? c.instrument },
+            { key: 'principal', label: 'Principal', type: 'money', value: (c) => c.principal, cell: (c) => money(c.principal, { compact: true }) },
+            {
+              key: 'cap', label: 'Cap', type: 'money', value: (c) => c.valuationCap || null,
+              cell: (c) => (c.valuationCap ? money(c.valuationCap, { compact: true }) : 'Uncapped'),
+            },
+            { key: 'discount', label: 'Discount', type: 'number', value: (c) => c.discount || null, cell: (c) => (c.discount ? percent(c.discount, 0) : '—') },
+            { key: 'issued', label: 'Issued', type: 'date', value: (c) => c.issueDate, className: 'text-ink-600' },
+            { key: 'status', label: 'Status', value: (c) => c.status, cell: (c) => <Badge tone={c.status === 'OUTSTANDING' ? 'success' : 'neutral'}>{c.status.toLowerCase()}</Badge> },
+          ]} />
       )}
 
       {data.documents.length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Your documents" /></div>
-          <Table>
-            <thead><tr><TH>Document</TH><TH>Category</TH><TH>Created</TH><TH>Status</TH><TH width={110} /></tr></thead>
-            <tbody>
-              {data.documents.map((d: any) => (
-                <TR key={d.id}>
-                  <TD className="font-medium">{d.name}{d.fileName && <span className="ml-2 text-[11px] text-ink-500">{d.fileName}</span>}</TD>
-                  <TD className="text-ink-600">{categoryLabel(d.category)}</TD>
-                  <TD className="text-ink-600">{date(d.createdAt?.slice(0, 10))}</TD>
-                  <TD><Badge tone={d.status === 'EXECUTED' ? 'success' : 'warning'}>{d.status.replace(/_/g, ' ').toLowerCase()}</Badge></TD>
-                  <TD align="right">
-                    {/* Whether a holder can read their own paperwork is decided the one way
-                        the rest of the app decides it. This used to insist on a document
-                        being EXECUTED before offering to read it, which meant a file the
-                        company filed against their shares could be seen but not opened. */}
-                    {d.body && (
-                      <Button size="sm" variant="ghost" icon={<Icon name="download" className="size-3.5" />}
-                        onClick={() => window.open(`/api/c/${companyId}/documents/${d.id}/print`, '_blank', 'noopener')}>
-                        Print
-                      </Button>
-                    )}
-                    {documentAccess(companyId!, d) === 'read' && (
-                      <Button size="sm" variant="ghost" icon={<Icon name="eye" className="size-3.5" />}
-                        onClick={() => setReading({ ...d, path: readableDocumentPath(companyId!, d), file: documentFilename(d) })}>
-                        Read
-                      </Button>
-                    )}
-                    {documentAccess(companyId!, d) === 'download' && (
-                      <Button size="sm" variant="ghost" icon={<Icon name="download" className="size-3.5" />}
-                        onClick={() => downloadFile(downloadDocumentPath(companyId!, d), documentFilename(d)).catch((e: Error) => toast(e.message, 'error'))}>
-                        Download
-                      </Button>
-                    )}
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        // Newest first, as the server sends them.
+        <DataTable className="mt-5" title="Your documents" caption="Your documents" rows={data.documents} rowKey={(d) => d.id}
+          search={{ placeholder: 'Search by name or category', by: (d) => [d.name, d.fileName, categoryLabel(d.category)] }}
+          defaultSort={{ key: 'created', direction: 'desc' }}
+          columns={[
+            {
+              key: 'name', label: 'Document', value: (d) => d.name, wrap: true, className: 'font-medium',
+              cell: (d) => <>{d.name}{d.fileName && <span className="ml-2 text-[11px] text-ink-500">{d.fileName}</span>}</>,
+            },
+            { key: 'category', label: 'Category', value: (d) => categoryLabel(d.category), className: 'text-ink-600' },
+            { key: 'created', label: 'Created', type: 'date', value: (d) => d.createdAt, cell: (d) => date(d.createdAt?.slice(0, 10)), className: 'text-ink-600' },
+            {
+              key: 'status', label: 'Status', value: (d) => d.status,
+              cell: (d) => <Badge tone={d.status === 'EXECUTED' ? 'success' : 'warning'}>{d.status.replace(/_/g, ' ').toLowerCase()}</Badge>,
+            },
+            {
+              key: 'actions', label: '', align: 'right',
+              cell: (d) => (
+                <span className="flex justify-end gap-1">
+                  {/* Whether a holder can read their own paperwork is decided the one way
+                      the rest of the app decides it. This used to insist on a document
+                      being EXECUTED before offering to read it, which meant a file the
+                      company filed against their shares could be seen but not opened. */}
+                  {d.body && (
+                    <Button size="sm" variant="ghost" icon={<Icon name="download" className="size-3.5" />}
+                      onClick={() => window.open(`/api/c/${companyId}/documents/${d.id}/print`, '_blank', 'noopener')}>
+                      Print
+                    </Button>
+                  )}
+                  {documentAccess(companyId!, d) === 'read' && (
+                    <Button size="sm" variant="ghost" icon={<Icon name="eye" className="size-3.5" />}
+                      onClick={() => setReading({ ...d, path: readableDocumentPath(companyId!, d), file: documentFilename(d) })}>
+                      Read
+                    </Button>
+                  )}
+                  {documentAccess(companyId!, d) === 'download' && (
+                    <Button size="sm" variant="ghost" icon={<Icon name="download" className="size-3.5" />}
+                      onClick={() => downloadFile(downloadDocumentPath(companyId!, d), documentFilename(d)).catch((e: Error) => toast(e.message, 'error'))}>
+                      Download
+                    </Button>
+                  )}
+                </span>
+              ),
+            },
+          ]} />
       )}
 
       {(data.pendingVotes ?? []).length > 0 && (
@@ -397,18 +390,18 @@ export default function Portal() {
           <Button variant="primary" onClick={runExitModel} loading={busy}>Model outcomes</Button>
         </div>
         {curve && (
-          <Table className="mt-4">
-            <thead><tr><TH>Exit value</TH><TH align="right">Your proceeds</TH><TH align="right">Return on your investment</TH></tr></thead>
-            <tbody>
-              {curve.filter((_, i) => i % 2 === 1).map((c: any, i: number) => (
-                <TR key={i}>
-                  <TD mono>{money(c.exitValue, { compact: true })}</TD>
-                  <TD align="right" mono className="font-medium">{money(c.payout, { compact: true })}</TD>
-                  <TD align="right" mono className="text-ink-600">{c.multiple > 0 ? `${c.multiple.toFixed(2)}x` : '—'}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
+          // The model's points from the lowest exit to the highest, numbered so each row keeps its key.
+          <DataTable frame="box" className="mt-4" caption="Your proceeds at each exit value"
+            rows={curve.filter((_, i) => i % 2 === 1).map((c: any, i: number) => ({ ...c, row: i }))} rowKey={(c) => c.row}
+            defaultSort={{ key: 'exitValue', direction: 'asc' }}
+            columns={[
+              { key: 'exitValue', label: 'Exit value', type: 'money', align: 'left', value: (c) => c.exitValue, cell: (c) => money(c.exitValue, { compact: true }) },
+              { key: 'payout', label: 'Your proceeds', type: 'money', value: (c) => c.payout, cell: (c) => money(c.payout, { compact: true }), className: 'font-medium' },
+              {
+                key: 'multiple', label: 'Return on your investment', type: 'number', value: (c) => (c.multiple > 0 ? c.multiple : null),
+                cell: (c) => (c.multiple > 0 ? `${c.multiple.toFixed(2)}x` : '—'), className: 'text-ink-600',
+              },
+            ]} />
         )}
       </Card>
       )}
@@ -419,35 +412,38 @@ export default function Portal() {
       </Modal>
 
       {(data.exerciseRequests ?? []).length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Your exercise requests" subtitle="The company reviews each request, then confirms payment and records the exercise" /></div>
-          <Table>
-            <thead><tr><TH>Requested</TH><TH>Grant</TH><TH align="right">Options</TH><TH>Method</TH><TH align="right">Exercise price</TH><TH>Status</TH><TH /></tr></thead>
-            <tbody>
-              {data.exerciseRequests.map((r: any) => (
-                <TR key={r.id}>
-                  <TD className="text-ink-600">{date(String(r.requestedAt).slice(0, 10))}</TD>
-                  <TD className="font-medium">{r.awardLabel ?? '—'}</TD>
-                  <TD align="right" mono>{shares(r.quantity)}</TD>
-                  <TD className="text-ink-600">{String(r.method).toLowerCase().replace('_', ' ')}</TD>
-                  <TD align="right" mono>{money(r.estimatedCost)}</TD>
-                  <TD>
-                    <StatusBadge status={r.status === 'APPROVED' ? 'PENDING' : r.status} />
-                    <span className="block text-[11px] text-ink-500">
-                      {r.status === 'REQUESTED' && 'Waiting for the company to review'}
-                      {r.status === 'APPROVED' && 'Approved — please pay the exercise price'}
-                      {r.status === 'PAID' && 'Payment received — being recorded'}
-                      {r.status === 'COMPLETED' && 'Shares issued to you'}
-                      {r.status === 'REJECTED' && (r.adminNote ?? 'Not approved')}
-                    </span>
-                    {r.status === 'APPROVED' && data.paymentInstructions && <span className="mt-1 block whitespace-pre-wrap rounded bg-ink-50 p-2 text-[11px] text-ink-700">{data.paymentInstructions}</span>}
-                  </TD>
-                  <TD align="right">{['REQUESTED', 'APPROVED'].includes(r.status) && <Button size="sm" variant="ghost" loading={busy} onClick={() => void withdraw(r.id)}>Withdraw</Button>}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        // Newest first, as the server sends them.
+        <DataTable className="mt-5" title="Your exercise requests" caption="Your exercise requests"
+          subtitle="The company reviews each request, then confirms payment and records the exercise"
+          rows={data.exerciseRequests} rowKey={(r) => r.id}
+          defaultSort={{ key: 'requested', direction: 'desc' }}
+          columns={[
+            { key: 'requested', label: 'Requested', type: 'date', value: (r) => r.requestedAt, cell: (r) => date(String(r.requestedAt).slice(0, 10)), className: 'text-ink-600' },
+            { key: 'grant', label: 'Grant', value: (r) => r.awardLabel, className: 'whitespace-nowrap font-medium' },
+            { key: 'quantity', label: 'Options', type: 'number', value: (r) => r.quantity },
+            { key: 'method', label: 'Method', value: (r) => String(r.method).toLowerCase().replace('_', ' '), className: 'whitespace-nowrap text-ink-600' },
+            { key: 'cost', label: 'Exercise price', type: 'money', value: (r) => r.estimatedCost },
+            {
+              key: 'status', label: 'Status', value: (r) => r.status,
+              cell: (r) => (
+                <>
+                  <StatusBadge status={r.status === 'APPROVED' ? 'PENDING' : r.status} />
+                  <span className="block text-[11px] text-ink-500">
+                    {r.status === 'REQUESTED' && 'Waiting for the company to review'}
+                    {r.status === 'APPROVED' && 'Approved — please pay the exercise price'}
+                    {r.status === 'PAID' && 'Payment received — being recorded'}
+                    {r.status === 'COMPLETED' && 'Shares issued to you'}
+                    {r.status === 'REJECTED' && (r.adminNote ?? 'Not approved')}
+                  </span>
+                  {r.status === 'APPROVED' && data.paymentInstructions && <span className="mt-1 block whitespace-pre-wrap rounded bg-ink-50 p-2 text-[11px] text-ink-700">{data.paymentInstructions}</span>}
+                </>
+              ),
+            },
+            {
+              key: 'actions', label: '', align: 'right',
+              cell: (r) => ['REQUESTED', 'APPROVED'].includes(r.status) && <Button size="sm" variant="ghost" loading={busy} onClick={() => void withdraw(r.id)}>Withdraw</Button>,
+            },
+          ]} />
       )}
 
       <Modal open={!!requesting} onClose={() => setRequesting(null)} title={`Request to exercise ${requesting?.award?.label ?? 'options'}`} size="sm"

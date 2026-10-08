@@ -103,12 +103,12 @@ export default function Templates() {
       <PageHeader concept="templates" title="Document templates"
         subtitle="The agreements and certificates generated when you issue equity. Merge fields fill in the company, holder and grant details." />
 
-      <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
+      <div className="grid gap-5 lg:grid-cols-[300px_1fr] [&>*]:min-w-0">
         <div className="space-y-4">
           {kinds.map((k) => (
             <Card key={k.kind} padded={false}>
               <div className="flex items-start justify-between gap-2 border-b border-ink-100 px-4 py-3">
-                <div>
+                <div className="min-w-0">
                   <p className="text-[13px] font-semibold text-ink-900">{k.label}</p>
                   <p className="mt-0.5 text-[11px] leading-snug text-ink-500">{k.description}</p>
                 </div>
@@ -124,10 +124,10 @@ export default function Templates() {
                     <button type="button" onClick={() => select(t)}
                       className={cx('flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left text-[13px] hover:bg-ink-50',
                         draft?.id === t.id && 'bg-brand-50 text-brand-900')}>
-                      <span className="truncate">{t.name}</span>
+                      <span className="min-w-0 truncate" title={t.name}>{t.name}</span>
                       <span className="flex shrink-0 gap-1">
                         {t.builtIn && <Badge tone="neutral">Built-in</Badge>}
-                        {t.isDefault && <Badge tone="brand">Default</Badge>}
+                        {!!t.isDefault && <Badge tone="brand">Default</Badge>}
                       </span>
                     </button>
                   </li>

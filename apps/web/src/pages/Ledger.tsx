@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useSession } from '../session.tsx';
 import { useQuery, downloadReport } from '../api.ts';
-import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button,
-  EmptyState, SearchInput, Select, Field,
-} from '../ui.tsx';
+import { PageHeader, Badge, Loading, ErrorNote, Button, EmptyState, Select } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
-import { money, shares, pps, date } from '../format.ts';
+import { money, pps, shares } from '../format.ts';
 import { config } from '../config.ts';
 
 const TYPE_TONES: Record<string, any> = {
@@ -14,6 +12,9 @@ const TYPE_TONES: Record<string, any> = {
   REPURCHASE: 'warning', CANCELLATION: 'danger', CONVERSION: 'purple',
   POOL_INCREASE: 'brand', STOCK_SPLIT: 'info', SECONDARY_SALE: 'neutral', DIVIDEND: 'success',
 };
+
+/** A type as the badge and the filter say it: "pool increase". */
+const typeLabel = (type: string): string => type.replace(/_/g, ' ').toLowerCase();
 
 export default function Ledger() {
   const { companyId, canViewAll } = useSession();
@@ -45,52 +46,46 @@ export default function Ledger() {
         actions={<Button icon={<Icon name="download" />}
           onClick={() => void downloadReport(companyId!, 'transactions')}>Export CSV</Button>} />
 
-      <Card className="mb-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <Field label="Type" className="w-52">
-            <Select value={type} onChange={(e) => setType(e.target.value)}>
+      {/* The page keeps its filter and its search, and the table shows the rows they leave.
+          The server sends the newest first, which is the order the table opens in. */}
+      <DataTable caption="Transaction ledger" rows={rows} rowKey={(t) => t.id}
+        defaultSort={{ key: 'date', direction: 'desc' }}
+        controls={(
+          <span className="block w-full sm:w-52">
+            <Select aria-label="Transaction type" value={type} onChange={(e) => setType(e.target.value)}>
               <option value="ALL">All transaction types</option>
-              {types.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ').toLowerCase()}</option>)}
+              {types.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
             </Select>
-          </Field>
-          <div className="ml-auto w-72">
-            <Field label="Search"><SearchInput value={search} onChange={setSearch} placeholder="Memo or stakeholder" /></Field>
-          </div>
-        </div>
-      </Card>
-
-      <Card padded={false}>
-        {rows.length === 0 ? (
-          <EmptyState title="No transactions" description="Issuances, exercises, transfers and conversions appear here automatically." />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Date</TH><TH>Type</TH><TH>Stakeholder</TH>
-                <TH align="right">Quantity</TH><TH align="right">Price</TH><TH align="right">Amount</TH>
-                <TH>Memo</TH><TH>Recorded by</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => (
-                <TR key={t.id}>
-                  <TD className="whitespace-nowrap text-ink-600">{date(t.date)}</TD>
-                  <TD><Badge tone={TYPE_TONES[t.type] ?? 'neutral'}>{t.type.replace(/_/g, ' ').toLowerCase()}</Badge></TD>
-                  <TD className="font-medium">
-                    {t.stakeholderId ? nameOf.get(t.stakeholderId) ?? '—' : '—'}
-                    {t.counterpartyId && <span className="text-ink-500"> → {nameOf.get(t.counterpartyId) ?? '—'}</span>}
-                  </TD>
-                  <TD align="right" mono>{t.quantity ? shares(t.quantity) : '—'}</TD>
-                  <TD align="right" mono>{t.pricePerShare ? pps(t.pricePerShare) : '—'}</TD>
-                  <TD align="right" mono>{t.amount ? money(t.amount, { compact: true }) : '—'}</TD>
-                  <TD className="max-w-md text-[12px] text-ink-600">{t.memo ?? '—'}</TD>
-                  <TD className="text-[12px] text-ink-500">{t.createdBy ?? 'System'}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
+          </span>
         )}
-      </Card>
+        search={{ value: search, onChange: setSearch, placeholder: 'Memo or stakeholder', label: 'Search by memo or stakeholder' }}
+        empty={<EmptyState title="No transactions" description="Issuances, exercises, transfers and conversions appear here automatically." />}
+        columns={[
+          { key: 'date', label: 'Date', type: 'date', value: (t) => t.date, className: 'text-ink-600' },
+          { key: 'type', label: 'Type', value: (t) => typeLabel(t.type),
+            cell: (t) => <Badge tone={TYPE_TONES[t.type] ?? 'neutral'}>{typeLabel(t.type)}</Badge> },
+          { key: 'stakeholder', label: 'Stakeholder', className: 'font-medium',
+            value: (t) => (t.stakeholderId ? nameOf.get(t.stakeholderId) : null),
+            cell: (t) => (
+              <>
+                {t.stakeholderId ? nameOf.get(t.stakeholderId) ?? '—' : '—'}
+                {t.counterpartyId && <span className="text-ink-500"> → {nameOf.get(t.counterpartyId) ?? '—'}</span>}
+              </>
+            ) },
+          { key: 'quantity', label: 'Quantity', type: 'number', value: (t) => t.quantity || null },
+          { key: 'price', label: 'Price', type: 'price', value: (t) => t.pricePerShare || null,
+            cell: (t) => (t.pricePerShare ? pps(t.pricePerShare) : '—') },
+          { key: 'amount', label: 'Amount', type: 'money', value: (t) => t.amount || null,
+            cell: (t) => (t.amount ? money(t.amount, { compact: true }) : '—') },
+          { key: 'memo', label: 'Memo', wrap: true, className: 'max-w-md text-[12px] text-ink-600', cell: (t) => t.memo ?? '—' },
+          { key: 'recordedBy', label: 'Recorded by', value: (t) => t.createdBy ?? 'System', className: 'text-[12px] text-ink-500' },
+        ]}
+        // The page loads the newest entries only, so a sort or a search reaches no further back than those.
+        after={(data?.length ?? 0) >= config.limits.ledgerMaxPageSize && (
+          <p className="border-t border-ink-100 px-5 py-3 text-[12px] text-ink-500">
+            The newest {shares(config.limits.ledgerMaxPageSize)} transactions are shown, and sorting and searching cover only these. Export CSV has every one.
+          </p>
+        )} />
     </>
   );
 }

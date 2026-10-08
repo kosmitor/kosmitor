@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom';
 import { useSession } from '../session.tsx';
 import { useQuery, api, downloadFile } from '../api.ts';
 import {
-  PageHeader, Card, CardHeader, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field, Select, EmptyState,
+  PageHeader, Card, CardHeader, Badge, Loading, ErrorNote, Button, Input, Field, Select, EmptyState,
   Checkbox, ConfirmDialog, useToast, Modal, cx,
 } from '../ui.tsx';
 import { Icon } from '../icons.tsx';
+import { DataTable, type Column as DataColumn, type ColumnType } from '../DataTable.tsx';
+import type { Sort } from '../sortable.tsx';
 import { money, pps, percent, shares, date, today } from '../format.ts';
 import { config } from '../config.ts';
 
@@ -17,6 +19,10 @@ interface Saved { id: string; name: string; dataset: string; config: any; update
 
 const OP_LABELS: Record<string, string> = { eq: 'is', neq: 'is not', contains: 'contains', gt: 'greater than', gte: 'at least', lt: 'less than', lte: 'at most', in: 'is one of', empty: 'is empty', notEmpty: 'is not empty' };
 const NO_VALUE = new Set(['empty', 'notEmpty']);
+/** How the preview lays out each kind of column: figures right-aligned, in digits of one width. */
+const COLUMN_TYPES: Record<Column['type'], ColumnType> = {
+  text: 'text', boolean: 'text', date: 'date', number: 'number', percent: 'number', money: 'money', pps: 'price',
+};
 
 const format = (v: unknown, type: Column['type']) => {
   if (v == null || v === '') return <span className="text-ink-300">—</span>;
@@ -30,6 +36,9 @@ const format = (v: unknown, type: Column['type']) => {
     default: return String(v);
   }
 };
+
+/** A figure in the totals row, formatted as its column; a word ("Total") as it is. */
+const totalOf = (v: unknown, type: Column['type']) => (typeof v === 'number' ? format(v, type) : String(v));
 
 /** Pick a dataset, the columns, filters and order; preview, export, save. */
 export default function ReportBuilder() {
@@ -119,6 +128,9 @@ export default function ReportBuilder() {
   if (!dataset) return null;
 
   const ordered = columns.map((k) => dataset.columns.find((c) => c.key === k)!).filter(Boolean);
+  // The report's order, as the preview's headings show it; a heading clicked sets it, as "Sort by" does.
+  const previewSort: Sort<string> | null = sort ? { key: sort.column, direction: sort.dir } : null;
+  const sortBy = (column: string) => setSort(sort?.column === column ? { column, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { column, dir: 'asc' });
 
   return (
     <>
@@ -129,7 +141,8 @@ export default function ReportBuilder() {
           <Button variant="primary" onClick={() => void exportAs('xlsx')} loading={busy} icon={<Icon name="download" />}>Excel</Button>
         </>} />
 
-      <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
+      {/* Columns that may shrink: the preview table scrolls inside its card instead of widening the page. */}
+      <div className="grid gap-5 lg:grid-cols-[300px_1fr] [&>*]:min-w-0">
         <div className="space-y-4">
           <Card>
             <CardHeader title="Dataset" />
@@ -235,27 +248,23 @@ export default function ReportBuilder() {
             </div>
           </Card>
 
-          <Card padded={false}>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-100 p-4">
-              <p className="text-[13px] font-semibold text-ink-900">Preview{result ? ` · ${result.total} row${result.total === 1 ? '' : 's'}${result.truncated ? ` (first ${config.limits.reportPreviewRows} shown)` : ''}` : ''}</p>
-              {running && <Badge tone="neutral">Running…</Badge>}
-            </div>
-            {!result ? <div className="p-6"><Loading label="Running the report" /></div> : result.rows.length === 0 ? <EmptyState title="No rows match" description="Loosen the filters or pick another dataset." /> : (
-              <div className="overflow-auto">
-                <Table>
-                  <thead><tr>{result.columns.map((c) => <TH key={c.key} align={['number', 'money', 'pps', 'percent'].includes(c.type) ? 'right' : undefined}>{c.label}</TH>)}</tr></thead>
-                  <tbody>
-                    {result.rows.map((r, i) => (
-                      <TR key={i}>{r.map((v, j) => <TD key={j} align={['number', 'money', 'pps', 'percent'].includes(result.columns[j].type) ? 'right' : undefined} mono={['number', 'money', 'pps', 'percent'].includes(result.columns[j].type)}>{format(v, result.columns[j].type)}</TD>)}</TR>
-                    ))}
-                    {result.totalsRow && (
-                      <TR>{result.totalsRow.map((v, j) => <TD key={j} align={['number', 'money'].includes(result.columns[j].type) ? 'right' : undefined} mono className="font-semibold">{typeof v === 'number' ? format(v, result.columns[j].type) : String(v)}</TD>)}</TR>
-                    )}
-                  </tbody>
-                </Table>
-              </div>
-            )}
-          </Card>
+          {/* The preview is the report's own order: a heading sorts the report, as "Sort by" does,
+              so the rows here, the export and a saved report always agree. Sorting only the rows
+              on screen would misorder a preview cut short at its first rows. */}
+          <DataTable caption={`${dataset.label} report${loadedSaved ? `, ${loadedSaved.name}` : ''}`}
+            title={`Preview${result ? ` · ${result.total} row${result.total === 1 ? '' : 's'}${result.truncated ? ` (first ${config.limits.reportPreviewRows} shown)` : ''}` : ''}`}
+            fullSize={`${dataset.label} report, full size`}
+            actions={running && <Badge tone="neutral">Running…</Badge>}
+            rows={result?.rows.map((cells, i) => ({ i, cells })) ?? []} rowKey={(r) => r.i}
+            sort={previewSort} onSort={sortBy} busy={running}
+            empty={!result ? <div className="p-6"><Loading label="Running the report" /></div>
+              : <EmptyState title="No rows match" description="Loosen the filters or pick another dataset." />}
+            columns={(result?.columns ?? []).map((c, j): DataColumn<{ i: number; cells: unknown[] }> => ({
+              key: c.key, label: c.label, type: COLUMN_TYPES[c.type],
+              value: (r) => r.cells[j] as string | number | null, cell: (r) => format(r.cells[j], c.type),
+              total: result?.totalsRow && j > 0 ? totalOf(result.totalsRow[j], c.type) : undefined,
+            }))}
+            totalLabel={result?.totalsRow ? totalOf(result.totalsRow[0], 'text') : undefined} />
         </div>
       </div>
 

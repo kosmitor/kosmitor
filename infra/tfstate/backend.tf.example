@@ -1,0 +1,34 @@
+# This stack's own state, in the container it created, under tfstate.tfstate.
+# The first apply has nowhere else to put it, so it starts in a local
+# terraform.tfstate; once the container exists, move it there. README.md,
+# "Why this stack's state lives in the container it manages", says why. From
+# this directory, after the first apply:
+#
+#   terraform state list > state-before.txt
+#   terraform output -raw backend_hcl > backend.hcl
+#   echo 'key                  = "tfstate.tfstate"' >> backend.hcl
+#   cp backend.tf.example backend.tf       # after the output: from here on, commands want init first
+#   terraform init -backend-config=backend.hcl -migrate-state
+#   terraform state list | diff state-before.txt -    # prints nothing
+#   terraform plan                         # No changes.
+#
+# Every stack shares the container, each under its own key, so read the
+# migration's question before answering. Answer yes only when it says no
+# existing state was found in the new backend. If it says a state already exists
+# there, the key is another stack's: press Ctrl-C, since yes would overwrite that
+# state and no would take it over in place of this one's, and change the key.
+#
+# A 403 (AuthorizationPermissionMismatch) from init means the role the apply
+# granted has not reached the blob service yet; it takes a few minutes. Run init
+# again.
+#
+# The migration empties terraform.tfstate but leaves the old state in
+# terraform.tfstate.backup, and this state holds the account's access keys. Once
+# both checks pass, delete both, state-before.txt and any saved plan file, which
+# carries the same keys.
+#
+# From then on, pass -backend-config=backend.hcl to every terraform init. Both
+# backend.tf and backend.hcl are ignored by git, so each deployment keeps its own.
+terraform {
+  backend "azurerm" {}
+}

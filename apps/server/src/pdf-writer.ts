@@ -188,13 +188,29 @@ export function tablePdf(doc: PdfTableDocument): Buffer {
     const total = cols.reduce((s, c) => s + (c.width as number), 0);
     widths = cols.map((c) => (usable * (c.width as number)) / total);
   } else {
-    widths = cols.map((c, i) => {
-      const content = doc.rows.reduce((m, r) => Math.max(m, width(r.cells[i] ?? '', bodySize, r.bold ? 'Helvetica-Bold' : 'Helvetica')), 0);
-      return Math.max(width(c.header, bodySize, 'Helvetica-Bold'), content) + pad * 2;
-    });
-    const total = widths.reduce((s, w) => s + w, 0);
+    const content = cols.map((_, i) => doc.rows.reduce((m, r) => Math.max(m, width(r.cells[i] ?? '', bodySize, r.bold ? 'Helvetica-Bold' : 'Helvetica')), 0) + pad * 2);
+    const heading = cols.map((c) => width(c.header, bodySize, 'Helvetica-Bold') + pad * 2);
+    widths = cols.map((_, i) => Math.max(heading[i], content[i]));
+    const sum = (ws: number[]): number => ws.reduce((s, w) => s + w, 0);
+    const total = sum(widths);
     if (total > usable) {
-      widths = widths.map((w) => Math.max(40, (w * usable) / total));
+      // Short of room, the columns give way in an order that keeps the figures whole:
+      // first the text columns down to a floor (a long name ends in an ellipsis), then
+      // headings wider than their figures, then the text columns down to 40 points,
+      // and only then everything alike.
+      const isText = cols.map((c) => (c.align ?? 'left') === 'left');
+      const giveWay = (spare: number[]) => {
+        const over = sum(widths) - usable;
+        const room = sum(spare);
+        if (over <= 0 || room <= 0) return;
+        const share = Math.min(1, over / room);
+        widths = widths.map((w, i) => w - spare[i] * share);
+      };
+      giveWay(widths.map((w, i) => (isText[i] ? Math.max(0, w - Math.max(heading[i], 72)) : 0)));
+      giveWay(widths.map((w, i) => (isText[i] ? 0 : Math.max(0, w - content[i]))));
+      giveWay(widths.map((w, i) => (isText[i] ? Math.max(0, w - 40) : 0)));
+      const left = sum(widths);
+      if (left > usable) widths = widths.map((w) => Math.max(40, (w * usable) / left));
     } else {
       // Spare room goes to the text columns first; numbers stay compact.
       const left = cols.map((c, i) => ((c.align ?? 'left') === 'left' ? i : -1)).filter((i) => i >= 0);

@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef, useState, useSyncExternalStore, createContext, useContext, useCallback } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, createContext, useContext, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { initials, avatarColor } from './format.ts';
 
@@ -68,8 +68,10 @@ export function Spinner({ className }: { className?: string }) {
 export function Card({ children, className, padded = true, id }: { children: React.ReactNode; className?: string; padded?: boolean; id?: string }) {
   // overflow-clip keeps edge-to-edge children (table headers, list rows) inside the rounded
   // corners without creating a scroll container, so sticky headers keep working.
+  // min-w-0: in a grid or a flex row a card may be narrower than what is in it, so
+  // a wide table scrolls inside the card instead of widening the page.
   return (
-    <div id={id} className={cx('bg-white rounded-xl border border-ink-200/70 shadow-[0_1px_2px_rgba(16,24,40,.04)] overflow-clip', padded && 'p-5', id && 'scroll-mt-16', className)}>
+    <div id={id} className={cx('min-w-0 bg-white rounded-xl border border-ink-200/70 shadow-[0_1px_2px_rgba(16,24,40,.04)] overflow-clip', padded && 'p-5', id && 'scroll-mt-16', className)}>
       {children}
     </div>
   );
@@ -300,35 +302,96 @@ export function Tabs<T extends string>({ value, onChange, tabs }: {
 // Tables
 // ---------------------------------------------------------------------------
 
-export function Table({ children, className }: { children: React.ReactNode; className?: string }) {
+/**
+ * Text up to this many characters in a table's first column is short: it stays
+ * on one line. The document tree (DocumentTree.tsx) draws the line in the same place.
+ */
+export const SHORT_TEXT = 24;
+
+/** Text that is in a cell but not on screen: a tooltip's words until hovered, a label for screen readers. */
+const UNSEEN = '.hidden, .sr-only, [hidden]';
+
+/**
+ * The longest piece of text in a cell that shows: each element's own text, so
+ * a name and the email under it count apart, and so do a row's buttons.
+ */
+function longestText(cell: Element): number {
+  const runs = new Map<Node, number>();
+  const walk = document.createTreeWalker(cell, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (node instanceof Element && node.matches(UNSEEN) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    if (node.nodeType !== Node.TEXT_NODE) continue;
+    const parent = node.parentNode!;
+    runs.set(parent, (runs.get(parent) ?? 0) + [...(node.nodeValue ?? '')].length);
+  }
+  return Math.max(0, ...runs.values());
+}
+
+export function Table({ children, className, style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
+  // The first column names the row: a person, a grant, a certificate, a document.
+  // Left to wrap, the columns beside it squeezed "OPT-11" onto two lines and a
+  // two-word name onto two more, so short text there keeps to one line. Longer
+  // text may wrap between words, in a column kept wide enough (10rem) for two or
+  // three lines rather than a word a line, so one long name does not push the
+  // figures off the card; a name drawn with `truncate` is cut at 14rem instead,
+  // or sooner where the page says so. The other columns follow the same rule: a
+  // holder, a status, "Not subject to vesting" or a row's buttons stay on one
+  // line, as everything on the cap table does, and only longer text wraps, in a
+  // column kept 10rem wide, never to a word a line. A cell that holds a sentence
+  // opts in to wrapping with <TD wrap>, and one spanning several columns (an
+  // empty state, a row's details) wraps as it always did. The rows are the
+  // caller's and any of them may have changed, so the cells are looked at again
+  // after every render; it is a walk over their text, with no layout.
+  const table = useRef<HTMLTableElement>(null);
+  useLayoutEffect(() => {
+    table.current?.querySelectorAll(':scope > tbody > tr > td:not([colspan])')
+      .forEach((cell) => cell.toggleAttribute('data-long', longestText(cell) > SHORT_TEXT));
+  });
   return (
-    <div className={cx('overflow-x-auto -mx-px', className)}>
-      <table className="w-full text-sm border-collapse">{children}</table>
+    <div className={cx('overflow-x-auto -mx-px', className)} style={style}>
+      <table ref={table} className={cx('w-full text-sm border-collapse',
+        '[&>tbody>tr>td:not([colspan],[data-wrap],[data-long])]:whitespace-nowrap',
+        '[&>tbody>tr>td[data-long]]:min-w-40 [&>tbody>tr>td:first-child[data-long]]:break-words',
+        // Without weight (:where), so a table that has less room gives its names a narrower max-w of their own.
+        '[:where(&>tbody>tr>td:first-child:not([colspan])_.truncate)]:max-w-56')}>{children}</table>
     </div>
   );
 }
 
-export function TH({ children, align = 'left', className, width }: {
+export function TH({ children, align = 'left', className, width, pinned }: {
   children?: React.ReactNode; align?: 'left' | 'right' | 'center'; className?: string; width?: string | number;
+  /**
+   * The first column's heading, on a table that keeps that column in view while
+   * it scrolls sideways (DataTable.tsx): drawn as a pinned SortTH is, over the
+   * other headings and under the app's header. 'end' is the row actions' heading,
+   * kept in view at the other side.
+   */
+  pinned?: boolean | 'end';
 }) {
   return (
     <th style={{ width }} className={cx(
-      'sticky top-0 z-10 bg-ink-50/95 backdrop-blur px-3 py-2 text-[11px] font-semibold uppercase tracking-wide',
+      pinned === 'end' ? 'sticky top-0 z-[15] bg-ink-50 sm:right-0 sm:shadow-[inset_1px_0_0_var(--color-ink-200)]'
+        : pinned ? 'sticky top-0 z-[15] bg-ink-50 sm:left-0 sm:shadow-[inset_-1px_0_0_var(--color-ink-200)]' : 'sticky top-0 z-10 bg-ink-50/95 backdrop-blur',
+      'px-3 py-2 text-[11px] font-semibold uppercase tracking-wide',
       'text-ink-500 border-b border-ink-200 whitespace-nowrap',
-      align === 'right' && 'text-right', align === 'center' && 'text-center', className,
+      // Said outright: a browser centres a heading cell unless told otherwise.
+      align === 'left' && 'text-left', align === 'right' && 'text-right', align === 'center' && 'text-center', className,
     )}>{children}</th>
   );
 }
 
-export function TD({ children, align = 'left', className, mono, colSpan, title }: {
+export function TD({ children, align = 'left', className, mono, colSpan, title, wrap }: {
   children?: React.ReactNode; align?: 'left' | 'right' | 'center';
   className?: string; mono?: boolean; colSpan?: number; title?: string;
+  /** A first cell that holds a sentence may wrap; it keeps room for a short one on a single line. */
+  wrap?: boolean;
 }) {
   return (
-    <td colSpan={colSpan} title={title} className={cx(
+    <td colSpan={colSpan} title={title} data-wrap={wrap ? '' : undefined} className={cx(
       'px-3 py-2.5 border-b border-ink-100 text-ink-800 align-middle',
       align === 'right' && 'text-right', align === 'center' && 'text-center',
-      mono && 'tabular', className,
+      wrap && 'min-w-56', mono && 'tabular', className,
     )}>{children}</td>
   );
 }
@@ -421,6 +484,40 @@ let pageOverflow = '';
 const dialogsChanged = () => { for (const listener of dialogListeners) listener(); };
 const watchDialogs = (listener: () => void) => { dialogListeners.add(listener); return () => { dialogListeners.delete(listener); }; };
 
+/**
+ * Where a layer over the page sits on that stack: its place from the bottom,
+ * and a half more while another is open above it; -1 while it is closed. A
+ * table's full size view (DataTable.tsx) is on the same stack as the dialogs,
+ * so a row's dialog opened over it is the one that answers Escape.
+ */
+export function useLayerPlace(id: symbol): number {
+  return useSyncExternalStore(watchDialogs, () => {
+    const at = openDialogs.indexOf(id);
+    return at < 0 ? -1 : at === openDialogs.length - 1 ? at : at + 0.5;
+  });
+}
+
+/** Puts a layer on the stack. The first one in locks the page behind it. */
+export function enterLayer(id: symbol): void {
+  if (openDialogs.length === 0) {
+    pageOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+  }
+  openDialogs.push(id);
+  dialogsChanged();
+}
+
+/** Takes a layer off the stack. The page behind is let go when the last one leaves, whichever order they leave in. */
+export function leaveLayer(id: symbol): void {
+  const at = openDialogs.indexOf(id);
+  if (at >= 0) openDialogs.splice(at, 1);
+  if (openDialogs.length === 0) document.body.style.overflow = pageOverflow;
+  dialogsChanged();
+}
+
+/** Whether a layer is the newest one open: the one that answers Escape. */
+export const isNewestLayer = (id: symbol): boolean => openDialogs.at(-1) === id;
+
 export function Modal({ open, onClose, title, description, children, footer, size = 'md' }: {
   open: boolean; onClose: () => void; title: React.ReactNode; description?: React.ReactNode;
   children: React.ReactNode; footer?: React.ReactNode; size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -432,10 +529,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   const titleId = useId();
   const descriptionId = useId();
   // Where this dialog sits in the stack, and whether anything is open above it.
-  const place = useSyncExternalStore(watchDialogs, () => {
-    const at = openDialogs.indexOf(id);
-    return at < 0 ? -1 : at === openDialogs.length - 1 ? at : at + 0.5;
-  });
+  const place = useLayerPlace(id);
   const covered = place >= 0 && !Number.isInteger(place);
 
   // Callers pass `onClose` as an inline arrow, so its identity changes on every
@@ -447,19 +541,12 @@ export function Modal({ open, onClose, title, description, children, footer, siz
 
   useEffect(() => {
     if (!open) return;
-    if (openDialogs.length === 0) {
-      pageOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-    }
-    openDialogs.push(id);
-    dialogsChanged();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && openDialogs.at(-1) === id) onCloseRef.current(); };
+    enterLayer(id);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && isNewestLayer(id)) onCloseRef.current(); };
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      openDialogs.splice(openDialogs.indexOf(id), 1);
-      if (openDialogs.length === 0) document.body.style.overflow = pageOverflow;
-      dialogsChanged();
+      leaveLayer(id);
     };
   }, [open, id]);
 
@@ -472,9 +559,11 @@ export function Modal({ open, onClose, title, description, children, footer, siz
     const root = ref.current;
     if (!root) return;
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const first = root.querySelector<HTMLElement>(
+    // A field that is not drawn (a file input behind its drop zone) cannot take focus, which would leave it
+    // behind the dialog, on a control the dialog has put out of reach (a table's full size view under it).
+    const first = Array.from(root.querySelectorAll<HTMLElement>(
       'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled])',
-    );
+    )).find((field) => field.getClientRects().length > 0);
     (first ?? root).focus();
     return () => {
       if (!before?.isConnected) return;

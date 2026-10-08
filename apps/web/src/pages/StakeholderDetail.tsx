@@ -5,24 +5,28 @@ import { useQuery, api } from '../api.ts';
 import { FormModal } from '../crud.tsx';
 import { STAKEHOLDER_BLANK, STAKEHOLDER_TYPES, EMPLOYMENT_TYPES, TERMINATION_REASONS, TAX_FORMS, ACCREDITED, StakeholderFields, stakeholderFormFrom, stakeholderPayload, labelOf, type StakeholderForm } from './stakeholders/StakeholderForm.tsx';
 import {
-  PageHeader, Card, CardHeader, Stat, Badge, Loading, ErrorNote, EmptyState, Button,
-  Table, TH, TD, TR, MiniBar, KeyValue, Avatar, StatusBadge, useToast, ConceptNote,
+  Card, CardHeader, Stat, Badge, Loading, ErrorNote, EmptyState, Button,
+  MiniBar, KeyValue, Avatar, StatusBadge, useToast, ConceptNote,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { VestingChart, OwnershipDonut, ChartLegend } from '../charts.tsx';
 import { Icon } from '../icons.tsx';
 import {
   money, shares, pps, percent, date, relativeDate,
   AWARD_LABELS, INSTRUMENT_LABELS, RELATION_LABELS,
 } from '../format.ts';
+import { hasBoardSeat, isDirector, isFormerDirector } from '../board.ts';
 
 export default function StakeholderDetail() {
   const { id } = useParams<{ id: string }>();
-  const { companyId, canEdit } = useSession();
+  const { companyId, canEdit, canViewAll } = useSession();
   const toast = useToast();
   const { data, error, loading, reload } = useQuery<any>(
     companyId && id ? `/c/${companyId}/stakeholders/${id}/position` : null, [companyId, id]);
   // The full register entry: the position payload carries only what the engine needs.
   const record = useQuery<any>(companyId && id && canEdit !== undefined ? `/c/${companyId}/stakeholders/${id}` : null, [companyId, id]);
+  // The register, for the investor who designated a director and the form's list of investors.
+  const register = useQuery<any[]>(companyId && canViewAll ? `/c/${companyId}/stakeholders` : null, [companyId]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<StakeholderForm>(STAKEHOLDER_BLANK);
   const [busy, setBusy] = useState(false);
@@ -46,6 +50,16 @@ export default function StakeholderDetail() {
     } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
   };
   const address = [profile.address, [profile.city, profile.region, profile.postalCode].filter(Boolean).join(', '), profile.country].filter(Boolean).join('\n');
+  // A seat that ended stays on the record: its holder is shown as a former director.
+  const designator = (register.data ?? []).find((p) => p.id === profile.boardDesignatedBy);
+  const seat = !hasBoardSeat(profile) ? null : (
+    <>
+      {isDirector(profile) ? (profile.boardSeatStart ? `Director since ${date(profile.boardSeatStart)}` : 'Director')
+        : isFormerDirector(profile) ? `Former director, ${profile.boardSeatStart ? `${date(profile.boardSeatStart)} – ${date(profile.boardSeatEnd)}` : `left ${date(profile.boardSeatEnd)}`}`
+        : `Joins the board ${date(profile.boardSeatStart)}`}
+      {designator && <> · designated by <Link to={`/stakeholders/${designator.id}`} className="text-brand-700 hover:underline">{designator.name}</Link></>}
+    </>
+  );
   const tags = String(profile.tags ?? '').split(',').map((t: string) => t.trim()).filter(Boolean);
 
   // The profile runs to twenty fields, which pushed the holdings and awards off the
@@ -68,6 +82,7 @@ export default function StakeholderDetail() {
     identity[0],
     { label: 'Email', value: profile.email ?? '—' },
     { label: 'Start date', value: date(profile.startDate) },
+    ...(seat ? [{ label: 'Board seat', value: seat }] : []),
     ...(profile.terminationDate
       ? [{ label: 'Termination', value: `${date(profile.terminationDate)}${profile.terminationReason ? ` · ${labelOf(TERMINATION_REASONS, profile.terminationReason)}` : ''}` }]
       : []),
@@ -116,6 +131,8 @@ export default function StakeholderDetail() {
               <Badge tone={holder.relation === 'INVESTOR' ? 'info' : holder.relation === 'FOUNDER' ? 'purple' : 'neutral'}>
                 {RELATION_LABELS[holder.relation] ?? holder.relation}
               </Badge>
+              {isDirector(profile) && <Badge tone="brand">Board</Badge>}
+              {isFormerDirector(profile) && <Badge tone="neutral">Former director</Badge>}
               {holder.title && <span className="text-[13px] text-ink-500">{holder.title}</span>}
               {holder.email && <span className="text-[13px] text-ink-500">{holder.email}</span>}
               {holder.terminationDate && <Badge tone="warning">Departed {date(holder.terminationDate)}</Badge>}
@@ -190,58 +207,43 @@ export default function StakeholderDetail() {
           </Card>
 
           {row.holdings.length > 0 && (
-            <Card className="lg:col-span-2" padded={false}>
-              <div className="p-5 pb-0"><CardHeader title="Holdings by share class" /></div>
-              <Table>
-                <thead>
-                  <tr><TH>Class</TH><TH align="right">Shares</TH><TH align="right">As converted</TH>
-                    <TH align="right">Votes</TH><TH align="right">Invested</TH></tr>
-                </thead>
-                <tbody>
-                  {row.holdings.map((h: any) => (
-                    <TR key={h.shareClassId}>
-                      <TD><Badge tone={h.kind === 'PREFERRED' ? 'purple' : 'neutral'}>{h.className}</Badge></TD>
-                      <TD align="right" mono>{shares(h.shares)}</TD>
-                      <TD align="right" mono>{shares(h.asConverted)}</TD>
-                      <TD align="right" mono>{shares(h.votes)}</TD>
-                      <TD align="right" mono>{money(h.investedAmount, { compact: true })}</TD>
-                    </TR>
-                  ))}
-                </tbody>
-              </Table>
-            </Card>
+            // The table's wrapper is the grid item here, so it takes min-w-0: a wide table scrolls inside its card rather than widening the grid.
+            <DataTable className="min-w-0 lg:col-span-2" title="Holdings by share class"
+              rows={row.holdings} rowKey={(h: any) => h.shareClassId}
+              columns={[
+                { key: 'class', label: 'Class', value: (h) => h.className,
+                  cell: (h) => <Badge tone={h.kind === 'PREFERRED' ? 'purple' : 'neutral'}>{h.className}</Badge> },
+                { key: 'shares', label: 'Shares', type: 'number', value: (h) => h.shares },
+                { key: 'converted', label: 'As converted', type: 'number', value: (h) => h.asConverted },
+                { key: 'votes', label: 'Votes', type: 'number', value: (h) => h.votes },
+                { key: 'invested', label: 'Invested', type: 'money', value: (h) => h.investedAmount,
+                  cell: (h) => money(h.investedAmount, { compact: true }) },
+              ]} />
           )}
         </div>
       )}
 
       {data.issuances.length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Certificates" /></div>
-          <Table>
-            <thead>
-              <tr><TH>Certificate</TH><TH align="right">Shares</TH><TH align="right">Price</TH>
-                <TH>Issued</TH><TH>83(b)</TH><TH>Status</TH></tr>
-            </thead>
-            <tbody>
-              {data.issuances.map((i: any) => (
-                <TR key={i.id}>
-                  <TD className="font-medium">{i.certificateNo ?? i.id.slice(-6).toUpperCase()}</TD>
-                  <TD align="right" mono>{shares(i.quantity)}</TD>
-                  <TD align="right" mono>{pps(i.pricePerShare)}</TD>
-                  <TD className="text-ink-600">{date(i.issueDate)}</TD>
-                  <TD>{i.election83bFiledOn ? <Badge tone="success">Filed</Badge>
-                    : i.vestingScheduleId ? <Badge tone="warning">Not filed</Badge> : <span className="text-ink-400">—</span>}</TD>
-                  <TD><StatusBadge status={i.status} /></TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable className="mt-5" title="Certificates"
+          rows={data.issuances} rowKey={(i: any) => i.id}
+          columns={[
+            { key: 'certificate', label: 'Certificate', className: 'font-medium',
+              value: (i) => i.certificateNo ?? i.id.slice(-6).toUpperCase() },
+            { key: 'shares', label: 'Shares', type: 'number', value: (i) => i.quantity },
+            // Per-share prices are in micro-cents: they sort as numbers and show with pps.
+            { key: 'price', label: 'Price', type: 'price', value: (i) => i.pricePerShare },
+            { key: 'issued', label: 'Issued', type: 'date', value: (i) => i.issueDate, className: 'text-ink-600' },
+            { key: '83b', label: '83(b)',
+              value: (i) => (i.election83bFiledOn ? 'Filed' : i.vestingScheduleId ? 'Not filed' : null),
+              cell: (i) => (i.election83bFiledOn ? <Badge tone="success">Filed</Badge>
+                : i.vestingScheduleId ? <Badge tone="warning">Not filed</Badge> : <span className="text-ink-400">—</span>) },
+            { key: 'status', label: 'Status', value: (i) => i.status, cell: (i) => <StatusBadge status={i.status} /> },
+          ]} />
       )}
 
       {portfolio.grants.length > 0 && (
         <div className="mt-5 space-y-5">
-          <h2 className="text-[15px] font-semibold text-ink-900">Equity awards</h2>
+          <h2 className="text-[15px] font-semibold text-ink-900">Equity grants</h2>
           {portfolio.grants.map((g: any) => {
             const a = g.award;
             return (
@@ -293,55 +295,36 @@ export default function StakeholderDetail() {
       )}
 
       {data.convertibles.length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Convertible instruments" /></div>
-          <Table>
-            <thead>
-              <tr><TH>Instrument</TH><TH align="right">Principal</TH><TH align="right">Cap</TH>
-                <TH align="right">Discount</TH><TH>Issued</TH><TH>Maturity</TH><TH>Status</TH></tr>
-            </thead>
-            <tbody>
-              {data.convertibles.map((c: any) => (
-                <TR key={c.id}>
-                  <TD>{INSTRUMENT_LABELS[c.instrument] ?? c.instrument}</TD>
-                  <TD align="right" mono>{money(c.principal, { compact: true })}</TD>
-                  <TD align="right" mono>{c.valuationCap ? money(c.valuationCap, { compact: true }) : 'Uncapped'}</TD>
-                  <TD align="right" mono>{c.discount ? percent(c.discount, 0) : '—'}</TD>
-                  <TD className="text-ink-600">{date(c.issueDate)}</TD>
-                  <TD className="text-ink-600">{c.maturityDate ? date(c.maturityDate) : '—'}</TD>
-                  <TD><StatusBadge status={c.status} /></TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable className="mt-5" title="Convertible instruments"
+          rows={data.convertibles} rowKey={(c: any) => c.id}
+          columns={[
+            { key: 'instrument', label: 'Instrument', value: (c) => INSTRUMENT_LABELS[c.instrument] ?? c.instrument },
+            { key: 'principal', label: 'Principal', type: 'money', value: (c) => c.principal,
+              cell: (c) => money(c.principal, { compact: true }) },
+            { key: 'cap', label: 'Cap', type: 'money', value: (c) => c.valuationCap || null,
+              cell: (c) => (c.valuationCap ? money(c.valuationCap, { compact: true }) : 'Uncapped') },
+            { key: 'discount', label: 'Discount', type: 'number', value: (c) => c.discount || null,
+              cell: (c) => (c.discount ? percent(c.discount, 0) : '—') },
+            { key: 'issued', label: 'Issued', type: 'date', value: (c) => c.issueDate, className: 'text-ink-600' },
+            { key: 'maturity', label: 'Maturity', type: 'date', value: (c) => c.maturityDate, className: 'text-ink-600' },
+            { key: 'status', label: 'Status', value: (c) => c.status, cell: (c) => <StatusBadge status={c.status} /> },
+          ]} />
       )}
 
       {data.warrants.length > 0 && (
-        <Card className="mt-5" padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Warrants" /></div>
-          <Table>
-            <thead>
-              <tr><TH align="right">Shares</TH><TH align="right">Strike</TH><TH>Issued</TH>
-                <TH>Expires</TH><TH>Status</TH></tr>
-            </thead>
-            <tbody>
-              {data.warrants.map((w: any) => (
-                <TR key={w.id}>
-                  <TD align="right" mono>{shares(w.quantity - w.exercisedQuantity)}</TD>
-                  <TD align="right" mono>{pps(w.strikePrice)}</TD>
-                  <TD className="text-ink-600">{date(w.issueDate)}</TD>
-                  <TD className="text-ink-600">{w.expirationDate ? date(w.expirationDate) : '—'}</TD>
-                  <TD><StatusBadge status={w.status} /></TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable className="mt-5" title="Warrants"
+          rows={data.warrants} rowKey={(w: any) => w.id}
+          columns={[
+            { key: 'shares', label: 'Shares', type: 'number', value: (w) => w.quantity - w.exercisedQuantity },
+            { key: 'strike', label: 'Strike', type: 'price', value: (w) => w.strikePrice },
+            { key: 'issued', label: 'Issued', type: 'date', value: (w) => w.issueDate, className: 'text-ink-600' },
+            { key: 'expires', label: 'Expires', type: 'date', value: (w) => w.expirationDate, className: 'text-ink-600' },
+            { key: 'status', label: 'Status', value: (w) => w.status, cell: (w) => <StatusBadge status={w.status} /> },
+          ]} />
       )}
       <FormModal open={editing} onClose={() => setEditing(false)} busy={busy} size="lg" title="Edit stakeholder"
         description="Everything the register knows about this holder." onSubmit={save} submitLabel="Save changes">
-        <StakeholderFields form={form} setForm={setForm} />
+        <StakeholderFields form={form} setForm={setForm} people={register.data ?? []} selfId={id ?? null} />
       </FormModal>
     </>
   );

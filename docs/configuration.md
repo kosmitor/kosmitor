@@ -70,8 +70,8 @@ The product's name, look and sign-in page. Change these to rebrand the app.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `brand.productName` | `"Kosmitor"` | Product name shown beside the logo, in page titles, emails, PDFs and exports. |
-| `brand.pageTitle` | `"Kosmitor — Equity Management"` | Browser tab title. |
-| `brand.tagline` | `"Equity management"` | Short line under the product name in the sidebar when no company is open. |
+| `brand.pageTitle` | `"Kosmitor — 409A & Equity Management"` | Browser tab title. |
+| `brand.tagline` | `"Equity management & 409A valuations for startups, founders and investors."` | Short line under the product name in the sidebar when no company is open. |
 | `brand.logoUrl` | `null` | Image used as the logo (a path under apps/web/public, such as /logo.svg, or a full URL). null draws the built-in shield in the primary colour. |
 | `brand.icons` |  | Browser tab and home-screen icons. Replace the files in apps/web/public or point these at your own. |
 | `brand.icons.svg` | `"/favicon.svg"` | Scalable tab icon. |
@@ -100,7 +100,7 @@ The product's name, look and sign-in page. Change these to rebrand the app.
 | `brand.colors.accent.700` | `"#5c9600"` | Shade 700. |
 | `brand.colors.accent.800` | `"#457000"` | Shade 800. |
 | `brand.colors.accent.900` | `"#2f4d00"` | Shade 900. |
-| `brand.colors.charts` | `["#6366f1", "#99f200", "#f59e0b", "#a855f7", "#ec4899", "#0ea5e9", "#84cc16", "#ef4444", "#8b5cf6", "#7ac400"]` | Series colours for charts, used in order. |
+| `brand.colors.charts` | `["#6366f1", "#99f200", "#f59e0b", "#a855f7", "#ec4899", "#0ea5e9", "#14b8a6", "#ef4444", "#8b5cf6", "#7ac400"]` | Series colours for charts, used in order. |
 | `brand.colors.status` |  | Colours of the compliance score gauge. |
 | `brand.colors.status.good` | `"#7ac400"` | Score in the top band. |
 | `brand.colors.status.warning` | `"#f59e0b"` | Score in the middle band. |
@@ -112,8 +112,8 @@ The product's name, look and sign-in page. Change these to rebrand the app.
 | `brand.colors.initialsFallback` | `["#6366f1", "#5c9600", "#d97706", "#9333ea", "#db2777", "#0284c7", "#65a30d", "#dc2626"]` | Colours for initials avatars of people who have not picked one, chosen by name. |
 | `brand.colors.certificateFrame` | `"#0f6b4f"` | Frame around stock certificates, award certificates and SAFE/note certificates; the faint title behind the text is a pale tint of it. |
 | `brand.signIn` |  | Words on the sign-in and sign-up pages. |
-| `brand.signIn.headline` | `"Know who owns what, and what it is worth."` | Large headline on the right-hand panel. |
-| `brand.signIn.subheadline` | `"Stay in safe harbor with every action on your shares, at your current 409A fair market value."` | Paragraph under the headline. |
+| `brand.signIn.headline` | `"Stay in safe harbor with every action on your shares, at your current 409A fair market value."` | Large headline on the right-hand panel. |
+| `brand.signIn.subheadline` | `"Know who owns what, and what it is worth, at any given time."` | Paragraph under the headline. |
 | `brand.signIn.features` | 5 entries, see `kosmitor.config.json` | The list under the paragraph: a bold lead and the rest of the line. |
 | `brand.signIn.features[].title` |  | Bold lead. |
 | `brand.signIn.features[].detail` |  | Rest of the line. |
@@ -201,7 +201,7 @@ An optional service: companies ask a valuation team you run for a new 409A, the 
 | --- | --- | --- |
 | `valuationDesk.enabled` | `false` | Offer the service. Off hides it everywhere and refuses new requests. |
 | `valuationDesk.name` | `null` | What the team is called, as it reads after "the" (for example "Acme valuation team"). null uses "<productName> valuation team". |
-| `valuationDesk.email` | `null` | Inbox that receives each request. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL wins over it. |
+| `valuationDesk.email` | `null` | Where each new request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it. |
 | `valuationDesk.linkOpenDays` | `180` | How long the team's status link works while a request is open. At least 1. |
 | `valuationDesk.linkClosedDays` | `30` | How long it keeps working after the request closes. At least 1. |
 | `valuationDesk.requestsPerCompanyPerDay` | `5` | New requests one company can make per day. At least 1. |
@@ -209,7 +209,7 @@ An optional service: companies ask a valuation team you run for a new 409A, the 
 | `valuationDesk.noticesPerRequestPerDay` | `3` | Times one request can be sent to the team per day. At least 1. |
 | `valuationDesk.noticesPerCompanyPerDay` | `5` | Notices to the team one company can trigger per day. At least 1. |
 | `valuationDesk.noticesPerPersonPerDay` | `10` | Notices to the team one person can trigger per day. At least 1. |
-| `valuationDesk.noticesPerHour` | `30` | Notices to the team across all companies per hour. At least 1. |
+| `valuationDesk.noticesPerHour` | `30` | Emails to the team across all companies per hour: a notice counts once for each address in valuationDesk.email, so a longer list sends no more mail. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. It cannot be fewer than the addresses in valuationDesk.email. At least 1. |
 | `valuationDesk.statusEmailsPerRequestPerDay` | `10` | Emails one request can send the person who asked per day, each time its status changes. 0 turns them off. At least 0. |
 | `valuationDesk.reportUploadsPerRequestPerDay` | `10` | Reports the team can upload to one request per day from its page. The app reads the values from each one for the company to check. 0 turns uploads off. At least 0. |
 | `valuationDesk.sendCooldownSeconds` | `60` | Wait between two sends of the same request. At least 0. |
@@ -247,7 +247,10 @@ Sizes and page lengths.
 | `limits.uploadMb` | `25` | Largest document upload, in MB. Files are stored in PostgreSQL. From 1 to 500. |
 | `limits.importUploadMb` | `20` | Largest spreadsheet import, in MB. From 1 to 500. |
 | `limits.importMaxRows` | `5000` | Rows read from one import sheet. At least 1. |
-| `limits.importMaxSheets` | `50` | Sheets imported from one workbook. At least 1. |
+| `limits.importMaxSheets` | `50` | Sheets one import takes, across all its files. At least 1. |
+| `limits.importJsonMb` | `48` | Largest import preview or commit request, in MB: it carries every row of every file being imported. From 1 to 500. |
+| `limits.importUnzippedMb` | `256` | Most an .xlsx import may unpack to, in MB, across the parts that are read. A workbook that unpacks to more is refused: a small file that unpacks to gigabytes is a zip bomb. From 1 to 4000. |
+| `limits.importMaxTotalRows` | `25000` | Rows one import takes across all its sheets and files. Each sheet still reads at most importMaxRows. At least 1. |
 | `limits.ledgerPageSize` | `200` | Transactions and audit entries returned by default. At least 1. |
 | `limits.ledgerMaxPageSize` | `500` | Most transactions and audit entries one request can return; the pages ask for this many. At least 1. |
 | `limits.reportRows` | `200` | Rows a report run returns by default. At least 1. |

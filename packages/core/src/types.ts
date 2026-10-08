@@ -72,6 +72,16 @@ export interface Stakeholder {
   taxCountry: string | null;
   taxState: string | null;
   entityGroupId: string | null;       // roll multiple certs into one fund line
+  /**
+   * A seat on the board, apart from the relation: an investor can hold one and a
+   * founder need not (isDirector). Absent means no seat.
+   */
+  boardSeat?: boolean;
+  boardSeatStart?: ISODate | null;
+  /** The day the seat ended; the director is a former one from then on. */
+  boardSeatEnd?: ISODate | null;
+  /** The investor stakeholder who designated the director, if any. */
+  boardDesignatedBy?: string | null;
 }
 
 // ---------------------------------------------------------------------------

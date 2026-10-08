@@ -4,10 +4,11 @@ import { useCrud, FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
 import { useQuery, api, downloadFile } from '../api.ts';
 import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote, Button, Input, Field,
-  Select, SearchInput, EmptyState, ConfirmDialog, StatusBadge, SegmentedControl, useToast,
+  PageHeader, Card, Badge, Loading, ErrorNote, Button, Input, Field,
+  Select, EmptyState, ConfirmDialog, StatusBadge, SegmentedControl, useToast,
   Checkbox, MiniBar, Banner, KeyValue, Textarea, Modal, ActionMenu,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { Icon } from '../icons.tsx';
 import { PdfViewer } from '../PdfViewer.tsx';
 import { DocumentPreview } from '../PdfFrame.tsx';
@@ -17,6 +18,7 @@ import { shares, pps, money, date, today, percent, parseShares, parsePPS, AWARD_
 import ExerciseRequests from './ExerciseRequests.tsx';
 import { useSearchQuery } from '../hooks.ts';
 import { config } from '../config.ts';
+import { directorsOn, reselectDirectors } from '../board.ts';
 
 const AWARD_TYPES = [
   ['ISO', 'Incentive stock option (ISO)'],
@@ -84,7 +86,8 @@ export default function Grants() {
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
   const scheduleOf = useMemo(() => new Map((schedules ?? []).map((s) => [s.id, s])), [schedules]);
-  const directors = useMemo(() => (stakeholders ?? []).filter((s) => s.relation === 'BOARD_MEMBER' || s.relation === 'FOUNDER'), [stakeholders]);
+  // The consent takes effect on the grant date, so it goes to the board of that day.
+  const directors = useMemo(() => directorsOn(stakeholders, form.grantDate), [stakeholders, form.grantDate]);
   /** The award agreement behind a grant, with its signature blocks. */
   const agreementOf = useMemo(() => newestPerHolding((documents ?? []).filter((d) => d.category === 'GRANT_AGREEMENT')), [documents]);
   /**
@@ -139,7 +142,7 @@ export default function Grants() {
       strikePrice: currentFmv ? String(currentFmv / 1e6) : '',
       fmvAtGrant: currentFmv ? String(currentFmv / 1e6) : '',
     });
-    setIssue({ ...blankIssue, signerName: contacts?.defaultSignatory?.name ?? user?.name ?? '', signerTitle: contacts?.defaultSignatory?.title ?? blankIssue.signerTitle, directorIds: directors.map((d) => d.id) });
+    setIssue({ ...blankIssue, signerName: contacts?.defaultSignatory?.name ?? user?.name ?? '', signerTitle: contacts?.defaultSignatory?.title ?? blankIssue.signerTitle, directorIds: directorsOn(stakeholders, blank.grantDate).map((d) => d.id) });
     setEditing({ id: null });
   };
 
@@ -157,12 +160,12 @@ export default function Grants() {
         vestingStartDate: o.startDate ?? '', vestingScheduleId: o.vestingScheduleId ?? schedules[0]?.id ?? '',
         notes: `From the offer letter accepted ${String(o.acceptedAt ?? '').slice(0, 10)} for the ${o.position} role.`,
       });
-      setIssue({ ...blankIssue, signerName: contacts?.defaultSignatory?.name ?? user?.name ?? '', signerTitle: contacts?.defaultSignatory?.title ?? blankIssue.signerTitle, directorIds: directors.map((d) => d.id) });
+      setIssue({ ...blankIssue, signerName: contacts?.defaultSignatory?.name ?? user?.name ?? '', signerTitle: contacts?.defaultSignatory?.title ?? blankIssue.signerTitle, directorIds: directorsOn(stakeholders, blank.grantDate).map((d) => d.id) });
       setEditing({ id: null });
     }).catch(() => undefined);
-  }, [offerParam, companyId, pools, schedules, currentFmv, directors, user, contacts]);
+  }, [offerParam, companyId, pools, schedules, currentFmv, stakeholders, user, contacts]);
 
-  // "Issue an equity award" from the search palette lands here with the form already open.
+  // "Issue an equity grant" from the search palette lands here with the form already open.
   const newParam = searchParams.get('new');
   const openedNew = useRef(false);
   useEffect(() => {
@@ -216,7 +219,7 @@ export default function Grants() {
         body: {
           ...payload, approval: issue.approval, offerId: offer?.id ?? null,
           boardApprovalDate: issue.approval === 'APPROVED' ? form.boardApprovalDate || today() : null,
-          directorIds: issue.approval === 'REQUEST' ? issue.directorIds : [],
+          directorIds: issue.approval === 'REQUEST' ? issue.directorIds.filter((d) => directors.some((x) => x.id === d)) : [],
           signing: issue.forSignature
             ? { signerName: issue.signerName, signerTitle: issue.signerTitle, templateId: issue.templateId || null, message: issue.message || null }
             : null,
@@ -301,7 +304,7 @@ export default function Grants() {
     } finally { setBusy(false); }
   };
 
-  if (crud.loading) return <Loading label="Loading equity awards" />;
+  if (crud.loading) return <Loading label="Loading equity grants" />;
   if (crud.error) return <ErrorNote error={crud.error} onRetry={crud.reload} />;
 
   const outstandingRows = rows.filter((a) => a.status === 'OUTSTANDING');
@@ -312,9 +315,91 @@ export default function Grants() {
     : issue.approval === 'REQUEST' ? 'Request board approval'
     : issue.forSignature ? 'Send for signature' : 'Record grant';
 
+  const grantNoOf = (a: any): string => a.label ?? a.id.slice(-6).toUpperCase();
+  /** What the outstanding options are worth over their strike today, in cents; nothing for one underwater. */
+  const intrinsicOf = (a: any): number => Math.max(0, Math.round((outstandingOf(a) * (currentFmv - a.strikePrice)) / 1e4));
+  const underwaterOf = (a: any): boolean => a.strikePrice > currentFmv && a.type !== 'RSU';
+
+  /** The status, the consent or signatures it waits on, and what is filed against the grant. */
+  const statusCell = (a: any) => {
+    const blocks = blocksOf(a);
+    return (
+      <>
+        <StatusBadge status={a.status} />
+        {a.status === 'PENDING_APPROVAL' && (
+          <Link to="/consents" className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700">Board consent pending</Link>
+        )}
+        {a.status === 'PENDING_SIGNATURE' && blocks.length > 0 && (
+          <span className="mt-1 block text-[11px] text-ink-500">
+            {blocks.filter((s) => s.status === 'SIGNED').length} of {blocks.length} signed
+            {blocks.some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocks.filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
+          </span>
+        )}
+        {(filedOn.get(a.id) ?? []).map((d) => {
+          // The agreement the app wrote keeps its own viewer, which carries the
+          // signature blocks and the countersign flow; anything else is a file.
+          const isAgreement = agreementOf.get(a.id)?.id === d.id;
+          const executed = isAgreement && a.status === 'OUTSTANDING' && d.status === 'EXECUTED';
+          // A document with neither text nor a stored file has nothing behind it,
+          // so its name is stated rather than offered as something to open. The
+          // app's own agreement always has text, so it is never in this case.
+          if (!isAgreement && documentAccess(companyId!, d) === 'none') {
+            return (
+              <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
+                {d.name}
+              </span>
+            );
+          }
+          return (
+            <button key={d.id} title={d.name}
+              className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
+              onClick={() => (isAgreement ? setViewing(d) : openDocument(d))}>
+              {executed ? 'Signed agreement' : d.name}
+            </button>
+          );
+        })}
+      </>
+    );
+  };
+
+  // At most one button for the thing this row is waiting on and the rest in
+  // the menu: four side by side wrapped into a ragged block. The menu itself
+  // is here for every role, because the documents are worth reading whether
+  // or not you may change anything.
+  const rowActions = (a: any) => {
+    const pending = IN_FLIGHT.has(a.status);
+    return (
+      <span className="flex flex-nowrap items-center justify-end gap-1">
+        {canEdit && pending && (
+          companyBlock(a)?.status === 'PENDING' ? (
+            <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(a), document: agreementOf.get(a.id) }); }}>Countersign</Button>
+          ) : holderBlock(a)?.status === 'PENDING' ? (
+            <Button size="sm" loading={busy} onClick={() => void remind(a)}>Remind</Button>
+          ) : null
+        )}
+        <ActionMenu items={[
+          { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(a) },
+          ...(pending && agreementOf.get(a.id)
+            ? [{ label: 'View the agreement', icon: 'eye' as const, onClick: () => setViewing(agreementOf.get(a.id)) }] : []),
+          ...(canEdit && pending && companyBlock(a)?.status === 'PENDING' && holderBlock(a)?.status === 'PENDING'
+            ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(a); } }] : []),
+          ...(canEdit && !pending && a.status === 'OUTSTANDING' && a.type !== 'RSU' && a.type !== 'PHANTOM'
+            ? [{ label: 'Exercise the grant', icon: 'check' as const,
+                onClick: () => { setExercise({ quantity: '', exerciseDate: today(), method: 'CASH', notes: '' }); setExercisePreview(null); setExercising(a); } }] : []),
+          ...(canEdit && !pending
+            ? [{ label: 'Edit the grant', icon: 'edit' as const, onClick: () => openEdit(a) }] : []),
+          ...(canEdit && pending
+            ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(a) }] : []),
+          ...(canEdit && !pending && a.status === 'OUTSTANDING'
+            ? [{ label: 'Cancel the grant', icon: 'trash' as const, danger: true, onClick: () => { setCancel({ quantity: String(outstandingOf(a)), date: today(), reason: '' }); setConfirmCancel(a); } }] : []),
+        ]} />
+      </span>
+    );
+  };
+
   return (
     <>
-      <PageHeader concept="equity-awards" title="Equity awards"
+      <PageHeader concept="equity-awards" title="Equity grants"
         subtitle={`${shares(totalOutstanding)} shares under ${outstandingRows.length} outstanding grants${inFlight ? ` · ${inFlight} in flight` : ''}`}
         actions={canEdit && (
           <>
@@ -349,139 +434,40 @@ export default function Grants() {
         </div>
       )}
 
-      <Card className="mb-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <SegmentedControl value={status} onChange={setStatus} options={[
-            { value: 'OUTSTANDING', label: 'Outstanding & in flight' }, { value: 'ALL', label: 'All grants' },
-          ]} />
-          <div className="ml-auto w-64"><SearchInput value={search} onChange={setSearch} placeholder="Holder or grant number" /></div>
-        </div>
-      </Card>
-
-      <Card padded={false}>
-        {rows.length === 0 ? (
-          <EmptyState title="No grants" description="Issue options or RSUs from an equity plan."
-            action={canEdit && !noPools && <Button variant="primary" onClick={openNew}>New grant</Button>} />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Grant</TH>
-                <TH>Holder</TH>
-                <TH>Type</TH>
-                <TH align="right">Granted</TH>
-                <TH align="right">Outstanding</TH>
-                <TH align="right">Strike</TH>
-                <TH align="right">Intrinsic value</TH>
-                <TH>Vesting</TH>
-                <TH>Status</TH>
-                <TH width={150} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((a) => {
-                const outstanding = outstandingOf(a);
-                const schedule = scheduleOf.get(a.vestingScheduleId);
-                const intrinsic = Math.max(0, Math.round((outstanding * (currentFmv - a.strikePrice)) / 1e4));
-                const underwater = a.strikePrice > currentFmv && a.type !== 'RSU';
-                const pending = IN_FLIGHT.has(a.status);
-                const blocks = blocksOf(a);
-                return (
-                  <TR key={a.id}>
-                    <TD className="font-medium">
-                      {/* The number is the grant, so it opens the grant. Outside the canEdit
-                          block on purpose: reading one is not editing it. */}
-                      <Link to={`/grants/${a.id}`}
-                        className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
-                        {a.label ?? a.id.slice(-6).toUpperCase()}
-                      </Link>
-                    </TD>
-                    <TD>
-                      <Link to={`/stakeholders/${a.stakeholderId}`} className="hover:text-brand-700">
-                        {nameOf.get(a.stakeholderId) ?? '—'}
-                      </Link>
-                    </TD>
-                    <TD><Badge tone={a.type === 'ISO' ? 'brand' : a.type === 'RSU' ? 'info' : 'neutral'}>{AWARD_LABELS[a.type] ?? a.type}</Badge></TD>
-                    <TD align="right" mono>{shares(a.quantity)}</TD>
-                    <TD align="right" mono className={pending ? 'text-ink-400' : 'font-medium'}>{pending ? '—' : shares(outstanding)}</TD>
-                    <TD align="right" mono>{a.type === 'RSU' ? '—' : pps(a.strikePrice)}</TD>
-                    <TD align="right" mono className={pending || underwater ? 'text-ink-400' : 'text-secondary-800'}>
-                      {pending ? '—' : underwater ? 'Underwater' : money(intrinsic, { compact: true })}
-                    </TD>
-                    <TD className="text-[12px] text-ink-600">{schedule?.name ?? '—'}</TD>
-                    <TD>
-                      <StatusBadge status={a.status} />
-                      {a.status === 'PENDING_APPROVAL' && (
-                        <Link to="/consents" className="mt-1 block text-[11px] text-brand-600 hover:text-brand-700">Board consent pending</Link>
-                      )}
-                      {a.status === 'PENDING_SIGNATURE' && blocks.length > 0 && (
-                        <span className="mt-1 block text-[11px] text-ink-500">
-                          {blocks.filter((s) => s.status === 'SIGNED').length} of {blocks.length} signed
-                          {blocks.some((s) => s.status !== 'SIGNED') && ` · waiting for ${blocks.filter((s) => s.status !== 'SIGNED').map((s) => (s.stakeholderId ? nameOf.get(s.stakeholderId) ?? s.signerName : 'the Company')).join(' and ')}`}
-                        </span>
-                      )}
-                      {(filedOn.get(a.id) ?? []).map((d) => {
-                        // The agreement the app wrote keeps its own viewer, which carries the
-                        // signature blocks and the countersign flow; anything else is a file.
-                        const isAgreement = agreementOf.get(a.id)?.id === d.id;
-                        const executed = isAgreement && a.status === 'OUTSTANDING' && d.status === 'EXECUTED';
-                        // A document with neither text nor a stored file has nothing behind it,
-                        // so its name is stated rather than offered as something to open. The
-                        // app's own agreement always has text, so it is never in this case.
-                        if (!isAgreement && documentAccess(companyId!, d) === 'none') {
-                          return (
-                            <span key={d.id} className="mt-1 block max-w-[13rem] truncate text-[11px] text-ink-500" title={d.name}>
-                              {d.name}
-                            </span>
-                          );
-                        }
-                        return (
-                          <button key={d.id} title={d.name}
-                            className="mt-1 block max-w-[13rem] truncate text-left text-[11px] text-brand-600 hover:text-brand-700"
-                            onClick={() => (isAgreement ? setViewing(d) : openDocument(d))}>
-                            {executed ? 'Signed agreement' : d.name}
-                          </button>
-                        );
-                      })}
-                    </TD>
-                    {/* At most one button for the thing this row is waiting on and the rest in
-                        the menu: four side by side wrapped into a ragged block. The menu itself
-                        is here for every role, because the documents are worth reading whether
-                        or not you may change anything. */}
-                    <TD align="right">
-                      <span className="flex flex-nowrap items-center justify-end gap-1">
-                        {canEdit && pending && (
-                          companyBlock(a)?.status === 'PENDING' ? (
-                            <Button size="sm" variant="primary" onClick={() => { setSignature(user?.name ?? ''); setCountersigning({ ...companyBlock(a), document: agreementOf.get(a.id) }); }}>Countersign</Button>
-                          ) : holderBlock(a)?.status === 'PENDING' ? (
-                            <Button size="sm" loading={busy} onClick={() => void remind(a)}>Remind</Button>
-                          ) : null
-                        )}
-                        <ActionMenu items={[
-                          { label: 'Documents', icon: 'document', onClick: () => setDocumentsFor(a) },
-                          ...(pending && agreementOf.get(a.id)
-                            ? [{ label: 'View the agreement', icon: 'eye' as const, onClick: () => setViewing(agreementOf.get(a.id)) }] : []),
-                          ...(canEdit && pending && companyBlock(a)?.status === 'PENDING' && holderBlock(a)?.status === 'PENDING'
-                            ? [{ label: 'Remind the holder', icon: 'megaphone' as const, onClick: () => { void remind(a); } }] : []),
-                          ...(canEdit && !pending && a.status === 'OUTSTANDING' && a.type !== 'RSU' && a.type !== 'PHANTOM'
-                            ? [{ label: 'Exercise the grant', icon: 'check' as const,
-                                onClick: () => { setExercise({ quantity: '', exerciseDate: today(), method: 'CASH', notes: '' }); setExercisePreview(null); setExercising(a); } }] : []),
-                          ...(canEdit && !pending
-                            ? [{ label: 'Edit the grant', icon: 'edit' as const, onClick: () => openEdit(a) }] : []),
-                          ...(canEdit && pending
-                            ? [{ label: 'Withdraw before signing', icon: 'trash' as const, danger: true, onClick: () => setWithdrawing(a) }] : []),
-                          ...(canEdit && !pending && a.status === 'OUTSTANDING'
-                            ? [{ label: 'Cancel the grant', icon: 'trash' as const, danger: true, onClick: () => { setCancel({ quantity: String(outstandingOf(a)), date: today(), reason: '' }); setConfirmCancel(a); } }] : []),
-                        ]} />
-                      </span>
-                    </TD>
-                  </TR>
-                );
-              })}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      <DataTable caption="Equity grants" rows={rows} rowKey={(a) => a.id}
+        controls={<SegmentedControl value={status} onChange={setStatus} options={[
+          { value: 'OUTSTANDING', label: 'Outstanding & in flight' }, { value: 'ALL', label: 'All grants' },
+        ]} />}
+        search={{ value: search, onChange: setSearch, placeholder: 'Holder or grant number', label: 'Search grants' }}
+        empty={<EmptyState title="No grants" description="Issue options or RSUs from an equity plan."
+          action={canEdit && !noPools && <Button variant="primary" onClick={openNew}>New grant</Button>} />}
+        columns={[
+          { key: 'grant', label: 'Grant', value: grantNoOf, className: 'font-medium',
+            // The number is the grant, so it opens the grant, whatever the role:
+            // reading one is not editing it.
+            cell: (a) => (
+              <Link to={`/grants/${a.id}`}
+                className="cursor-pointer text-left font-medium text-ink-900 underline decoration-ink-300 underline-offset-2 hover:text-brand-700 hover:decoration-brand-400">
+                {grantNoOf(a)}
+              </Link>
+            ) },
+          { key: 'holder', label: 'Holder', value: (a) => nameOf.get(a.stakeholderId),
+            cell: (a) => <Link to={`/stakeholders/${a.stakeholderId}`} className="hover:text-brand-700">{nameOf.get(a.stakeholderId) ?? '—'}</Link> },
+          { key: 'type', label: 'Type', value: (a) => AWARD_LABELS[a.type] ?? a.type,
+            cell: (a) => <Badge tone={a.type === 'ISO' ? 'brand' : a.type === 'RSU' ? 'info' : 'neutral'}>{AWARD_LABELS[a.type] ?? a.type}</Badge> },
+          { key: 'granted', label: 'Granted', type: 'number', value: (a) => a.quantity },
+          // A grant still in flight has nothing outstanding yet, and no value; it shows a dash and sorts last.
+          { key: 'outstanding', label: 'Outstanding', type: 'number', value: (a) => (IN_FLIGHT.has(a.status) ? null : outstandingOf(a)),
+            className: (a) => (IN_FLIGHT.has(a.status) ? 'text-ink-400' : 'font-medium') },
+          { key: 'strike', label: 'Strike', type: 'price', value: (a) => (a.type === 'RSU' ? null : a.strikePrice),
+            cell: (a) => (a.type === 'RSU' ? '—' : pps(a.strikePrice)) },
+          { key: 'intrinsic', label: 'Intrinsic value', type: 'money', value: (a) => (IN_FLIGHT.has(a.status) ? null : intrinsicOf(a)),
+            cell: (a) => (IN_FLIGHT.has(a.status) ? '—' : underwaterOf(a) ? 'Underwater' : money(intrinsicOf(a), { compact: true })),
+            className: (a) => (IN_FLIGHT.has(a.status) || underwaterOf(a) ? 'text-ink-400' : 'text-secondary-800') },
+          { key: 'vesting', label: 'Vesting', value: (a) => scheduleOf.get(a.vestingScheduleId)?.name, className: 'text-[12px] text-ink-600' },
+          { key: 'status', label: 'Status', value: (a) => a.status, cell: statusCell },
+          { key: 'actions', label: '', width: 150, align: 'right', cell: rowActions },
+        ]} />
 
       <Modal open={!!documentsFor} onClose={() => { setDocumentsFor(null); reloadDocuments(); }} size="lg" title="Documents"
         description={documentsFor
@@ -497,7 +483,7 @@ export default function Grants() {
 
       {/* Grant form */}
       <FormModal open={!!editing} onClose={() => setEditing(null)} busy={crud.busy || busy} size="lg"
-        title={editing?.id ? 'Edit grant' : offer ? `Grant for ${offer.candidateName}'s accepted offer` : 'New equity award'}
+        title={editing?.id ? 'Edit grant' : offer ? `Grant for ${offer.candidateName}'s accepted offer` : 'New equity grant'}
         description="Options must be struck at or above the current 409A fair market value to stay outside section 409A."
         onSubmit={save} submitLabel={submitLabel}>
         <FormGrid>
@@ -542,7 +528,11 @@ export default function Grants() {
             </Field>
           )}
           <Field label="Grant date" required>
-            <Input type="date" value={form.grantDate} onChange={(e) => setForm({ ...form, grantDate: e.target.value })} required />
+            <Input type="date" value={form.grantDate} required onChange={(e) => {
+              setForm({ ...form, grantDate: e.target.value });
+              // The consent goes to the board of the grant date: who joined it by then is asked too, and who left is not.
+              setIssue({ ...issue, directorIds: reselectDirectors(issue.directorIds, stakeholders, form.grantDate, e.target.value) });
+            }} />
           </Field>
           <Field label="Vesting start date" hint="Often the hire date rather than the grant date.">
             <Input type="date" value={form.vestingStartDate} onChange={(e) => setForm({ ...form, vestingStartDate: e.target.value })} />
@@ -594,7 +584,7 @@ export default function Grants() {
                     A written consent is drafted for the directors below. The grant goes out for signature once they have approved it.
                   </p>
                   {directors.length === 0 ? (
-                    <p className="text-[12px] text-amber-700">No directors on file — give a stakeholder the Board member relationship first.</p>
+                    <p className="text-[12px] text-amber-700">Nobody holds a board seat on the grant date — give each director a seat on their stakeholder record first.</p>
                   ) : directors.map((d) => (
                     <Checkbox key={d.id} label={d.name} checked={issue.directorIds.includes(d.id)}
                       onChange={(v) => setIssue({ ...issue, directorIds: v ? [...issue.directorIds, d.id] : issue.directorIds.filter((id) => id !== d.id) })} />

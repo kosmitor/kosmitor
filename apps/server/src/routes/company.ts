@@ -1,10 +1,12 @@
 /**
  * Company people and roles beyond the cap table: who signs for the Company,
- * who to contact (counsel, accountants), and who sits on the board (read from
- * stakeholder relationships, which the consent flows already rely on).
+ * who to contact (counsel, accountants), and who sits on the board (the
+ * stakeholders with a board seat today, as the consent flows read it).
  */
+import { today } from '@kosmitor/core';
 import { route, newId, nowISO, audit, badRequest, notFound, str, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
+import { directorsOn } from '../board.ts';
 
 const KINDS = ['SIGNATORY', 'CONTACT'];
 
@@ -39,11 +41,9 @@ export async function defaultSignatory(companyId: string): Promise<{ name: strin
 
 route.get('/api/c/:cid/contacts', 'read', async (ctx) => {
   const rows = toCamelAll<Record<string, unknown>>(await all('SELECT * FROM company_contacts WHERE company_id = ? ORDER BY is_default DESC, created_at', ctx.companyId));
-  const board = toCamelAll<Record<string, unknown>>(await all(
-    "SELECT id, name, email, relation, title FROM stakeholders WHERE company_id = ? AND relation IN ('BOARD_MEMBER', 'FOUNDER') AND termination_date IS NULL ORDER BY relation, name", ctx.companyId));
   return {
     signatories: rows.filter((r) => r.kind === 'SIGNATORY'), contacts: rows.filter((r) => r.kind === 'CONTACT'),
-    boardMembers: board, defaultSignatory: await defaultSignatory(ctx.companyId!),
+    boardMembers: await directorsOn(ctx.companyId!, today()), defaultSignatory: await defaultSignatory(ctx.companyId!),
   };
 });
 

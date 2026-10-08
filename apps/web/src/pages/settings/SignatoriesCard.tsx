@@ -5,6 +5,7 @@ import { useQuery, api } from '../../api.ts';
 import { FormModal, FormGrid } from '../../crud.tsx';
 import { Card, CardHeader, Button, Input, Field, Select, Badge, Checkbox, ConfirmDialog, useToast, Textarea } from '../../ui.tsx';
 import { Icon } from '../../icons.tsx';
+import { RELATION_LABELS } from '../../format.ts';
 
 const blank = { kind: 'SIGNATORY', name: '', title: '', email: '', phone: '', isDefault: false, notes: '' };
 
@@ -70,15 +71,17 @@ export default function SignatoriesCard() {
             : <ul className="divide-y divide-ink-100">{data!.signatories.map((c) => <Row key={c.id} c={c} />)}</ul>}
         </div>
         <div>
-          <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-500">Board members</p>
+          <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-ink-500">Board of directors</p>
           {(data?.boardMembers ?? []).length === 0
-            ? <p className="text-[12px] text-ink-500">Give a stakeholder the <em>Board member</em> or <em>Founder</em> relationship to seat them.</p>
+            ? <p className="text-[12px] text-ink-500">Nobody holds a board seat. Give each director one under <em>Board seat</em> on their stakeholder record.</p>
             : (
               <ul className="divide-y divide-ink-100">
                 {data!.boardMembers.map((b) => (
                   <li key={b.id} className="py-2">
                     <Link to={`/stakeholders/${b.id}`} className="text-[13px] font-medium text-ink-900 hover:text-brand-700">{b.name}</Link>
-                    <span className="block text-[12px] text-ink-500">{b.relation === 'FOUNDER' ? 'Founder' : 'Board member'}{b.email ? ` · ${b.email}` : ''}</span>
+                    <span className="block text-[12px] text-ink-500">
+                      {RELATION_LABELS[b.relation] ?? b.relation}{b.designatedByName ? ` · designated by ${b.designatedByName}` : ''}{b.email ? ` · ${b.email}` : ''}
+                    </span>
                   </li>
                 ))}
               </ul>

@@ -49,6 +49,16 @@ kosmitor.config.local.json
 .npmrc
 
 # Terraform: state holds every generated password and key in clear
+# In a stack under infra/, git sees only the kinds of file listed here. Anything
+# else there stays out: a state saved under another name (terraform state pull >
+# state), a plan, or state-before.txt, whose addresses can carry Entra object
+# ids. The rules below still apply on top, so backend.tf stays out too.
+/infra/*/*
+!/infra/*/*.tf
+!/infra/*/*.example
+!/infra/*/.terraform.lock.hcl
+!/infra/*/README.md
+!/infra/*/*.sh
 .terraform/
 *.tfstate
 *.tfstate.*

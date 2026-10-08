@@ -65,20 +65,25 @@ test('the Excel export carries the fully diluted view with a pool row, totals, s
   const sheets = parseXlsx(r.body);
   assert.deepEqual(sheets.map((s) => s.name), ['Cap table', 'Share classes', 'Summary']);
   const [table, classes, summary] = sheets;
-  assert.deepEqual(table.rows[0], ['Holder', 'Relationship', 'Shares', 'Options', 'RSUs', 'Warrants', 'Fully diluted shares', 'Ownership %', 'Invested ($)', 'Value ($)']);
+  assert.deepEqual(table.rows[0], ['Holder', 'Relationship', 'Type', 'Shares', 'I&O %', 'Options', 'RSUs', 'Warrants', 'Fully diluted shares', 'Ownership %', 'Invested ($)', 'Value ($)']);
   const holders = table.rows.slice(1).map((row) => row[0]);
   assert.deepEqual(holders, ['Ava Founder', 'Ben Investor', 'Cam Employee', 'Unallocated pool', 'Total']);
   const ava = table.rows[1];
   assert.equal(ava[1], 'Founder');
-  assert.equal(Number(ava[2]), 6_000_000);
-  assert.equal(Number(ava[6]), 6_000_000);
+  assert.equal(ava[2], 'Individual');
+  assert.equal(Number(ava[3]), 6_000_000);
+  assert.equal(Number(ava[4]), 75); // 6,000,000 of the 8,000,000 issued and outstanding
+  assert.equal(Number(ava[8]), 6_000_000);
+  // An option holder has no issued shares, so no share of them either: the cell is left empty.
+  assert.ok(table.rows[3][4] == null || table.rows[3][4] === '');
   const pool = table.rows[4];
-  assert.equal(Number(pool[6]), 600_000); // 1,000,000 reserved less the 400,000 granted
+  assert.equal(Number(pool[8]), 600_000); // 1,000,000 reserved less the 400,000 granted
   const total = table.rows[5];
-  assert.equal(Number(total[6]), 9_000_000); // 8,000,000 issued + 400,000 options + 600,000 pool
-  assert.equal(Number(total[7]), 100);
+  assert.equal(Number(total[4]), 100);
+  assert.equal(Number(total[8]), 9_000_000); // 8,000,000 issued + 400,000 options + 600,000 pool
+  assert.equal(Number(total[9]), 100);
   // Ownership adds up across holders and the pool.
-  const pctSum = table.rows.slice(1, 5).reduce((s, row) => s + Number(row[7]), 0);
+  const pctSum = table.rows.slice(1, 5).reduce((s, row) => s + Number(row[9]), 0);
   assert.ok(Math.abs(pctSum - 100) < 0.01, `ownership sums to ${pctSum}`);
 
   assert.equal(classes.rows[0][0], 'Share class');
@@ -95,9 +100,9 @@ test('the Excel export carries the fully diluted view with a pool row, totals, s
 test('the outstanding view leaves out options and the pool, and follows the view parameter', async () => {
   const r = await download(`/api/c/${cid}/captable/export.xlsx?asOf=2026-01-01&view=OUTSTANDING`, admin);
   const [table] = parseXlsx(r.body);
-  assert.equal(table.rows[0][6], 'Outstanding shares');
+  assert.equal(table.rows[0][8], 'Outstanding shares');
   assert.deepEqual(table.rows.slice(1).map((row) => row[0]), ['Ava Founder', 'Ben Investor', 'Cam Employee', 'Total']);
-  assert.equal(Number(table.rows[4][6]), 8_000_000);
+  assert.equal(Number(table.rows[4][8]), 8_000_000);
   const bad = await download(`/api/c/${cid}/captable/export.xlsx?view=SIDEWAYS`, admin);
   assert.equal(bad.status, 400);
 });
@@ -113,6 +118,8 @@ test('the PDF export is a well-formed document with the company and its holders 
   assert.ok(text.includes('(Export Co \\227 Cap table)'), 'title with an em dash in WinAnsi');
   assert.ok(text.includes('(Ava Founder)') && text.includes('(Cam Employee)') && text.includes('(Unallocated pool)') && text.includes('(Total)'));
   assert.ok(text.includes('(9,000,000)'), 'fully diluted total printed with separators');
+  assert.ok(text.includes('(Type)') && text.includes('(I&O %)') && text.includes('(Individual)'), 'the type and I&O % columns, as on the page');
+  assert.ok(text.includes('(75.00%)'), "Ava's share of the issued and outstanding shares");
   assert.ok(text.includes('/BaseFont /Helvetica-Bold'));
   // The cross-reference table points at the byte where "xref" starts.
   const startxref = Number(text.match(/startxref\n(\d+)\n%%EOF/)![1]);
@@ -133,6 +140,17 @@ test('the PDF writer paginates long tables and repeats the header on every page'
   assert.ok(pdf.includes('(Holder 120)'));
 });
 
+test('short of room, the printed table cuts names and headings before it cuts a figure', () => {
+  const figures = ['Shares', 'I&O %', 'Options outstanding', 'RSUs outstanding', 'Warrants outstanding', 'Convertibles (as converted)',
+    'Fully diluted shares', 'Ownership %', 'Invested ($)', 'Value ($)'];
+  const columns = [{ header: 'Holder' }, { header: 'Relationship' }, { header: 'Type' }, ...figures.map((header) => ({ header, align: 'right' as const }))];
+  const rows = [{ cells: ['Larkspur Ventures Opportunity Fund II, L.P.', 'Former employee', 'Individual',
+    '13,494,390', '100.00%', '1,870,000', '412,000', '96,000', '1,703,068', '16,974,021', '100.00%', '$1,005,449', '$3,734,285'] }];
+  const pdf = tablePdf({ title: 'Wide table', columns, rows }).toString('latin1');
+  for (const figure of rows[0].cells.slice(3)) assert.ok(pdf.includes(`(${figure})`), `${figure} printed whole`);
+  assert.ok(!pdf.includes('(Larkspur Ventures Opportunity Fund II, L.P.)'), 'the long name gives way first');
+});
+
 test('a portfolio-only member cannot export the cap table', async () => {
   const invite = await call('POST', `/api/c/${cid}/members`, { email: 'cam@example.com', name: 'Cam Employee', role: 'EMPLOYEE' }, admin);
   const link = await call('POST', `/api/c/${cid}/members/${invite.json.id}/reset-password`, { mode: 'link' }, admin);
@@ -140,4 +158,34 @@ test('a portfolio-only member cannot export the cap table', async () => {
   const cam = (await call('POST', '/api/auth/reset', { token, password: 'cam-pass-1' })).token as string;
   const r = await download(`/api/c/${cid}/captable/export.pdf`, cam);
   assert.equal(r.status, 403);
+});
+
+test('rolled up, a family of fund entities is one row with the type of the holder it is named after', async () => {
+  // Harbor Fund holds nothing itself; its two vehicles roll up into it. A label that names no
+  // stakeholder would take its name and type from the first vehicle instead.
+  await insert('stakeholders', { id: 'stk_harbor', companyId: cid, name: 'Harbor Fund', type: 'FUND', relation: 'INVESTOR', createdAt: now });
+  await insert('stakeholders', { id: 'stk_harbor_1', companyId: cid, name: 'Harbor Fund I, L.P.', type: 'FUND', relation: 'INVESTOR', entityGroupId: 'stk_harbor', createdAt: now });
+  await insert('stakeholders', { id: 'stk_harbor_co', companyId: cid, name: 'Harbor Co-Invest LLC', type: 'ENTITY', relation: 'INVESTOR', entityGroupId: 'stk_harbor', createdAt: now });
+  await insertSecurity('issuances', { id: 'iss_h1', companyId: cid, certificateNo: 'CS-3', stakeholderId: 'stk_harbor_1', shareClassId: common, quantity: 1_500_000, pricePerShare: 500_000, issueDate: '2024-03-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+  await insertSecurity('issuances', { id: 'iss_h2', companyId: cid, certificateNo: 'CS-4', stakeholderId: 'stk_harbor_co', shareClassId: common, quantity: 500_000, pricePerShare: 500_000, issueDate: '2024-03-01', status: 'OUTSTANDING', earlyExercised: 0, createdAt: now });
+
+  const apart = (await call('GET', `/api/c/${cid}/captable?asOf=2026-01-01`, undefined, admin)).json;
+  const typeOf = (rows: any[], name: string) => rows.find((r) => r.name === name)?.type;
+  assert.equal(typeOf(apart.table.rows, 'Harbor Fund I, L.P.'), 'FUND');
+  assert.equal(typeOf(apart.table.rows, 'Harbor Co-Invest LLC'), 'ENTITY');
+  assert.equal(typeOf(apart.table.rows, 'Ava Founder'), 'INDIVIDUAL');
+
+  const together = (await call('GET', `/api/c/${cid}/captable?asOf=2026-01-01&groupEntities=true`, undefined, admin)).json;
+  const harbor = together.table.rows.filter((r: any) => r.name.startsWith('Harbor'));
+  assert.equal(harbor.length, 1);
+  assert.equal(harbor[0].name, 'Harbor Fund');
+  assert.equal(harbor[0].type, 'FUND');
+  assert.equal(harbor[0].outstanding, 2_000_000);
+  assert.equal(harbor[0].outstandingPct, 0.2); // 2,000,000 of 10,000,000 issued and outstanding
+
+  const r = await download(`/api/c/${cid}/captable/export.xlsx?asOf=2026-01-01&view=OUTSTANDING&groupEntities=true`, admin);
+  const [table] = parseXlsx(r.body);
+  const row = table.rows.find((cells) => cells[0] === 'Harbor Fund')!;
+  assert.equal(row[2], 'Fund');
+  assert.equal(Number(row[4]), 20);
 });

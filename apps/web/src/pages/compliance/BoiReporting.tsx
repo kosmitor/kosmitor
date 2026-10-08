@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useSession } from '../../session.tsx';
 import { useQuery, api } from '../../api.ts';
-import { Card, CardHeader, Table, TH, TD, TR, Loading, ErrorNote, EmptyState, Stat, Banner, Button, Input, Field, Select, Modal, Badge, useToast } from '../../ui.tsx';
+import { Card, Loading, ErrorNote, EmptyState, Stat, Banner, Button, Input, Field, Select, Modal, Badge, useToast } from '../../ui.tsx';
+import { DataTable } from '../../DataTable.tsx';
 import { Icon } from '../../icons.tsx';
 import { date, percent } from '../../format.ts';
 import { SecurityDocuments } from '../../SecurityDocuments.tsx';
@@ -54,6 +55,7 @@ export default function BoiReporting() {
 
   const required = data.status === 'REQUIRED';
   const reasonLabel = (r: string) => (r === 'ownership' ? '≥ 25% ownership' : 'substantial control');
+  const roleOf = (o: any): string => o.title ?? o.relation.toLowerCase().replace('_', ' ');
 
   return (
     <>
@@ -105,73 +107,64 @@ export default function BoiReporting() {
         </Banner>
       </div>
 
-      <Card padded={false}>
-        <div className="p-5 pb-0"><CardHeader title="Beneficial owners" subtitle="Individuals with 25% or more of the ownership interests (their own options counted as exercised) or substantial control — senior officers, founders and directors" /></div>
-        {data.owners.length === 0 ? <EmptyState title="No individual meets the tests yet" /> : (
-          <Table>
-            <thead><tr><TH>Individual</TH><TH>Role</TH><TH align="right">Ownership</TH><TH>Qualifies by</TH><TH>Since</TH><TH>Information on file</TH></tr></thead>
-            <tbody>
-              {data.owners.map((o: any) => (
-                <TR key={o.stakeholderId}>
-                  <TD className="font-medium">{o.name}</TD>
-                  <TD className="text-ink-600">{o.title ?? o.relation.toLowerCase().replace('_', ' ')}</TD>
-                  <TD align="right" mono>{percent(o.ownershipPct)}</TD>
-                  <TD><span className="flex flex-wrap gap-1">{o.reasons.map((r: string) => <Badge key={r} tone={r === 'ownership' ? 'brand' : 'purple'}>{reasonLabel(r)}</Badge>)}</span></TD>
-                  <TD className="text-ink-600">{o.since ? date(o.since) : '—'}</TD>
-                  <TD className="text-[12px]">
-                    <span className={o.address ? 'text-secondary-800' : 'text-amber-700'}>{o.address ? 'Address ✓' : 'Address missing'}</span>
-                    <span className="text-ink-400"> · </span><span className="text-ink-500">date of birth and ID document are collected at filing</span>
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      {/* Three short lists, each a few rows long, so they are drawn without a search box or a full size view.
+          The two narrow ones fit their card, so their first column is not pinned either. */}
+      <DataTable title="Beneficial owners" caption="Beneficial owners"
+        subtitle="Individuals with 25% or more of the ownership interests (their own options counted as exercised) or substantial control — senior officers, founders and directors"
+        rows={data.owners} rowKey={(o) => o.stakeholderId}
+        empty={<EmptyState title="No individual meets the tests yet" />}
+        columns={[
+          { key: 'individual', label: 'Individual', value: (o) => o.name, className: 'font-medium' },
+          { key: 'role', label: 'Role', value: roleOf, className: 'text-ink-600' },
+          { key: 'ownership', label: 'Ownership', type: 'number', value: (o) => o.ownershipPct, cell: (o) => percent(o.ownershipPct) },
+          { key: 'reasons', label: 'Qualifies by', value: (o) => o.reasons.map(reasonLabel).join(', '),
+            cell: (o) => <span className="flex flex-wrap gap-1">{o.reasons.map((r: string) => <Badge key={r} tone={r === 'ownership' ? 'brand' : 'purple'}>{reasonLabel(r)}</Badge>)}</span> },
+          { key: 'since', label: 'Since', type: 'date', value: (o) => o.since, className: 'text-ink-600' },
+          { key: 'file', label: 'Information on file', value: (o) => (o.address ? 'Address ✓' : 'Address missing'), className: 'text-[12px]', wrap: true,
+            cell: (o) => (
+              <>
+                <span className={o.address ? 'text-secondary-800' : 'text-amber-700'}>{o.address ? 'Address ✓' : 'Address missing'}</span>
+                <span className="text-ink-400"> · </span><span className="text-ink-500">date of birth and ID document are collected at filing</span>
+              </>
+            ) },
+        ]} />
 
       {data.entitiesToLookThrough.length > 0 && (
-        <Card padded={false} className="mt-5">
-          <div className="p-5 pb-0"><CardHeader title="Entities to look through" subtitle="An entity is never a beneficial owner itself: report the individuals who own or control it, in proportion to their interest" /></div>
-          <Table>
-            <thead><tr><TH>Entity</TH><TH>Type</TH><TH align="right">Ownership</TH><TH>Since</TH></tr></thead>
-            <tbody>
-              {data.entitiesToLookThrough.map((e: any) => (
-                <TR key={e.stakeholderId}><TD className="font-medium">{e.name}</TD><TD className="text-ink-600">{e.type.toLowerCase()}</TD><TD align="right" mono>{percent(e.ownershipPct)}</TD><TD className="text-ink-600">{e.since ? date(e.since) : '—'}</TD></TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable title="Entities to look through" caption="Entities to look through" className="mt-5" pinFirst={false}
+          subtitle="An entity is never a beneficial owner itself: report the individuals who own or control it, in proportion to their interest"
+          rows={data.entitiesToLookThrough} rowKey={(e) => e.stakeholderId}
+          columns={[
+            { key: 'entity', label: 'Entity', value: (e) => e.name, className: 'font-medium' },
+            { key: 'type', label: 'Type', value: (e) => e.type.toLowerCase(), className: 'text-ink-600' },
+            { key: 'ownership', label: 'Ownership', type: 'number', value: (e) => e.ownershipPct, cell: (e) => percent(e.ownershipPct) },
+            { key: 'since', label: 'Since', type: 'date', value: (e) => e.since, className: 'text-ink-600' },
+          ]} />
       )}
 
       {data.filings.length > 0 && (
-        <Card padded={false} className="mt-5">
-          <div className="p-5 pb-0"><CardHeader title="Reports on record" /></div>
-          <Table>
-            <thead><tr><TH>Report</TH><TH>Filed on</TH><TH>Reference</TH><TH>Notes</TH><TH width={150} /></tr></thead>
-            <tbody>
-              {data.filings.map((f: any) => (
-                <TR key={f.id}>
-                  <TD className="font-medium capitalize">{f.period.toLowerCase()}</TD><TD>{date(f.filedOn)}</TD>
-                  <TD className="text-ink-600">{f.reference ?? '—'}</TD><TD className="text-ink-600">{f.notes ?? '—'}</TD>
-                  {/* There is no instrument behind a BOI report, so the submission receipt
-                      and the confirmation are filed against the report's own id. A row
-                      without one is left alone rather than given a made-up reference. */}
-                  <TD align="right">
-                    <span className="flex justify-end gap-1">
-                      {f.id && (
-                        <Button size="sm" variant="ghost" onClick={() => setDocumentsFor(f)}
-                          aria-label="Documents for this report" title="Documents for this report">
-                          <Icon name="document" className="size-4" />
-                        </Button>
-                      )}
-                      {canEdit && <Button size="sm" variant="ghost" loading={busy} onClick={() => void remove(f.id)}>Remove</Button>}
-                    </span>
-                  </TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
+        <DataTable title="Reports on record" caption="BOI reports on record" className="mt-5" pinFirst={false}
+          rows={data.filings} rowKey={(f) => f.id}
+          columns={[
+            { key: 'report', label: 'Report', value: (f) => f.period.toLowerCase(), className: 'font-medium capitalize' },
+            { key: 'filed', label: 'Filed on', type: 'date', value: (f) => f.filedOn },
+            { key: 'reference', label: 'Reference', value: (f) => f.reference, className: 'text-ink-600' },
+            { key: 'notes', label: 'Notes', value: (f) => f.notes, className: 'text-ink-600' },
+            // There is no instrument behind a BOI report, so the submission receipt
+            // and the confirmation are filed against the report's own id. A row
+            // without one is left alone rather than given a made-up reference.
+            { key: 'actions', label: '', width: 150, align: 'right',
+              cell: (f) => (
+                <span className="flex justify-end gap-1">
+                  {f.id && (
+                    <Button size="sm" variant="ghost" onClick={() => setDocumentsFor(f)}
+                      aria-label="Documents for this report" title="Documents for this report">
+                      <Icon name="document" className="size-4" />
+                    </Button>
+                  )}
+                  {canEdit && <Button size="sm" variant="ghost" loading={busy} onClick={() => void remove(f.id)}>Remove</Button>}
+                </span>
+              ) },
+          ]} />
       )}
 
       <Modal open={!!documentsFor} onClose={() => setDocumentsFor(null)} size="lg"

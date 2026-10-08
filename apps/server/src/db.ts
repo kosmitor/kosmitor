@@ -106,6 +106,32 @@ export async function insert(table: string, values: Record<string, unknown>): Pr
   await executor().query(`INSERT INTO ${table} (${cols}) VALUES (${placeholders})`, keys.map((k) => normalize(values[k])));
 }
 
+/**
+ * Inserts many objects as rows, as insert() does one: rows with the same
+ * columns go in together, as many to a statement as PostgreSQL's limit on
+ * parameters allows. For writes of hundreds or thousands of rows, such as an import.
+ */
+export async function insertMany(table: string, rows: Record<string, unknown>[]): Promise<void> {
+  const groups = new Map<string, { keys: string[]; rows: Record<string, unknown>[] }>();
+  for (const values of rows) {
+    const keys = Object.keys(values).filter((k) => values[k] !== undefined);
+    const signature = keys.join(',');
+    const group = groups.get(signature) ?? { keys, rows: [] };
+    group.rows.push(values);
+    groups.set(signature, group);
+  }
+  for (const { keys, rows: same } of groups.values()) {
+    const cols = keys.map(snake).join(', ');
+    const perStatement = Math.max(1, Math.floor(60_000 / Math.max(1, keys.length)));
+    for (let start = 0; start < same.length; start += perStatement) {
+      const chunk = same.slice(start, start + perStatement);
+      const params: unknown[] = [];
+      const tuples = chunk.map((values) => `(${keys.map((k) => { params.push(normalize(values[k])); return `$${params.length}`; }).join(', ')})`);
+      await executor().query(`INSERT INTO ${table} (${cols}) VALUES ${tuples.join(', ')}`, params);
+    }
+  }
+}
+
 export async function update(table: string, id: string, values: Record<string, unknown>): Promise<void> {
   const keys = Object.keys(values).filter((k) => k !== 'id' && values[k] !== undefined);
   if (keys.length === 0) return;
@@ -471,6 +497,15 @@ ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS signatory_name TEXT;
 ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS signatory_title TEXT;
 ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS signatory_email TEXT;
 ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS tags TEXT;
+-- A seat on the board, apart from the relationship: an investor can hold one, and a
+-- founder is a director only with one (isDirector in @kosmitor/core). The dates are
+-- when it ran, the end day being the first one off the board; a seat that ended stays
+-- as a former director's. board_designated_by is the investor who named the director,
+-- and deleting that investor leaves the seat with no designator.
+ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS board_seat INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS board_seat_start TEXT;
+ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS board_seat_end TEXT;
+ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS board_designated_by TEXT REFERENCES stakeholders(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS issuances (
   id TEXT PRIMARY KEY,
@@ -831,7 +866,7 @@ ALTER TABLE board_consents ADD COLUMN IF NOT EXISTS total_weight DOUBLE PRECISIO
 ALTER TABLE board_consents ADD COLUMN IF NOT EXISTS closed_note TEXT;
 ALTER TABLE board_votes ADD COLUMN IF NOT EXISTS weight DOUBLE PRECISION;
 
--- Signatories and contacts for the company; board membership stays a stakeholder relationship.
+-- Signatories and contacts for the company; who sits on the board is the stakeholders' board seats.
 CREATE TABLE IF NOT EXISTS company_contacts (
   id TEXT PRIMARY KEY,
   company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -1065,6 +1100,13 @@ CREATE TABLE IF NOT EXISTS ai_messages (
   created_at TEXT NOT NULL
 );
 
+-- Changes to data that have run on this database, by name (ONCE, below). Each runs once
+-- and is never repeated, so what people change afterwards stays changed.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  name TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+
 -- Secrets the server generates for itself when the environment supplies none.
 CREATE TABLE IF NOT EXISTS server_secrets (
   name TEXT PRIMARY KEY,
@@ -1074,6 +1116,8 @@ CREATE TABLE IF NOT EXISTS server_secrets (
 
 CREATE INDEX IF NOT EXISTS idx_sc_company ON share_classes(company_id);
 CREATE INDEX IF NOT EXISTS idx_sh_company ON stakeholders(company_id);
+-- Deleting a stakeholder clears board_designated_by on the directors they designated; this finds them.
+CREATE INDEX IF NOT EXISTS idx_sh_designated_by ON stakeholders(board_designated_by) WHERE board_designated_by IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_iss_company ON issuances(company_id);
 CREATE INDEX IF NOT EXISTS idx_aw_company ON awards(company_id);
 CREATE INDEX IF NOT EXISTS idx_conv_company ON convertibles(company_id);
@@ -1086,6 +1130,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_ai_chats_owner ON ai_chats(company_id, user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_ai_messages_chat ON ai_messages(chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_valreq_company ON valuation_requests(company_id, created_at);
+-- What the header's "My pending actions" asks for on every page (routes/my-actions.ts).
+CREATE INDEX IF NOT EXISTS idx_sig_company_status ON signatures(company_id, status);
+CREATE INDEX IF NOT EXISTS idx_sig_document ON signatures(document_id);
+CREATE INDEX IF NOT EXISTS idx_votes_stakeholder ON board_votes(stakeholder_id);
+CREATE INDEX IF NOT EXISTS idx_exreq_company_status ON exercise_requests(company_id, status);
+CREATE INDEX IF NOT EXISTS idx_offers_company_status ON offers(company_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub) WHERE google_sub IS NOT NULL;
 -- The limit on invitation emails used to be counted from the audit log; invite_emails counts them now.
 DROP INDEX IF EXISTS idx_audit_invite_emails;
@@ -1110,13 +1160,60 @@ UPDATE users SET email_verified_at = COALESCE(last_login_at, created_at)
  WHERE email_verified_at IS NULL AND (last_login_at IS NOT NULL OR google_sub IS NOT NULL);
 `;
 
-/** Creates anything missing. Safe to run on every start; concurrent starts are serialised by an advisory lock. */
+/**
+ * Changes to data that must happen once per database and never again. SCHEMA runs at
+ * every start of every replica, so a backfill written there runs each time and undoes
+ * whatever people changed since; one that did once caused a security bug. Each of these
+ * runs in the transaction that records its name in schema_migrations, under migrate()'s
+ * lock, so two replicas starting together run it once between them. Never rename one:
+ * a new name runs again. A step that is wrong is put right by a new step.
+ *
+ * `fills` is the column a step fills in. A table restored from a dump taken before the
+ * column existed comes back without it, while schema_migrations, which that dump did not
+ * hold, still names the step; so when SCHEMA has to add the column, the step runs again.
+ */
+export const ONCE: { name: string; fills?: { table: string; column: string }; sql: string }[] = [
+  {
+    // Directors used to be every Founder and Board member by relationship alone, less anyone with
+    // a termination date (the board list and the board audience passed over them). Each gets a seat
+    // that ends on that date, so the board is the same the day seats arrive and whoever left is a
+    // former director. A Board member's seat starts with the relationship, unless its dates run
+    // backwards; a founder's has no start. A seat removed afterwards stays removed.
+    name: '2026-10-07-board-seats', fills: { table: 'stakeholders', column: 'board_seat' },
+    sql: `UPDATE stakeholders SET board_seat = 1,
+            board_seat_start = CASE WHEN relation = 'BOARD_MEMBER' AND (termination_date IS NULL OR termination_date >= start_date) THEN start_date END,
+            board_seat_end = termination_date
+          WHERE relation IN ('BOARD_MEMBER', 'FOUNDER') AND board_seat = 0`,
+  },
+];
+
+/** Creates anything missing and runs what ONCE has not run yet. Safe to run on every start; concurrent starts are serialised by an advisory lock. */
 export async function migrate(): Promise<void> {
   guardTestDatabase();
   const client = await pool.connect();
   try {
     await client.query('SELECT pg_advisory_lock(7245001)');
+    // Steps whose column SCHEMA is about to add (again), before it does.
+    const refill = new Set<string>();
+    for (const step of ONCE) {
+      if (!step.fills) continue;
+      const found = await client.query('SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2',
+        [step.fills.table, step.fills.column]);
+      if (found.rowCount === 0) refill.add(step.name);
+    }
     await client.query(SCHEMA);
+    for (const step of ONCE) {
+      await client.query('BEGIN');
+      try {
+        if (refill.has(step.name)) await client.query('DELETE FROM schema_migrations WHERE name = $1', [step.name]);
+        const first = await client.query('INSERT INTO schema_migrations (name, applied_at) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING', [step.name, new Date().toISOString()]);
+        if (first.rowCount === 1) await client.query(step.sql);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      }
+    }
   } finally {
     await client.query('SELECT pg_advisory_unlock(7245001)').catch(() => undefined);
     client.release();

@@ -2,12 +2,13 @@
  * Everything the register knows about a stakeholder, as one form shared by
  * the list page and the detail page. Sections appear as they apply: employment
  * details for people, formation and signatory details for entities, accredited
- * status for investors.
+ * status for investors, and the dates and designator of a board seat.
  */
 import type { Dispatch, SetStateAction } from 'react';
 import { FormGrid } from '../../crud.tsx';
-import { Field, Input, Select, Textarea } from '../../ui.tsx';
+import { Checkbox, Field, Input, Select, Textarea } from '../../ui.tsx';
 import { RELATION_LABELS } from '../../format.ts';
+import { hasBoardSeat, type Seated } from '../../board.ts';
 
 export const STAKEHOLDER_TYPES: [string, string][] = [['INDIVIDUAL', 'Individual'], ['ENTITY', 'Entity'], ['FUND', 'Fund'], ['TRUST', 'Trust']];
 export const STAKEHOLDER_RELATIONS = ['FOUNDER', 'EMPLOYEE', 'FORMER_EMPLOYEE', 'ADVISOR', 'CONTRACTOR', 'INVESTOR', 'BOARD_MEMBER', 'OTHER'];
@@ -23,6 +24,8 @@ export const STAKEHOLDER_BLANK = {
   startDate: '', terminationDate: '', terminationReason: '',
   taxCountry: 'US', taxState: '', taxForm: '', accreditedInvestor: '',
   jurisdiction: '', signatoryName: '', signatoryTitle: '', signatoryEmail: '',
+  // '1' while the stakeholder has a board seat, whatever their relationship.
+  boardSeat: '', boardSeatStart: '', boardSeatEnd: '', boardDesignatedBy: '',
   tags: '', notes: '',
 };
 export type StakeholderForm = typeof STAKEHOLDER_BLANK;
@@ -35,6 +38,7 @@ export function stakeholderFormFrom(record: Record<string, unknown> | null | und
     if (v != null) out[key] = String(v);
     else if (record) out[key] = '';
   }
+  out.boardSeat = record && hasBoardSeat(record as Seated) ? '1' : '';
   return out as StakeholderForm;
 }
 
@@ -45,6 +49,7 @@ export function stakeholderPayload(form: StakeholderForm): Record<string, unknow
     const v = value.trim();
     out[key] = key === 'name' || key === 'type' || key === 'relation' ? v : v === '' ? null : v;
   }
+  out.boardSeat = form.boardSeat === '1';
   return out;
 }
 
@@ -60,10 +65,26 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export function StakeholderFields({ form, setForm }: { form: StakeholderForm; setForm: Dispatch<SetStateAction<StakeholderForm>> }) {
+/**
+ * The form's fields. `people` is the company's register, for the investor who
+ * designated a director; `selfId` is the record being edited, which cannot
+ * designate itself. A new stakeholder given the Board member relationship
+ * starts with a seat, which can still be unticked.
+ */
+export function StakeholderFields({ form, setForm, people = [], selfId = null, isNew = false }: {
+  form: StakeholderForm; setForm: Dispatch<SetStateAction<StakeholderForm>>;
+  people?: { id: string; name: string; relation: string }[]; selfId?: string | null; isNew?: boolean;
+}) {
   const set = (key: keyof StakeholderForm) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const individual = form.type === 'INDIVIDUAL';
   const options = (list: [string, string][]) => list.map(([v, l]) => <option key={v} value={v}>{l}</option>);
+  const seated = form.boardSeat === '1';
+  // Investors, and whoever is on file already should they no longer be one.
+  const designators = people.filter((p) => p.id !== selfId && (p.relation === 'INVESTOR' || p.id === form.boardDesignatedBy));
+  const setRelation = (e: { target: { value: string } }) => {
+    const relation = e.target.value;
+    setForm((f) => ({ ...f, relation, ...(isNew && relation === 'BOARD_MEMBER' ? { boardSeat: '1' } : {}) }));
+  };
 
   return (
     <div className="space-y-6">
@@ -79,7 +100,7 @@ export function StakeholderFields({ form, setForm }: { form: StakeholderForm; se
             <Select value={form.type} onChange={set('type')}>{options(STAKEHOLDER_TYPES)}</Select>
           </Field>
           <Field label="Relationship">
-            <Select value={form.relation} onChange={set('relation')}>
+            <Select value={form.relation} onChange={setRelation}>
               {STAKEHOLDER_RELATIONS.map((r) => <option key={r} value={r}>{RELATION_LABELS[r] ?? r}</option>)}
             </Select>
           </Field>
@@ -129,6 +150,30 @@ export function StakeholderFields({ form, setForm }: { form: StakeholderForm; se
             </Field>
           )}
         </FormGrid>
+      </Section>
+
+      <Section title="Board seat">
+        <Checkbox label="Has a board seat" checked={seated}
+          hint="Directors approve board consents and receive board updates, whatever their relationship. When a director leaves, fill in On the board until: unticking removes the seat and its history."
+          onChange={(on) => setForm((f) => ({ ...f, boardSeat: on ? '1' : '' }))} />
+        {seated && (
+          <>
+            <FormGrid>
+              <Field label="On the board from" hint="Leave empty if the date is not known.">
+                <Input type="date" value={form.boardSeatStart} onChange={set('boardSeatStart')} />
+              </Field>
+              <Field label="On the board until" hint="The day they leave. The seat stays on the record as a former director's.">
+                <Input type="date" value={form.boardSeatEnd} onChange={set('boardSeatEnd')} />
+              </Field>
+            </FormGrid>
+            <Field label="Designated by" hint="The investor whose right to name a director put them on the board, if any.">
+              <Select value={form.boardDesignatedBy} onChange={set('boardDesignatedBy')}>
+                <option value="">Not designated by an investor</option>
+                {designators.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </Field>
+          </>
+        )}
       </Section>
 
       <Section title="Tax & compliance">

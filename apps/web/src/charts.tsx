@@ -2,7 +2,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line, AreaChart, Area,
 } from 'recharts';
-import { useId } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { money, shares, percent, pps, date as longDate } from './format.ts';
 import { config } from './config.ts';
 
@@ -23,7 +23,7 @@ function ChartTooltip({ active, payload, label, formatter }: any) {
     <div className="rounded-lg border border-ink-200 bg-white px-3 py-2 shadow-lg text-[12px]">
       {label != null && <p className="font-medium text-ink-900 mb-1">{label}</p>}
       {payload.map((p: any, i: number) => (
-        <div key={i} className="flex items-center justify-between gap-4 tabular">
+        <div key={i} className="flex items-center justify-between gap-4 whitespace-nowrap tabular">
           <span className="flex items-center gap-1.5 text-ink-600">
             <span className="size-2 rounded-sm" style={{ background: p.color ?? p.fill }} />
             {p.name}
@@ -35,36 +35,95 @@ function ChartTooltip({ active, payload, label, formatter }: any) {
   );
 }
 
+/** The donut's hole, as a share of the smaller side of its box: Recharts takes both radii as shares of half that side. */
+const HOLE = 0.62;
+
+/** A slice of the donut: its name, then its share and its count, each on one line. */
+function DonutTooltip({ active, payload }: any) {
+  const slice = active ? payload?.[0] : null;
+  if (!slice) return null;
+  const d = slice.payload as { label: string; shares: number; pct: number; fill?: string };
+  return (
+    <div className="whitespace-nowrap rounded-lg border border-ink-200 bg-white px-3 py-2 text-[12px] shadow-lg">
+      <p className="flex items-center gap-1.5 font-medium text-ink-900">
+        <span className="size-2 shrink-0 rounded-sm" style={{ background: d.fill ?? slice.fill ?? slice.color }} />
+        {d.label}
+      </p>
+      <p className="mt-0.5 tabular text-ink-600">
+        <span className="font-medium text-ink-900">{percent(d.pct)}</span> · {shares(d.shares)} shares
+      </p>
+    </div>
+  );
+}
+
 /** Ownership donut with a centred total. */
 export function OwnershipDonut({ data, height = 260, centerLabel, centerValue }: {
   data: { label: string; shares: number; pct: number }[];
   height?: number; centerLabel?: string; centerValue?: string;
 }) {
+  // The centre text is sized to the hole rather than fixed, so a long total
+  // ("15,270,953") in a small donut stays inside the ring instead of running over it.
+  const box = useRef<HTMLDivElement>(null);
+  const [side, setSide] = useState(0);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setSide(Math.min(entry.contentRect.width, entry.contentRect.height)));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  // Room across the middle of the hole, less a margin; digits run about 0.62em wide, spaced capitals about 0.72em.
+  const room = side * HOLE * 0.82;
+  const fit = (text: string | undefined, per: number, min: number, max: number) =>
+    !room || !text ? max : Math.max(min, Math.min(max, room / (text.length * per)));
+
   return (
-    <div className="relative" style={{ height }}>
+    <div ref={box} className="relative" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <Pie data={data} dataKey="shares" nameKey="label" innerRadius="62%" outerRadius="92%"
+          <Pie data={data} dataKey="shares" nameKey="label" innerRadius={`${HOLE * 100}%`} outerRadius="92%"
             paddingAngle={1.5} strokeWidth={0}>
             {data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
           </Pie>
-          <RTooltip content={<ChartTooltip formatter={(v: number) => shares(v)} />} />
+          {/* Above the centre total, which comes later in the page and would otherwise be drawn over it. */}
+          <RTooltip content={<DonutTooltip />} wrapperStyle={{ zIndex: 10 }} />
         </PieChart>
       </ResponsiveContainer>
       {centerValue && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className="text-[11px] uppercase tracking-wide text-ink-500">{centerLabel}</span>
-          <span className="text-xl font-semibold text-ink-900 tabular">{centerValue}</span>
+          <span className="uppercase tracking-wide text-ink-500" style={{ fontSize: fit(centerLabel, 0.72, 9, 11) }}>{centerLabel}</span>
+          <span className="font-semibold leading-tight text-ink-900 tabular" style={{ fontSize: fit(centerValue, 0.62, 12, 20) }}>{centerValue}</span>
         </div>
       )}
     </div>
   );
 }
 
-export function ChartLegend({ data, formatValue }: {
+export function ChartLegend({ data, formatValue, detailed = false }: {
   data: { label: string; pct: number; shares: number }[];
   formatValue?: (d: { label: string; pct: number; shares: number }) => string;
+  /**
+   * Percent and shares in their own aligned columns, kept close to the label: on a
+   * wide card the rows go side by side rather than stretching the values to the far edge.
+   */
+  detailed?: boolean;
 }) {
+  if (detailed) {
+    return (
+      <ul className="grid gap-x-12 gap-y-2.5 xl:grid-cols-[repeat(2,minmax(0,24rem))]">
+        {data.map((d, i) => (
+          <li key={d.label} className="grid max-w-md grid-cols-[minmax(0,1fr)_4rem_6.5rem] items-center gap-x-3 text-[13px]">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="size-2.5 shrink-0 rounded-sm" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+              <span className="truncate text-ink-700" title={d.label}>{d.label}</span>
+            </span>
+            <span className="text-right tabular font-medium text-ink-900">{percent(d.pct)}</span>
+            <span className="text-right tabular text-ink-500">{shares(d.shares)}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <ul className="space-y-2">
       {data.map((d, i) => (

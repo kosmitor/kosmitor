@@ -10,18 +10,31 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Fired on the window after any request that may have changed something (one
+ * that is not a GET) succeeds, so what is drawn outside the page that made it,
+ * such as the count on the header's tasks button, can ask again.
+ */
+export const SAVED_EVENT = 'kosmitor:saved';
+const saved = (method: string, res: Response) => {
+  if (res.ok && method !== 'GET' && method !== 'HEAD') window.dispatchEvent(new Event(SAVED_EVENT));
+};
+
 export async function api<T = any>(
   path: string,
-  options: { method?: string; body?: unknown; raw?: boolean } = {},
+  /** `quiet`: a POST that only reads (an import's dry run), so nothing outside the page needs to ask again. */
+  options: { method?: string; body?: unknown; raw?: boolean; quiet?: boolean } = {},
 ): Promise<T> {
+  const method = options.method ?? (options.body !== undefined ? 'POST' : 'GET');
   // The session is the HttpOnly cookie the server set; nothing here can read it, or leak it.
   const res = await fetch(`/api${path}`, {
-    method: options.method ?? (options.body !== undefined ? 'POST' : 'GET'),
+    method,
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
 
+  if (!options.quiet) saved(method, res);
   if (options.raw) return res as unknown as T;
 
   const text = await res.text();
@@ -63,7 +76,7 @@ export function downloadReport(companyId: string, report: string, asOf?: string)
  * Uploads a single file as the raw request body. Metadata travels in the
  * query string, so no multipart parsing is needed on either side.
  */
-export async function uploadFile<T = any>(path: string, file: File, meta: Record<string, string> = {}): Promise<T> {
+export async function uploadFile<T = any>(path: string, file: File, meta: Record<string, string> = {}, { quiet = false } = {}): Promise<T> {
   const qs = new URLSearchParams({ name: file.name, ...meta }).toString();
   const res = await fetch(`/api${path}?${qs}`, {
     method: 'POST',
@@ -71,10 +84,11 @@ export async function uploadFile<T = any>(path: string, file: File, meta: Record
     headers: { 'Content-Type': file.type || 'application/octet-stream' },
     body: file,
   });
+  if (!quiet) saved('POST', res);
   const text = await res.text();
   let payload: any = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: text }; }
-  if (!res.ok) throw new ApiError(res.status, payload?.error ?? `Upload failed (${res.status})`);
+  if (!res.ok) throw new ApiError(res.status, payload?.error ?? `Upload failed (${res.status})`, payload?.detail);
   return payload as T;
 }
 

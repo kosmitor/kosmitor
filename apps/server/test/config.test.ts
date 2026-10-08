@@ -173,6 +173,70 @@ test('environment variables win over the files', () => {
   });
 });
 
+test('the valuation team can be several addresses: a list in the file, comma separated in the environment, each one checked', async () => {
+  const { SINGLE_ADDRESS } = await import('../src/mail.ts');
+  const email = schema.properties.valuationDesk.properties.email;
+  assert.equal(email.pattern, SINGLE_ADDRESS.source, 'one address is checked by the rule the mail transport uses');
+  assert.equal(email.items.pattern, SINGLE_ADDRESS.source, 'and so is each entry of a list');
+
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: ' Lead@Example.com , second@example.com,, ' }, () => {
+    assert.deepEqual(config().valuationDesk.email, ['lead@example.com', 'second@example.com'], 'trimmed, lowercased, empty entries dropped');
+  });
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: 'Desk@Example.com,' }, () => {
+    assert.equal(config().valuationDesk.email, 'desk@example.com', 'one address stays a string, as it always was');
+  });
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: 'lead@example.com, not an address' }, () => {
+    assert.throws(() => config(), problem(/environment \(VALUATION_DESK_EMAIL\): valuationDesk\.email\[1\] is not in the expected form/));
+  });
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: 'lead@example.com; second@example.com' }, () => {
+    assert.throws(() => config(), problem(/valuationDesk\.email is not in the expected form/), 'a semicolon is not a separator');
+    assert.throws(() => config(), problem(/environment \(VALUATION_DESK_EMAIL\): an entry holds more than one @: separate several addresses with commas/),
+      'and the message says what to use instead');
+  });
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: 'lead@example.com second@example.com' }, () => {
+    assert.throws(() => config(), problem(/separate several addresses with commas, not spaces or semicolons/), 'nor is a space');
+  });
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: 'Desk@Example.com, desk@example.com' }, () => {
+    assert.equal(config().valuationDesk.email, 'desk@example.com', 'the same address in two cases is one address');
+  });
+  const ten = Array.from({ length: 10 }, (_, i) => `evaluator${i + 1}@example.com`);
+  withEnv({ ...noEnvOverrides(), VALUATION_DESK_EMAIL: [...ten, 'Evaluator1@example.com'].join(',') }, () => {
+    assert.deepEqual(config().valuationDesk.email, ten, 'an address written twice does not count twice against the limit of 10');
+  });
+
+  const many = Array.from({ length: 11 }, (_, i) => `evaluator${i + 1}@example.com`);
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: ['Lead@example.com', 'second@example.com'] } }) }, () => {
+    assert.deepEqual(config().valuationDesk.email, ['Lead@example.com', 'second@example.com'], 'a list in the file is read as it is written');
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: many } }) }, () => {
+    assert.throws(() => config(), problem(/valuationDesk\.email can hold at most 10 entries/));
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: [] } }) }, () => {
+    assert.throws(() => config(), problem(/valuationDesk\.email needs at least 1 entry/), 'nobody is null, not an empty list');
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: ['lead@example.com', 'Second <second@example.com>'] } }) }, () => {
+    assert.throws(() => config(), problem(/valuationDesk\.email\[1\] is not in the expected form/));
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: ['file@example.com'] } }), VALUATION_DESK_EMAIL: 'env@example.com, other@example.com' }, () => {
+    assert.deepEqual(config().valuationDesk.email, ['env@example.com', 'other@example.com'], 'the environment wins over the file, whole');
+  });
+
+  // The server's hourly limit counts one email per address, so it must let at least one notice out.
+  const three = ['lead@example.com', 'second@example.com', 'third@example.com'];
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: three, noticesPerHour: 2 } }) }, () => {
+    assert.throws(() => config(), problem(/valuationDesk\.noticesPerHour \(2\) counts one email per address, so it cannot be fewer than the 3 addresses in valuationDesk\.email/));
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { noticesPerHour: 2 } }), VALUATION_DESK_EMAIL: three.join(',') }, () => {
+    assert.throws(() => config(), problem(/noticesPerHour \(2\)/), 'whether the list comes from the file or the environment');
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { email: three, noticesPerHour: 3 } }) }, () => {
+    assert.equal(config().valuationDesk.noticesPerHour, 3, 'as many as the addresses is enough');
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { noticesPerHour: 1 } }) }, () => {
+    assert.equal(config().valuationDesk.noticesPerHour, 1, 'with no address, any limit will do');
+  });
+});
+
 test('configure() layers its changes and resetConfig() goes back to the files', () => {
   try {
     configure({ auth: { sessionDays: 7 } });

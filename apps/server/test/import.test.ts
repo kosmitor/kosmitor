@@ -183,6 +183,8 @@ test('booleans and enumerations are read the way spreadsheets spell them', () =>
   assert.equal(coerceRelation('Co-Founder').value, 'FOUNDER');
   assert.equal(coerceRelation('Ex-employee').value, 'FORMER_EMPLOYEE');
   assert.equal(coerceRelation('Board Director').value, 'BOARD_MEMBER');
+  assert.equal(coerceRelation('Board observer').value, 'OTHER');
+  assert.equal(coerceRelation('Director of Engineering').value, 'EMPLOYEE');
   assert.equal(guessStakeholderType('Foundry Seed Fund I, L.P.'), 'FUND');
   assert.equal(guessStakeholderType('The Stone Family Trust'), 'TRUST');
   assert.equal(guessStakeholderType('Acme Holdings Inc.'), 'FUND');
@@ -333,7 +335,7 @@ test('a cap table spreadsheet becomes stakeholders, share classes and certificat
   // Errors block the commit unless the caller opts to skip those rows.
   await assert.rejects(() => commitImport(companyId, request, 'Tester'), /1 row has errors/);
   const result = await commitImport(companyId, { ...request, options: { ...request.options, skipRowsWithErrors: true } }, 'Tester');
-  assert.deepEqual(result.imported, { stakeholders: 2, shareClasses: 1, issuances: 4, awards: 0, convertibles: 0, vestingSchedules: 1, pools: 0 });
+  assert.deepEqual(result.imported, { stakeholders: 2, shareClasses: 1, issuances: 4, awards: 0, convertibles: 0, vestingSchedules: 1, pools: 0, updated: { stakeholders: 0 } });
 
   const data = await loadCompanyData(companyId);
   const table = computeCapTable(data, { asOf: '2023-01-01' });
@@ -351,9 +353,14 @@ test('a cap table spreadsheet becomes stakeholders, share classes and certificat
   assert.ok(data.vestingSchedules.some((v) => v.id === bao.vestingScheduleId && v.durationMonths === 36 && v.cliffMonths === 0));
   assert.equal(data.issuances.find((i) => i.certificateNo === 'CS-2')!.vestingScheduleId, 'vs_std');
 
-  // Running the same file again is refused where it would duplicate certificates.
+  // Running the same file again adds nothing: the certificates it brought are recognised and skipped.
   const again = await prepareImport(companyId, request);
-  assert.equal(again.rows.filter((r) => r.status === 'error').length, 5);   // the zero-share row is still just skipped
+  assert.deepEqual(again.rows.map((r) => r.outcome), ['existing', 'existing', 'existing', 'existing', 'skip', 'error']);
+  assert.equal(again.counts.existing, 4);
+  assert.equal(again.counts.willImport, 0);
+  const taken = again.rows[5].messages.find((m) => m.level === 'error')!;   // the number is another holder's certificate
+  assert.equal(taken.text, 'Certificate "CS-1" already exists on the cap table with different details');
+  assert.deepEqual([taken.code, taken.field, taken.value], ['number-taken', 'certificateNo', 'CS-1']);
 });
 
 test('grants and convertibles import with defaults, and notes take the default plan when there is only one', async () => {
@@ -615,7 +622,8 @@ test('a workbook export imports sheet by sheet: fixed share class, total rows, a
   // Running the same tabs again duplicates nothing: certificates, grants and instruments are all recognised.
   const again = await prepareImport(companyId, grantRequest);
   assert.equal(again.counts.willImport, 0);
-  assert.match(again.rows[0].messages.map((m) => m.text).join(' '), /Grant "ES-1" already exists/);
+  assert.equal(again.rows[0].outcome, 'existing');
+  assert.equal(again.rows[0].messages[0].code, 'already-imported');
   const safesAgain = await prepareImport(companyId, {
     kind: 'convertibles', headers: safeHeaders, headerRowNumber: 3,
     rows: [
@@ -626,10 +634,11 @@ test('a workbook export imports sheet by sheet: fixed share class, total rows, a
     mapping: { label: 0, stakeholderName: 1, issueDate: 2, principal: 3, valuationCap: 5, discount: 6, mfn: 7, status: 8, instrument: 9 },
   });
   const texts = (i: number) => safesAgain.rows[i].messages.map((m) => m.text).join(' ');
-  assert.match(texts(0), /Instrument "SAFE-1" already exists/);
-  assert.match(texts(1), /identical post-money SAFE .*already exists/);
+  assert.equal(texts(0), 'Already on the cap table — skipped');
+  assert.equal(safesAgain.rows[1].outcome, 'existing');                       // no id, but the same holder, amount and date
   assert.equal(safesAgain.rows[2].status, 'ok');
   assert.equal(safesAgain.counts.willImport, 1);
+  assert.equal(safesAgain.counts.existing, 2);
   assert.equal(data.convertibles.find((c) => c.label === 'SAFE-3')?.status, 'CANCELLED');   // the reference is kept
 });
 
@@ -758,7 +767,7 @@ test('a workbook is applied tab by tab in one transaction — later tabs see ear
   assert.equal((await one<{ n: number }>('SELECT COUNT(*)::int AS n FROM stakeholders WHERE company_id = ?', companyId))!.n, 0);
 
   const committed = await runWorkbook(companyId, sheets, 'Tester', false);
-  assert.deepEqual(committed.imported, { stakeholders: 2, shareClasses: 1, issuances: 1, awards: 1, convertibles: 0, vestingSchedules: 0, pools: 1 });
+  assert.deepEqual(committed.imported, { stakeholders: 2, shareClasses: 1, issuances: 1, awards: 1, convertibles: 0, vestingSchedules: 0, pools: 1, updated: { stakeholders: 0 } });
   const data = await loadCompanyData(companyId);
   const kestrel = data.stakeholders.find((s) => s.name === 'Kestrel Ventures II')!;
   assert.equal(kestrel.type, 'ENTITY');                                                  // from the people tab, not guessed

@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useSession } from '../session.tsx';
 import { useQuery } from '../api.ts';
-import {
-  PageHeader, Card, Table, TH, TD, TR, Badge, Loading, ErrorNote,
-  EmptyState, SearchInput, Avatar,
-} from '../ui.tsx';
-import { dateTime } from '../format.ts';
+import { PageHeader, Badge, Loading, ErrorNote, EmptyState, Avatar } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
+import { dateTime, shares } from '../format.ts';
 import { config } from '../config.ts';
 
 const ACTION_TONES: Record<string, any> = {
@@ -38,40 +36,32 @@ export default function AuditLog() {
       <PageHeader concept="audit-log" title="Audit log"
         subtitle="An append-only record of every change, who made it and when" />
 
-      <Card className="mb-5">
-        <div className="w-80"><SearchInput value={search} onChange={setSearch} placeholder="Search by person, action or detail" /></div>
-      </Card>
-
-      <Card padded={false}>
-        {rows.length === 0 ? (
-          <EmptyState title="Nothing logged yet" />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>When</TH><TH>Who</TH><TH>Action</TH><TH>Entity</TH><TH>Detail</TH><TH>IP address</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((a) => (
-                <TR key={a.id}>
-                  <TD className="whitespace-nowrap text-ink-600">{dateTime(a.createdAt)}</TD>
-                  <TD>
-                    <span className="flex items-center gap-2">
-                      <Avatar name={a.userName ?? 'System'} size={22} />
-                      <span className="font-medium">{a.userName ?? 'System'}</span>
-                    </span>
-                  </TD>
-                  <TD><Badge tone={ACTION_TONES[a.action] ?? 'neutral'}>{a.action.toLowerCase()}</Badge></TD>
-                  <TD className="text-[12px] text-ink-600">{(a.entityType ?? '—').replace(/_/g, ' ')}</TD>
-                  <TD className="max-w-lg text-[12px] text-ink-700">{a.detail ?? '—'}</TD>
-                  <TD className="text-[12px] text-ink-400">{a.ipAddress || '—'}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </Card>
+      {/* The server sends the newest first, which is the order the table opens in. */}
+      <DataTable caption="Audit log" rows={rows} rowKey={(a) => a.id}
+        search={{ value: search, onChange: setSearch, placeholder: 'Search by person, action or detail' }}
+        defaultSort={{ key: 'when', direction: 'desc' }}
+        empty={<EmptyState title="Nothing logged yet" />}
+        columns={[
+          { key: 'when', label: 'When', type: 'date', value: (a) => a.createdAt, cell: (a) => dateTime(a.createdAt), className: 'text-ink-600' },
+          // A name keeps to one line, as a holder's does on the cap table.
+          { key: 'who', label: 'Who', value: (a) => a.userName ?? 'System', className: 'whitespace-nowrap', cell: (a) => (
+            <span className="flex items-center gap-2">
+              <Avatar name={a.userName ?? 'System'} size={22} />
+              <span className="font-medium">{a.userName ?? 'System'}</span>
+            </span>
+          ) },
+          { key: 'action', label: 'Action', value: (a) => a.action.toLowerCase(),
+            cell: (a) => <Badge tone={ACTION_TONES[a.action] ?? 'neutral'}>{a.action.toLowerCase()}</Badge> },
+          { key: 'entity', label: 'Entity', value: (a) => a.entityType?.replace(/_/g, ' '), className: 'text-[12px] text-ink-600' },
+          { key: 'detail', label: 'Detail', value: (a) => a.detail, className: 'max-w-lg text-[12px] text-ink-700' },
+          { key: 'ip', label: 'IP address', value: (a) => a.ipAddress, className: 'text-[12px] text-ink-400' },
+        ]}
+        // The page loads the newest entries only, so a sort or a search reaches no further back than those.
+        after={(data?.length ?? 0) >= config.limits.ledgerMaxPageSize && (
+          <p className="border-t border-ink-100 px-5 py-3 text-[12px] text-ink-500">
+            The newest {shares(config.limits.ledgerMaxPageSize)} entries are shown, and sorting and searching cover only these.
+          </p>
+        )} />
     </>
   );
 }

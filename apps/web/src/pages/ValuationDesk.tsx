@@ -757,7 +757,7 @@ export default function ValuationDesk() {
                 <h2 className="mb-3 text-[15px] font-semibold text-ink-900">History</h2>
                 <RequestHistory request={{ createdAt: r.createdAt, requestedBy: r.requestedBy ?? 'the company', events: r.events }} />
                 <p className="mt-4 text-[11px] text-ink-400">
-                  Keep this page’s link to yourself: whoever has it can change what the company sees. Last loaded {dateTime(state.loadedAt)}.
+                  Keep this page’s link within the valuation team: whoever has it can change what the company sees. Last loaded {dateTime(state.loadedAt)}.
                 </p>
               </section>
             </div>

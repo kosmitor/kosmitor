@@ -121,7 +121,8 @@ export function asLedger(sheet: Sheet): LedgerSheet | null {
   const headers = sheet.rows[headerRow] ?? [];
   const data = sheet.rows.slice(headerRow + 1);
   const det = detectSheet(sheet.name, headers, data.length);
-  if (!det.kind) return null;
+  // A ledger short of a required column is asked about in the import page; with nobody to ask, it is left out.
+  if (!det.kind || det.missing.length > 0) return null;
   const mapping: Record<string, MappingValue> = { ...det.mapping };
   for (const [k, v] of Object.entries(det.constants)) if (mapping[k] == null) mapping[k] = { value: v };
   return { ...sheet, kind: det.kind, headerRow, headers, data, mapping };

@@ -1,6 +1,7 @@
 import { useSession } from '../../session.tsx';
 import { useQuery } from '../../api.ts';
-import { Card, CardHeader, Table, TH, TD, TR, Badge, Loading, ErrorNote, EmptyState, MiniBar, KeyValue, InfoDot } from '../../ui.tsx';
+import { Card, CardHeader, Badge, Loading, ErrorNote, EmptyState, MiniBar, KeyValue, InfoDot } from '../../ui.tsx';
+import { DataTable } from '../../DataTable.tsx';
 import { money, shares, date, percent } from '../../format.ts';
 import { SecurityDocuments } from '../../SecurityDocuments.tsx';
 
@@ -40,19 +41,14 @@ export default function Rule701() {
             15% of assets test uses a real figure.
           </p>
         </Card>
-        <Card padded={false}>
-          <div className="p-5 pb-0"><CardHeader title="Grants in the period" /></div>
-          {r.grants.length === 0 ? <EmptyState title="No grants in the last twelve months" /> : (
-            <Table>
-              <thead><tr><TH>Date</TH><TH>Recipient</TH><TH align="right">Value counted</TH></tr></thead>
-              <tbody>
-                {r.grants.map((g: any) => (
-                  <TR key={g.awardId}><TD className="text-ink-600">{date(g.date)}</TD><TD className="font-medium">{g.stakeholderName}</TD><TD align="right" mono>{money(g.value)}</TD></TR>
-                ))}
-              </tbody>
-            </Table>
-          )}
-        </Card>
+        <DataTable title="Grants in the period" caption="Grants in the period" rows={r.grants} rowKey={(g) => g.awardId}
+          search={{ placeholder: 'Search by recipient', label: 'Search grants in the period', by: (g) => [g.stakeholderName] }}
+          empty={<EmptyState title="No grants in the last twelve months" />}
+          columns={[
+            { key: 'date', label: 'Date', type: 'date', value: (g) => g.date, className: 'text-ink-600' },
+            { key: 'recipient', label: 'Recipient', value: (g) => g.stakeholderName, className: 'font-medium' },
+            { key: 'value', label: 'Value counted', type: 'money', value: (g) => g.value },
+          ]} />
         {/* The test is a calculation over a rolling window, not a row, so its working
             papers are filed against a subject. The window itself cannot be that
             subject: it is measured back from today, so it moves every day and a

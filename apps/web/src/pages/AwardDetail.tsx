@@ -13,9 +13,9 @@ import { useSession } from '../session.tsx';
 import { useQuery } from '../api.ts';
 import { RecordPage, RecordSection, RecordColumns, RecordTimeline, RecordMissing } from '../RecordPage.tsx';
 import {
-  Badge, Loading, ErrorNote, EmptyState, MiniBar, KeyValue, StatusBadge, Banner,
-  Table, TH, TD, TR,
+  Badge, Loading, ErrorNote, EmptyState, MiniBar, KeyValue, StatusBadge, Banner, cx,
 } from '../ui.tsx';
+import { DataTable } from '../DataTable.tsx';
 import { SecurityDocuments } from '../SecurityDocuments.tsx';
 import { HoldingDocumentField, AWARD_AGREEMENT } from '../HoldingDocumentField.tsx';
 import { VestingChart } from '../charts.tsx';
@@ -43,7 +43,7 @@ export default function AwardDetail() {
     return errorStatus === 404 ? (
       <RecordMissing icon="award" title="That grant is not here"
         description="It may have been deleted, or it belongs to another holder."
-        to="/grants" label="Back to equity awards" />
+        to="/grants" label="Back to Equity grants" />
     ) : <ErrorNote error={error} onRetry={reload} />;
   }
   if (!data) return null;
@@ -77,11 +77,11 @@ export default function AwardDetail() {
           onClick: () => navigate(`/stakeholders/${holder.id}`) }] : []),
     { label: 'Open the equity plan', icon: 'layers' as const, onClick: () => navigate('/plans') },
     ...(canEdit
-      ? [{ label: 'Edit on the equity awards page', icon: 'edit' as const, onClick: () => navigate('/grants') }] : []),
+      ? [{ label: 'Edit on the Equity grants page', icon: 'edit' as const, onClick: () => navigate('/grants') }] : []),
   ];
 
   return (
-    <RecordPage back="/grants" backLabel="All equity awards"
+    <RecordPage back="/grants" backLabel="Equity grants"
       title={label} status={award.status}
       badges={<Badge tone={award.type === 'ISO' ? 'brand' : award.type === 'RSU' ? 'info' : 'neutral'}>
         {AWARD_LABELS[award.type] ?? award.type}
@@ -265,76 +265,54 @@ export default function AwardDetail() {
       )}
 
       {award.type === 'ISO' && isoLimit.length > 0 && (
-        <RecordSection title="The $100,000 limit"
-          subtitle="Every incentive stock option this holder has, tested year by year">
-          <div className="mb-4">
-            <Banner tone={isoLimit.some((r: any) => r.exceeded) ? 'warning' : 'info'}
-              title="Why other grants appear here">
-              The limit under section 422(d) is measured per person per calendar year, not per grant, and grants count in
-              the order they were made. So the rows below cover all of this holder's incentive stock options, and a later
-              grant is the one that spills past the limit.
-            </Banner>
-          </div>
-          <Table>
-            <thead>
-              <tr>
-                <TH>Year</TH><TH>Grant</TH>
-                <TH align="right">Shares first exercisable</TH><TH align="right">Value at grant</TH>
-                <TH align="right">Cumulative</TH><TH align="right">Qualifies as ISO</TH>
-                <TH align="right">Treated as NSO</TH><TH>Status</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {isoLimit.map((r: any, i: number) => (
-                <TR key={i} className={r.exceeded ? 'bg-amber-50/40' : undefined}>
-                  <TD mono>{r.year}</TD>
-                  <TD className={r.awardId === award.id ? 'font-medium' : 'text-ink-600'}>
-                    {r.awardId === award.id ? `${r.awardLabel} (this grant)` : (
-                      <Link to={`/grants/${r.awardId}`} className="hover:text-brand-700">{r.awardLabel}</Link>
-                    )}
-                  </TD>
-                  <TD align="right" mono>{shares(r.sharesVesting)}</TD>
-                  <TD align="right" mono>{money(r.valueAtGrant)}</TD>
-                  <TD align="right" mono className={r.exceeded ? 'font-medium text-amber-700' : 'text-ink-600'}>{money(r.cumulativeValue)}</TD>
-                  <TD align="right" mono>{shares(r.isoQualified)}</TD>
-                  <TD align="right" mono className={r.nsoRecharacterized > 0 ? 'font-medium text-amber-700' : 'text-ink-400'}>
-                    {r.nsoRecharacterized > 0 ? shares(r.nsoRecharacterized) : '—'}
-                  </TD>
-                  <TD>{r.exceeded ? <Badge tone="warning">Over limit</Badge> : <Badge tone="success">Within limit</Badge>}</TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        </RecordSection>
+        <DataTable caption="The $100,000 limit, year by year" className="mt-5"
+          rows={isoLimit} rowKey={(r: any) => isoLimit.indexOf(r)}
+          title="The $100,000 limit" subtitle="Every incentive stock option this holder has, tested year by year"
+          // The note goes above the rows it explains, under the header row.
+          before={
+            <div className="border-b border-ink-100 px-4 py-3">
+              <Banner tone={isoLimit.some((r: any) => r.exceeded) ? 'warning' : 'info'}
+                title="Why other grants appear here">
+                The limit under section 422(d) is measured per person per calendar year, not per grant, and grants count in
+                the order they were made. So the rows below cover all of this holder's incentive stock options, and a later
+                grant is the one that spills past the limit.
+              </Banner>
+            </div>
+          }
+          rowTone={(r) => (r.exceeded ? 'amber' : undefined)}
+          columns={[
+            { key: 'year', label: 'Year', value: (r) => r.year, cell: (r) => r.year, className: 'tabular' },
+            { key: 'grant', label: 'Grant', value: (r) => r.awardLabel,
+              className: (r) => cx('whitespace-nowrap', r.awardId === award.id ? 'font-medium' : 'text-ink-600'),
+              cell: (r) => (r.awardId === award.id ? `${r.awardLabel} (this grant)` : (
+                <Link to={`/grants/${r.awardId}`} className="hover:text-brand-700">{r.awardLabel}</Link>
+              )) },
+            { key: 'vesting', label: 'Shares first exercisable', type: 'number', value: (r) => r.sharesVesting },
+            { key: 'value', label: 'Value at grant', type: 'money', value: (r) => r.valueAtGrant },
+            { key: 'cumulative', label: 'Cumulative', type: 'money', value: (r) => r.cumulativeValue,
+              className: (r) => (r.exceeded ? 'font-medium text-amber-700' : 'text-ink-600') },
+            { key: 'iso', label: 'Qualifies as ISO', type: 'number', value: (r) => r.isoQualified },
+            { key: 'nso', label: 'Treated as NSO', type: 'number', value: (r) => r.nsoRecharacterized,
+              cell: (r) => (r.nsoRecharacterized > 0 ? shares(r.nsoRecharacterized) : '—'),
+              className: (r) => (r.nsoRecharacterized > 0 ? 'font-medium text-amber-700' : 'text-ink-400') },
+            { key: 'status', label: 'Status', value: (r) => (r.exceeded ? 'Over limit' : 'Within limit'),
+              cell: (r) => (r.exceeded ? <Badge tone="warning">Over limit</Badge> : <Badge tone="success">Within limit</Badge>) },
+          ]} />
       )}
 
-      <RecordSection title="Exercise requests" subtitle="What the holder has asked to buy, and where each request stands">
-        {exerciseRequests.length === 0 ? (
-          <EmptyState title="No exercise requests against this grant"
-            description="A holder raises a request from My equity, and it lands on the equity awards page for review." />
-        ) : (
-          <Table>
-            <thead>
-              <tr>
-                <TH>Requested</TH><TH align="right">Options</TH><TH>Method</TH>
-                <TH align="right">Cost</TH><TH align="right">Gain at the time</TH><TH>Status</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {exerciseRequests.map((r: any) => (
-                <TR key={r.id}>
-                  <TD className="text-ink-600">{dateTime(r.requestedAt)}</TD>
-                  <TD align="right" mono>{shares(r.quantity)}</TD>
-                  <TD className="text-ink-600">{METHOD_LABELS[r.method] ?? r.method}</TD>
-                  <TD align="right" mono>{money(r.estimatedCost)}</TD>
-                  <TD align="right" mono className="text-ink-600">{money(r.spread)}</TD>
-                  <TD><StatusBadge status={r.status} /></TD>
-                </TR>
-              ))}
-            </tbody>
-          </Table>
-        )}
-      </RecordSection>
+      <DataTable caption="Exercise requests against this grant" className="mt-5"
+        rows={exerciseRequests} rowKey={(r: any) => r.id}
+        title="Exercise requests" subtitle="What the holder has asked to buy, and where each request stands"
+        empty={<EmptyState title="No exercise requests against this grant"
+          description="A holder raises a request from My equity, and it lands on the Equity grants page for review." />}
+        columns={[
+          { key: 'requested', label: 'Requested', type: 'date', value: (r) => r.requestedAt, cell: (r) => dateTime(r.requestedAt), className: 'text-ink-600' },
+          { key: 'options', label: 'Options', type: 'number', value: (r) => r.quantity },
+          { key: 'method', label: 'Method', value: (r) => METHOD_LABELS[r.method] ?? r.method, className: 'text-ink-600' },
+          { key: 'cost', label: 'Cost', type: 'money', value: (r) => r.estimatedCost },
+          { key: 'gain', label: 'Gain at the time', type: 'money', value: (r) => r.spread, className: 'text-ink-600' },
+          { key: 'status', label: 'Status', value: (r) => r.status, cell: (r) => <StatusBadge status={r.status} /> },
+        ]} />
 
       <SecurityDocuments className="mt-5" securityId={award.id} stakeholderId={holder?.id ?? null}
         title="Documents"

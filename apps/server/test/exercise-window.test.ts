@@ -79,7 +79,7 @@ test('a recorded 2-month window closes two months after the leaving day', async 
 
 test('the agreement for a grant that records a 0-month window says 0 months, not the default', async () => {
   // Board approval sends the agreement out; the window was recorded as 0 while the grant awaited the board.
-  await insert('stakeholders', { id: 'stk_board', companyId: cid, name: 'Ottilie Grange', email: 'ottilie.grange@example.com', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', createdAt: now });
+  await insert('stakeholders', { id: 'stk_board', companyId: cid, name: 'Ottilie Grange', email: 'ottilie.grange@example.com', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', boardSeat: 1, createdAt: now });
   const issued = await call('POST', `/api/c/${cid}/awards/issue`, {
     stakeholderId: leaver.json.id, poolId: 'pool_w', type: 'NSO', quantity: 4_000, strikePrice: 250_000, grantDate: '2024-06-03', vestingScheduleId: vestedAtGrant,
     approval: 'REQUEST', directorIds: ['stk_board'], signing: { signerName: 'Thea Morrow', signerTitle: 'Chief Executive Officer' },

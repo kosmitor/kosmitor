@@ -18,13 +18,21 @@
  * inside it. Files dragged in from the computer upload into the folder they are
  * let go over. Dragging works with neither a keyboard nor most phones, so every
  * move can also be made from the "Move to folder" dialog below.
+ *
+ * It is drawn as every other table is (DataTable.tsx): the page's search and
+ * buttons in the header row, with the Full size button when the page puts the
+ * tree in a TableCard, and headings that sort. A sort orders the documents inside
+ * each folder, which the page does before handing them over; the folders keep
+ * their order by name, turned round when the names themselves are sorted Z to A.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { cx } from './style.ts';
 import { Icon } from './icons.tsx';
-import { TH, Field, Input, Select, Badge, Button } from './ui.tsx';
+import { TH, Field, Input, Select, Badge, Button, SHORT_TEXT } from './ui.tsx';
 import { FormModal } from './crud.tsx';
+import { SortTH, TableToolbar, useFullSize } from './DataTable.tsx';
+import type { Sort } from './sortable.tsx';
 
 /** Where a document goes when nobody says. The top level of the tree means this folder. */
 export const DEFAULT_FOLDER = 'General';
@@ -207,6 +215,8 @@ export interface TreeColumn {
   className?: string;
   width?: number | string;
   align?: 'left' | 'right';
+  /** Its heading sorts the documents, when the tree is given `onSort`. */
+  sortable?: boolean;
 }
 
 type FolderRow<D> = { kind: 'folder'; id: string; level: number; setsize: number; posinset: number; parent: string | null; node: FolderNode<D>; open: boolean };
@@ -215,10 +225,15 @@ type Row<D> = FolderRow<D> | DocumentRow<D>;
 
 const folderRowId = (path: string) => `f:${path}`;
 
-/** The rows that can be seen: every top-level folder, and inside each open folder its subfolders and then its documents. */
-function visibleRows<D extends TreeDocument>(top: FolderNode<D>[], isOpen: (path: string) => boolean): Row<D>[] {
+/**
+ * The rows that can be seen: every top-level folder, and inside each open folder
+ * its subfolders and then its documents. `zToA` turns the folders round, for a
+ * sort by name from Z to A.
+ */
+function visibleRows<D extends TreeDocument>(top: FolderNode<D>[], isOpen: (path: string) => boolean, zToA = false): Row<D>[] {
   const rows: Row<D>[] = [];
-  const walk = (parent: FolderNode<D> | null, folders: FolderNode<D>[], documents: D[], level: number) => {
+  const walk = (parent: FolderNode<D> | null, inOrder: FolderNode<D>[], documents: D[], level: number) => {
+    const folders = zToA ? [...inOrder].reverse() : inOrder;
     const setsize = folders.length + documents.length;
     folders.forEach((node, i) => {
       const open = isOpen(node.path);
@@ -248,6 +263,39 @@ const isTextField = (el: Element): boolean =>
   el.matches('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable=""], [contenteditable="true"]');
 
 const CELL = 'px-3 py-2.5 border-b border-ink-100 text-ink-800 align-middle';
+
+/**
+ * The name cell stays in view while the tree scrolls sideways, as a table's first
+ * column does (pinnedCell in DataTable.tsx), from small screens up, with the same
+ * line after it. Its background is the row's, made opaque, so the cells passing
+ * under it do not show through: the drop target's tint, a selected document's,
+ * a focused row's, a folder under the pointer, else white. The bar down its left
+ * edge (a drop target, the row with focus) is drawn with that line. The class
+ * names are whole, so Tailwind finds them.
+ */
+interface RowLook { drop: boolean; selected: boolean; folder: boolean }
+/** The row's background, opaque. */
+const rowBackground = ({ drop, selected, folder }: RowLook): string => (drop ? 'bg-brand-50'
+  : selected ? 'bg-[color-mix(in_srgb,var(--color-brand-50)_60%,white)] group-focus-visible:bg-brand-50'
+  : cx('bg-white group-focus-visible:bg-[color-mix(in_srgb,var(--color-brand-50)_50%,white)]', folder && 'group-hover:bg-ink-50'));
+const pinnedName = (look: RowLook): string => cx('sm:sticky sm:left-0 sm:z-[1]', rowBackground(look),
+  look.drop ? 'shadow-[inset_3px_0_0_0_var(--color-brand-500)] sm:shadow-[inset_3px_0_0_0_var(--color-brand-500),inset_-1px_0_0_var(--color-ink-100)]'
+    : cx('sm:shadow-[inset_-1px_0_0_var(--color-ink-100)] group-focus-visible:shadow-[inset_3px_0_0_0_var(--color-brand-600)]',
+      'sm:group-focus-visible:shadow-[inset_3px_0_0_0_var(--color-brand-600),inset_-1px_0_0_var(--color-ink-100)]'));
+/** The row's actions (a last column with no heading), kept in view at the right as a table's are (pinnedEndCell in DataTable.tsx). */
+const pinnedActions = (look: RowLook): string =>
+  cx('sm:sticky sm:right-0 sm:z-[1] sm:shadow-[inset_1px_0_0_var(--color-ink-100)]', rowBackground(look));
+
+/**
+ * A folder or document name this short stays on one line beside the other
+ * columns, from a small tablet up, as short text in the first column of every
+ * table does (ui.tsx, Table): "Equity awards" used to break in two under its
+ * folder icon. A longer name wraps between words there, in a column wide enough
+ * (the heading's min-width) for two or three lines: let it break anywhere and the
+ * table squeezed "Option agreement OPT-4 — Rowan Vale" to a word a line. On a
+ * phone a name may break anywhere, so a file name with no spaces still fits.
+ */
+const nameFit = (name: unknown): string => ([...String(name ?? '')].length <= SHORT_TEXT ? 'wrap-anywhere sm:whitespace-nowrap' : 'wrap-anywhere sm:break-words');
 /** How long a dragged document has to rest on a closed folder before it opens, so a deeper folder can be reached. */
 const SPRING_MS = 700;
 
@@ -258,7 +306,7 @@ type Over = { at: 'top' | 'folder'; path: string; effect: 'move' | 'copy' };
 
 export function DocumentTree<D extends TreeDocument>({
   label, documents, extraFolders, expansion, canEdit, columns, renderName, renderCells,
-  selected, onSelect, onOpen, onMove, onDropFiles, onActiveFolderChange, toolbar, empty,
+  selected, onSelect, onOpen, onMove, onDropFiles, onActiveFolderChange, toolbar, empty, sort = null, onSort,
 }: {
   label: string;
   /** The documents to show, already narrowed by any search. */
@@ -285,9 +333,17 @@ export function DocumentTree<D extends TreeDocument>({
   toolbar?: React.ReactNode;
   /** Shown in place of the rows when there are none. */
   empty?: React.ReactNode;
+  /** How the documents are sorted (the page sorts them), or null for the order given. "name" is the Document column. */
+  sort?: Sort<string> | null;
+  /** A heading clicked. Without it the headings do not sort. */
+  onSort?: (key: string) => void;
 }) {
+  const full = useFullSize();
+  // The row's actions, last and with no heading, stay in view at the right while the tree scrolls sideways.
+  const actionsAt = (i: number): boolean => i === columns.length - 1 && columns[i].label === '';
+  const zToA = sort?.key === 'name' && sort.direction === 'desc';
   const tree = useMemo(() => buildFolderTree(documents, extraFolders), [documents, extraFolders]);
-  const rows = useMemo(() => visibleRows(tree, expansion.isOpen), [tree, expansion]);
+  const rows = useMemo(() => visibleRows(tree, expansion.isOpen, zToA), [tree, expansion, zToA]);
   const rowById = useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows]);
 
   // One row is in the tab order at a time; the arrow keys move between rows.
@@ -612,9 +668,9 @@ export function DocumentTree<D extends TreeDocument>({
   const many = (carried?.ids.length ?? 0) > 1;
 
   return (
-    <div {...guard} onKeyDown={onAreaKeyDown}>
-      <div className="relative border-b border-ink-100 px-4 py-3">
-        {toolbar}
+    <div {...guard} onKeyDown={onAreaKeyDown} className={full ? 'flex min-h-0 flex-1 flex-col' : undefined}>
+      <div className="relative shrink-0">
+        <TableToolbar fullSizeButton={rows.length > 0}>{toolbar}</TableToolbar>
         {carried && (
           // Over the toolbar rather than above it, so the rows do not jump down
           // under the pointer the moment a drag begins.
@@ -643,7 +699,8 @@ export function DocumentTree<D extends TreeDocument>({
       )}
 
       {rows.length === 0 ? empty : (
-        <div className="-mx-px overflow-x-auto">
+        // Full size, the rows scroll under their headings inside the window.
+        <div className={cx('-mx-px overflow-x-auto', full && 'min-h-0 flex-1 overflow-y-auto')}>
           <table role="treegrid" aria-label={label} aria-multiselectable={canEdit || undefined}
             className={cx('w-full border-collapse text-sm [--tree-indent:0.75rem] sm:[--tree-indent:1.25rem]',
               // While anything is dragged over the rows, only the rows and their
@@ -654,8 +711,12 @@ export function DocumentTree<D extends TreeDocument>({
               <tr>
                 {/* A name may break anywhere, so without a floor the other columns
                     squeeze this one to a letter a line once folders are nested. */}
-                <TH className="min-w-44 text-left">Document</TH>
-                {columns.map((c) => <TH key={c.key} className={c.className} width={c.width} align={c.align}>{c.label}</TH>)}
+                {onSort
+                  ? <SortTH column="name" label="Document" sort={sort} onSort={onSort} pinned className="min-w-44 sm:min-w-64" />
+                  : <TH pinned className="min-w-44 sm:min-w-64">Document</TH>}
+                {columns.map((c, i) => (c.sortable && onSort
+                  ? <SortTH key={c.key} column={c.key} label={c.label} sort={sort} onSort={onSort} className={c.className} width={c.width} align={c.align} />
+                  : <TH key={c.key} className={c.className} width={c.width} align={c.align} pinned={actionsAt(i) && 'end'}>{c.label}</TH>))}
               </tr>
             </thead>
             <tbody ref={tbody} onKeyDown={onKeyDown} {...area}>
@@ -669,7 +730,6 @@ export function DocumentTree<D extends TreeDocument>({
                   onFocus: () => setActive(row.id),
                 };
                 const inDrop = lit(folderOfRow(row));
-                const first = cx(CELL, inDrop ? 'shadow-[inset_3px_0_0_0_var(--color-brand-500)]' : 'group-focus-visible:shadow-[inset_3px_0_0_0_var(--color-brand-600)]');
 
                 if (row.kind === 'folder') {
                   const { node } = row;
@@ -684,16 +744,19 @@ export function DocumentTree<D extends TreeDocument>({
                       onClick={() => { setActive(row.id); expansion.toggle(node.path); }}
                       className={cx('group cursor-pointer outline-none transition-colors',
                         inDrop ? 'bg-brand-50' : 'hover:bg-ink-50 focus-visible:bg-brand-50/50')}>
-                      <td role="gridcell" className={first} style={indent(row.level)}>
+                      <td role="gridcell" className={cx(CELL, pinnedName({ drop: inDrop, selected: false, folder: true }))} style={indent(row.level)}>
                         <span className="flex items-center gap-1.5">
                           <Icon name="chevron" className={cx('size-4 shrink-0 text-ink-400 transition-transform', !row.open && '-rotate-90')} />
                           <Icon name="folder" className={cx('size-4 shrink-0', target ? 'text-brand-600' : 'text-ink-400')} />
-                          <span className="min-w-0 wrap-anywhere font-semibold text-ink-900">{node.name}</span>
+                          <span className={cx('min-w-0 font-semibold text-ink-900', nameFit(node.name))}>{node.name}</span>
                           <span className="shrink-0 text-[13px] text-ink-500">({node.count})</span>
                           {hint(node.path)}
                         </span>
                       </td>
-                      {columns.map((c) => <td key={c.key} role="gridcell" className={cx(CELL, c.className)} />)}
+                      {columns.map((c, i) => (
+                        <td key={c.key} role="gridcell"
+                          className={cx(CELL, c.className, actionsAt(i) && pinnedActions({ drop: inDrop, selected: false, folder: true }))} />
+                      ))}
                     </tr>
                   );
                 }
@@ -718,7 +781,7 @@ export function DocumentTree<D extends TreeDocument>({
                       inDrop ? 'bg-brand-50' : isSelected ? 'bg-brand-50/60 focus-visible:bg-brand-50' : 'focus-visible:bg-brand-50/50',
                       canEdit && 'cursor-grab active:cursor-grabbing',
                       carriedIds.has(doc.id) && 'opacity-50')}>
-                    <td role="gridcell" className={first} style={indent(row.level)}>
+                    <td role="gridcell" className={cx(CELL, pinnedName({ drop: inDrop, selected: isSelected, folder: false }))} style={indent(row.level)}>
                       <span className="flex items-start gap-1.5">
                         {canEdit ? (
                           // Where a folder has its arrow, so a document lines up with the
@@ -737,11 +800,14 @@ export function DocumentTree<D extends TreeDocument>({
                         )}
                         <Icon name="document" className="mt-0.5 size-4 shrink-0 text-ink-400" />
                         {/* A file name with no spaces may break anywhere, so it never widens the table past a phone's screen. */}
-                        <span className="min-w-0 wrap-anywhere">{renderName(doc)}</span>
+                        <span className={cx('min-w-0', nameFit(doc.name))}>{renderName(doc)}</span>
                       </span>
                     </td>
                     {columns.map((c, i) => (
-                      <td key={c.key} role="gridcell" className={cx(CELL, c.className, c.align === 'right' && 'text-right')}>{cells[i]}</td>
+                      <td key={c.key} role="gridcell"
+                        className={cx(CELL, c.className, c.align === 'right' && 'text-right', actionsAt(i) && pinnedActions({ drop: inDrop, selected: isSelected, folder: false }))}>
+                        {cells[i]}
+                      </td>
                     ))}
                   </tr>
                 );

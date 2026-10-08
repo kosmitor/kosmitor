@@ -79,7 +79,8 @@ export function dateTime(iso: string | null | undefined): string {
 
 export function relativeDate(iso: string | null | undefined): string {
   if (!iso) return '—';
-  const days = Math.round((new Date(`${iso.slice(0, 10)}T00:00:00Z`).getTime() - Date.now()) / 86_400_000);
+  // Day against day: measured from this moment, anything dated today read as "yesterday" every afternoon.
+  const days = Math.round((Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86_400_000);
   if (days === 0) return 'today';
   if (days === 1) return 'tomorrow';
   if (days === -1) return 'yesterday';

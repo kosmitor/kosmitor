@@ -115,6 +115,8 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
     ['Cormac Doyle', 'cormac@angels.demo', 'INDIVIDUAL', 'INVESTOR', null, null, 'Angel'],
     ['Bridgepoint Venture Debt', 'debt@bridgepoint.demo', 'ENTITY', 'INVESTOR', null, null, null],
   ];
+  // The directors: both founders, and the independent director from their start date.
+  const board = ['Avery Stone', 'Bao Nguyen', 'Wendell Grant'];
   const sh: Record<string, string> = {};
   for (const [name, mail, type, relation, start, term, title] of people) {
     const sid = id('stk');
@@ -122,7 +124,8 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
     await insert('stakeholders', {
       id: sid, companyId, name, email: mail, type, relation, startDate: start,
       terminationDate: term, taxCountry: 'US', taxState: 'CA', entityGroupId: null,
-      title, address: null, phone: null, notes: null, createdAt: now(),
+      title, address: null, phone: null, notes: null,
+      boardSeat: board.includes(name) ? 1 : 0, boardSeatStart: board.includes(name) ? start : null, createdAt: now(),
     });
   }
 
@@ -316,7 +319,7 @@ export async function seed(): Promise<{ companyId: string; email: string; passwo
     linkedEntityType: 'awards', linkedEntityIds: JSON.stringify([]),
     createdBy: 'Avery Stone', createdAt: now(),
   });
-  for (const director of ['Avery Stone', 'Bao Nguyen', 'Wendell Grant']) {
+  for (const director of board) {
     await insert('board_votes', {
       id: id('vot'), consentId, stakeholderId: sh[director],
       vote: director === 'Avery Stone' ? 'APPROVE' : 'PENDING',

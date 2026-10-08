@@ -20,9 +20,13 @@ export default function Onboarding() {
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // "Create the company and import": the import page opens once the company exists.
+  const [thenImport, setThenImport] = useState(false);
 
-  const create = async (e: React.FormEvent) => {
+  const create = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const importAfter = (e.nativeEvent as SubmitEvent).submitter?.dataset.then === 'import';
+    setThenImport(importAfter);
     setBusy(true);
     setError(null);
     try {
@@ -39,7 +43,7 @@ export default function Onboarding() {
       toast('Company created');
       // Without a company every page opens here first, so a link that led here (the welcome
       // email's first steps, say) carries on to the page it was for.
-      navigate(pathname === '/onboarding' ? '/' : `${pathname}${search}`);
+      navigate(importAfter ? '/import' : pathname === '/onboarding' ? '/' : `${pathname}${search}`);
     } catch (err) {
       setError((err as Error).message);
     } finally { setBusy(false); }
@@ -89,9 +93,16 @@ export default function Onboarding() {
                 onChange={(e) => setForm({ ...form, authorizedCommon: e.target.value })} />
             </Field>
           </div>
-          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy && !thenImport} disabled={busy}>
             Create company
           </Button>
+          <p className="text-center text-[13px] text-ink-500">
+            Have a spreadsheet or a Pulley or Carta export?{' '}
+            <button type="submit" data-then="import" disabled={busy}
+              className="font-medium text-brand-600 hover:text-brand-700 disabled:opacity-60">
+              Create the company and import your cap table
+            </button>
+          </p>
         </form>
       </Card>
     </div>

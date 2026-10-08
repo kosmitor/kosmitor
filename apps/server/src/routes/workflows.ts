@@ -14,6 +14,7 @@ import { documentFolder } from '../folders.ts';
 import { startConvertibleSigning, activateConvertible, detachFromPendingConsents } from './fundraising.ts';
 import { updatesFor, markUpdateRead } from './communications.ts';
 import { isEditor, seesWholeCompany, seesWholeVault } from '../auth.ts';
+import { directorsOn, namedDirectors } from '../board.ts';
 import {
   computeCapTable, activeValuation, summarizeVesting, vestingCurve, portfolioValue, modelExercise,
   shareValue, roundShares, today, addMonths, formatShares, formatPPS, splitFactor, INSTRUMENT_NAMES, TRANSACTION_TYPES, REWOUND_TYPES, formatMoney, mfnCandidates,
@@ -190,7 +191,8 @@ route.post('/api/c/:cid/awards/issue', 'write', async (ctx) => {
 
   let consent: Record<string, unknown> | null = null;
   if (approval === 'REQUEST') {
-    const directorIds: string[] = Array.isArray(b.directorIds) ? b.directorIds.map(String) : [];
+    // The consent takes effect on the grant date, so its directors are the board of that day.
+    const directorIds = await namedDirectors(ctx.companyId!, b.directorIds, grantDate);
     if (directorIds.length === 0) throw badRequest('Choose at least one director to approve the grant.');
     const holder = await one<{ name: string }>('SELECT name FROM stakeholders WHERE id = ?', stakeholderId);
     const consentId = newId('con');
@@ -1704,9 +1706,10 @@ route.get('/api/c/:cid/consents', 'read', async (ctx) => {
 });
 
 /**
- * Opens a consent. Board consents need every named director; stockholder
- * consents are weighted by voting shares and pass at a threshold of all
- * voting shares outstanding on the effective date.
+ * Opens a consent. Board consents need every named director, each holding a
+ * board seat on the effective date, and name the whole board of that day when
+ * nobody is named; stockholder consents are weighted by voting shares and pass
+ * at a threshold of all voting shares outstanding on the effective date.
  */
 route.post('/api/c/:cid/consents', 'write', async (ctx) => {
   const id = newId('con');
@@ -1726,7 +1729,10 @@ route.post('/api/c/:cid/consents', 'write', async (ctx) => {
     voters = chosen.length ? holders.filter((h) => chosen.includes(h.stakeholderId)) : holders;
     if (voters.length === 0) throw badRequest('None of the chosen stakeholders holds voting shares.');
   } else {
-    voters = ((ctx.body.directorIds ?? []) as string[]).map((d) => ({ stakeholderId: String(d), weight: null }));
+    const named = await namedDirectors(ctx.companyId!, ctx.body.directorIds, effectiveDate);
+    const directors = named.length ? named : (await directorsOn(ctx.companyId!, effectiveDate)).map((d) => d.id);
+    if (directors.length === 0) throw badRequest(`Nobody holds a board seat on ${effectiveDate}. Give the directors a seat on their stakeholder records first.`);
+    voters = directors.map((d) => ({ stakeholderId: d, weight: null }));
   }
   await insert('board_consents', {
     id, companyId: ctx.companyId, title: str(ctx.body.title, 'Title', { max: 200 }), kind, threshold, totalWeight,

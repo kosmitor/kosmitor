@@ -55,11 +55,64 @@ made earlier keep their history and their status links.
   request, and 0 turns uploading off; delivering by email works either way.
 - **The team's link** — only a hash of its token is stored, each new notice
   replaces it, and it stops working `valuationDesk.linkClosedDays` (30) days after
-  the request closes. The team's inbox is `valuationDesk.email` (or
-  `VALUATION_DESK_EMAIL`); with none set, requests are saved but nobody is told.
-  `valuationDesk.name` is what the team is called in the app and in emails.
+  the request closes. `valuationDesk.name` is what the team is called in the app
+  and in emails.
+- **The evaluators** — `valuationDesk.email` is one address or a list of up to
+  10; `VALUATION_DESK_EMAIL` wins over it, comma separated (Terraform sets it
+  from `valuation_desk_emails`). With none set, requests are saved but nobody is
+  told. Each address gets an email of its own, so no evaluator sees another's
+  address, and every one carries the same link; the closing notice and *Send to
+  the team again, with a new link* go to all of them. Replies to the recap and
+  the status emails reach the first address only, so the company learns no more
+  of the list than it did of one inbox. When some addresses are reached and
+  others are not, the company is told that some of the team did not get it,
+  never which addresses or how many there are, the link moves to the new one,
+  and the server log names the addresses that failed; a resend reaches everyone
+  again. A notice counts once against the per-request, per-company and
+  per-person `valuationDesk.noticesPer…` limits however many addresses it goes
+  to, so each evaluator gets at most that many and a longer list does not use up
+  a company's allowance faster; the audit log holds one entry per notice and no
+  address. `valuationDesk.noticesPerHour` (30) is the exception: it guards the
+  mail the server sends, so it counts emails, one per address, and a list of
+  three lets ten notices out an hour. Keep it well below the mail provider's
+  hourly limit (a new Azure Communication Services custom domain allows 100);
+  the server refuses to start with fewer than the addresses on the list.
+  Closing notices are not held back by it: one goes to each address on the list
+  when a request the team was told about closes, so a list of three sends three.
+- **Changing the list** — it takes a restart (with Terraform, an apply). Every
+  evaluator shares the request's one link, so removing an address does not take
+  back a link it was already sent: on each request it was told about, the link
+  works until a new notice replaces it, which only someone at the company can
+  send (*Send to the team again, with a new link*), or until it expires
+  (`valuationDesk.linkOpenDays`, 180 days from when it was sent, or
+  `valuationDesk.linkClosedDays` after the request closes). Remove
+  only someone you would still trust with the requests already sent to them. The
+  closing notice goes to the list as it is when the request closes: an address
+  added since gets it too, and one removed does not.
 - **Your own appraiser** — the data workbook stays downloadable from the 409A
   page, and *Record valuation* takes the result.
+- **Importing a report** — *Import a report* on the 409A page, or *Fill from a
+  report* in *Record valuation*, takes the appraiser's PDF from your computer or
+  from the vault. The server reads it as it reads the team's uploads, in a worker
+  with limits on its time and memory and with no service outside the server, and
+  the form fills in: the price per common share, the valuation date, the method,
+  the appraiser (the firm that prepared the report, never the company it values)
+  and the enterprise value, or the equity value, flagged, when that is what the
+  report states most surely; recording an equity value there adds a line to the
+  notes saying so. A figure from a table "in thousands" is scaled and flagged.
+  Each value is marked with the page and the words it was read from, and the
+  ones read less surely are flagged for checking. A value already typed in the
+  form stays, with the reading offered beside it. A report with no valuation
+  date leaves the date empty to be entered. A scanned PDF has nothing to read
+  and says so; the values are typed in by hand. Reading stores nothing: a PDF
+  from your computer reaches the vault (category *Valuation*, folder
+  *Valuations*, administrators only) only when the valuation is saved, together
+  with the link to it, and a document from the vault stays where it is, its
+  reading logged as a download is. Cancelling leaves nothing behind. Only
+  administrators and legal can import a report, as only they can record a
+  valuation; on the sample company a report can be read but not filed. One
+  report is read at a time for a company and for a person, and the imports
+  leave a place in the server's line for the team's uploads.
 - **Reports** — a valuation's page has a *Report* field: upload the appraisal,
   choose a document already in the vault, or paste a link. The valuations table
   opens it directly.

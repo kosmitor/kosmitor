@@ -1,14 +1,16 @@
 /**
- * Reading a report the valuation team uploads, off the server's own thread.
+ * Reading a report the valuation team uploads, or one a company imports on its
+ * 409A page, off the server's own thread.
  *
- * The file comes from outside the company, through a link. pdf-text.ts and
+ * The file comes from outside the company: through a link, or from an appraiser
+ * by way of someone at the company who uploads it. pdf-text.ts and
  * report-detect.ts bound what a crafted file can make them do, but a bound is
  * only as good as the case someone thought of, and the server answers every
  * company from one thread. So the reading runs in a worker thread of its own,
  * with a ceiling on its memory and on its time. Whatever happens in there, the
  * rest of the server keeps answering: a report that takes too long, or runs the
- * worker out of memory, comes back with nothing read, and the team types the
- * values in as it would for a scan.
+ * worker out of memory, comes back with nothing read, and the values are typed
+ * in as they would be for a scan.
  *
  * One report is read at a time on a server, and only a few uploads wait their
  * turn, so a burst of them queues up rather than piling onto the machine; past
@@ -19,7 +21,7 @@
  */
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { pdfText } from './pdf-text.ts';
-import { detectReport, nothingDetected, type ReportDetection } from './report-detect.ts';
+import { detectReport, nothingDetected, type ReportReading } from './report-detect.ts';
 
 /** How long one report may take to read. A real one takes well under a second. */
 const READ_MS = 20_000;
@@ -36,6 +38,14 @@ let line: Promise<unknown> = Promise.resolve();
 let inLine = 0;
 
 export interface ReadOptions {
+  /** The names of the company the report values, which are never read as its appraiser's. */
+  names?: string[];
+  /**
+   * Places in the line this reading leaves free: a company's import leaves one,
+   * so however many companies import at once, an upload of the valuation team's
+   * still finds a place.
+   */
+  leave?: number;
   /** How long the reading may take. For tests. */
   timeoutMs?: number;
   /** The memory the reading may use, in megabytes. For tests. */
@@ -48,10 +58,10 @@ export interface ReadOptions {
  * long or needs too much comes back as nothing read. Throws ReaderBusy, at once,
  * when the line is full.
  */
-export async function readReport(pdf: Buffer, options: ReadOptions = {}): Promise<ReportDetection> {
-  if (inLine >= IN_LINE) throw new ReaderBusy('The server is busy reading other reports.');
+export async function readReport(pdf: Buffer, options: ReadOptions = {}): Promise<ReportReading> {
+  if (inLine >= IN_LINE - (options.leave ?? 0)) throw new ReaderBusy('The server is busy reading other reports.');
   inLine++;
-  const turn = line.then(() => readInWorker(pdf, options.timeoutMs ?? READ_MS, options.memoryMb ?? READ_MEMORY_MB));
+  const turn = line.then(() => readInWorker(pdf, options.names ?? [], options.timeoutMs ?? READ_MS, options.memoryMb ?? READ_MEMORY_MB));
   line = turn.catch(() => undefined);
   try {
     return await turn;
@@ -61,15 +71,15 @@ export async function readReport(pdf: Buffer, options: ReadOptions = {}): Promis
 }
 
 /** Whether a message from the worker is what it read, rather than something Node itself sent on the channel. */
-const isDetection = (message: unknown): message is ReportDetection =>
+const isDetection = (message: unknown): message is ReportReading =>
   typeof message === 'object' && message !== null && typeof (message as { readable?: unknown }).readable === 'boolean';
 
-function readInWorker(pdf: Buffer, timeoutMs: number, memoryMb: number): Promise<ReportDetection> {
+function readInWorker(pdf: Buffer, names: string[], timeoutMs: number, memoryMb: number): Promise<ReportReading> {
   return new Promise((resolve) => {
     let worker: Worker;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
-    const done = (detection: ReportDetection, problem?: string) => {
+    const done = (detection: ReportReading, problem?: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -80,7 +90,7 @@ function readInWorker(pdf: Buffer, timeoutMs: number, memoryMb: number): Promise
     };
     try {
       worker = new Worker(new URL(import.meta.url), {
-        workerData: { readReport: true, pdf },
+        workerData: { readReport: true, pdf, names },
         resourceLimits: { maxOldGenerationSizeMb: memoryMb },
       });
     } catch (err) {
@@ -101,7 +111,7 @@ function readInWorker(pdf: Buffer, timeoutMs: number, memoryMb: number): Promise
 
 if (!isMainThread && parentPort && (workerData as { readReport?: boolean } | null)?.readReport) {
   // The file arrives as plain bytes; pdfText reads a Buffer.
-  const bytes = (workerData as { pdf: Uint8Array }).pdf;
+  const { pdf: bytes, names } = workerData as { pdf: Uint8Array; names: string[] };
   const text = pdfText(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
-  parentPort.postMessage(text.readable ? detectReport(text.pages) : nothingDetected(false));
+  parentPort.postMessage(text.readable ? detectReport(text.pages, { names }) : nothingDetected(false));
 }

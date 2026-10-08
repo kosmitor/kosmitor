@@ -63,11 +63,15 @@ export function RuleBadge({ rule }: { rule: string }) {
   return <Link to={to} className="hover:opacity-80"><Badge tone="brand">{label} →</Badge></Link>;
 }
 
+const STATUSES: Record<string, ['success' | 'warning' | 'danger' | 'neutral' | 'info', string]> = {
+  FILED: ['success', 'Filed'], OPEN: ['warning', 'Window open'], CLOSED: ['danger', 'Window closed'],
+  NOTHING_TO_FILE: ['neutral', 'Nothing to file'], UPCOMING: ['info', 'Year in progress'], DUE: ['warning', 'Due'], OVERDUE: ['danger', 'Overdue'],
+};
+
+/** A filing status in the words of its badge, so a table sorts it as it reads. */
+export const statusLabel = (status: string): string => STATUSES[status]?.[1] ?? status;
+
 export function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, ['success' | 'warning' | 'danger' | 'neutral' | 'info', string]> = {
-    FILED: ['success', 'Filed'], OPEN: ['warning', 'Window open'], CLOSED: ['danger', 'Window closed'],
-    NOTHING_TO_FILE: ['neutral', 'Nothing to file'], UPCOMING: ['info', 'Year in progress'], DUE: ['warning', 'Due'], OVERDUE: ['danger', 'Overdue'],
-  };
-  const [tone, label] = map[status] ?? ['neutral', status];
+  const [tone, label] = STATUSES[status] ?? ['neutral', status];
   return <Badge tone={tone}>{label}</Badge>;
 }

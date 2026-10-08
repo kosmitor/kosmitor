@@ -6,7 +6,7 @@
 import { route, newId, nowISO, audit, badRequest, notFound, forbidden, str, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll } from '../db.ts';
 import { getCompanyData } from '../store.ts';
-import { computeCapTable, summarizeVesting, activeValuation, today, type CompanyData } from '@kosmitor/core';
+import { computeCapTable, summarizeVesting, activeValuation, today, isDirector, type CompanyData } from '@kosmitor/core';
 import { xlsx } from '../xlsx-writer.ts';
 import { config } from '../config.ts';
 import { seesWholeCompany } from '../auth.ts';
@@ -27,13 +27,14 @@ export const DATASETS: Dataset[] = [
     key: 'stakeholders', label: 'Stakeholders', description: 'Everyone on the cap table with their contact details and position.',
     columns: [col('name', 'Name'), col('email', 'Email'), col('type', 'Type'), col('relation', 'Relationship'), col('title', 'Title'), col('department', 'Department'),
       col('startDate', 'Start date', 'date'), col('terminationDate', 'Termination date', 'date'), col('taxCountry', 'Tax country'), col('taxState', 'Tax state'),
+      col('director', 'Director', 'boolean'), col('boardSeatStart', 'Board seat from', 'date'), col('boardSeatEnd', 'Board seat until', 'date'),
       col('sharesOutstanding', 'Shares outstanding', 'number'), col('optionsOutstanding', 'Options outstanding', 'number'), col('optionsVested', 'Options vested', 'number'),
       col('fullyDiluted', 'Fully diluted shares', 'number'), col('fullyDilutedPct', 'Fully diluted %', 'percent'), col('investedAmount', 'Invested', 'money'), col('currentValue', 'Current value', 'money')],
-    rows: async ({ companyId, table }) => {
+    rows: async ({ companyId, table, asOf }) => {
       const people = toCamelAll<Row>(await all('SELECT * FROM stakeholders WHERE company_id = ? ORDER BY name', companyId));
       return people.map((p) => {
         const r = table.rows.find((x) => x.stakeholderId === p.id);
-        return { ...p, sharesOutstanding: r?.outstanding ?? 0, optionsOutstanding: r?.optionsOutstanding ?? 0, optionsVested: r?.optionsVested ?? 0,
+        return { ...p, director: isDirector(p, asOf), sharesOutstanding: r?.outstanding ?? 0, optionsOutstanding: r?.optionsOutstanding ?? 0, optionsVested: r?.optionsVested ?? 0,
           fullyDiluted: r?.fullyDiluted ?? 0, fullyDilutedPct: r?.fullyDilutedPct ?? 0, investedAmount: r?.investedAmount ?? 0, currentValue: r?.currentValue ?? 0 };
       });
     },

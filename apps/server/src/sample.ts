@@ -1,6 +1,7 @@
 /**
  * A fictional company for demos, screenshots and import tests: Marlowe
- * Systems, Inc. — three founders, a Series Seed, an option plan with a departed
+ * Systems, Inc. — three founders, two of them on a board with the seed lead's
+ * designee and an independent director, a Series Seed, an option plan with a departed
  * employee's exercise and cancellation, a post-money SAFE bridge with one
  * cancelled instrument, a 409A history, approvals in flight, a grant awaiting
  * signature, an investor update and an offer letter. Every name, address,
@@ -54,6 +55,7 @@ export const PEOPLE: Person[] = [
   { key: 'imani', name: 'Dr. Imani Baptiste', email: 'imani@baptiste.example', type: 'INDIVIDUAL', relation: 'ADVISOR', title: 'Technical advisor', department: null, start: '2022-05-25', end: null, state: 'MA' },
   { key: 'gideon', name: 'Gideon Marsh', email: 'gideon@marsh.example', type: 'INDIVIDUAL', relation: 'ADVISOR', title: 'Go-to-market advisor', department: null, start: '2023-08-25', end: null, state: 'CO' },
   { key: 'beatrix', name: 'Beatrix Holm', email: 'beatrix@holm.example', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', title: 'Independent director', department: null, start: '2024-05-25', end: null, state: 'NY' },
+  { key: 'corinne', name: 'Corinne Ashdown', email: 'corinne@larkspur.example', type: 'INDIVIDUAL', relation: 'BOARD_MEMBER', title: 'Partner, Larkspur Ventures', department: null, start: '2023-05-03', end: null, state: 'CA' },
   { key: 'larkspur', name: 'Larkspur Ventures Fund II, L.P.', email: 'ir@larkspur.example', type: 'FUND', relation: 'INVESTOR', title: null, department: null, start: null, end: null, state: 'DE' },
   { key: 'tidewater', name: 'Tidewater Seed Partners', email: 'deals@tidewater.example', type: 'FUND', relation: 'INVESTOR', title: null, department: null, start: null, end: null, state: 'DE' },
   { key: 'aldergrove', name: 'Alder Grove Capital SPV', email: 'spv@aldergrove.example', type: 'ENTITY', relation: 'INVESTOR', title: null, department: null, start: null, end: null, state: 'DE' },
@@ -66,6 +68,18 @@ export const PEOPLE: Person[] = [
   { key: 'dev', name: 'Dev Anand', email: 'dev.anand@mail.example', type: 'INDIVIDUAL', relation: 'INVESTOR', title: 'Angel investor', department: null, start: null, end: null, state: 'CA' },
   { key: 'priyanka', name: 'Priyanka Nair', email: 'priyanka.nair@mail.example', type: 'INDIVIDUAL', relation: 'INVESTOR', title: 'Angel investor', department: null, start: null, end: null, state: 'WA' },
   { key: 'samuel', name: 'Samuel Oduya', email: null, type: 'INDIVIDUAL', relation: 'INVESTOR', title: 'Angel investor', department: null, start: null, end: null, state: 'GA' },
+];
+
+/**
+ * Who sits on the board, from when, and the investor who named them. Theo is a founder
+ * but not a director. Larkspur led the seed and named a partner to the board under the
+ * voting agreement signed the day it closed; Beatrix joined as an independent a year later.
+ */
+export const BOARD: { holder: string; from: string; designatedBy: string | null }[] = [
+  { holder: 'avery', from: '2022-03-08', designatedBy: null },
+  { holder: 'mira', from: '2022-03-08', designatedBy: null },
+  { holder: 'corinne', from: '2023-05-03', designatedBy: 'larkspur' },
+  { holder: 'beatrix', from: '2024-05-25', designatedBy: null },
 ];
 
 type Certificate = { no: string; holder: string; qty: number; price: number; date: string; schedule?: string; vestStart?: string; filed83b?: string | null; board: string; source?: string };
@@ -272,6 +286,10 @@ export async function createSampleCompany(ownerEmail: string, ownerName = 'Avery
       await insert('stakeholders', { id: sid, companyId, name: p.name, email: p.email, type: p.type, relation: p.relation, startDate: p.start, terminationDate: p.end,
         taxCountry: 'US', taxState: p.state, entityGroupId: null, title: p.title, department: p.department, address: p.type === 'INDIVIDUAL' && p.key === 'avery' ? '18 Alder Lane, Mill Valley, CA 94941' : null, phone: null, notes: null, createdAt: now() });
     }
+    // Seats once everyone is on the register, as a designee points at the investor who named them.
+    for (const b of BOARD) {
+      await run('UPDATE stakeholders SET board_seat = 1, board_seat_start = ?, board_designated_by = ? WHERE id = ?', b.from, b.designatedBy ? sh[b.designatedBy] : null, sh[b.holder]);
+    }
     await insert('memberships', { id: id('mem'), userId: user.id, companyId, role: 'ADMIN', stakeholderId: sh.avery, createdAt: now() });
     // Certificates + ledger
     const tx = (o: Record<string, unknown>) => insert('transactions', { id: id('tx'), companyId, stakeholderId: null, counterpartyId: null, securityId: null, shareClassId: null, quantity: null, pricePerShare: null, amount: null, memo: null, createdAt: now(), createdBy: 'Avery Stone', ...o });
@@ -342,10 +360,10 @@ export async function createSampleCompany(ownerEmail: string, ownerName = 'Avery
     // Approvals: an approved consent behind the pending grant, a pending board consent, a pending stockholder approval
     const approved = id('con');
     await insert('board_consents', { id: approved, companyId, title: `Approve Incentive Stock Option grant of 70,000 shares to ${holder.name}`, type: 'WRITTEN_CONSENT', kind: 'BOARD', body: 'RESOLVED, that the Company grant Tomás Rivera 70,000 Incentive Stock Options under the 2022 Stock Plan at $0.22 per share.', status: 'APPROVED', meetingDate: null, effectiveDate: pg.date, approvedAt: now(), linkedEntityType: 'awards', linkedEntityIds: JSON.stringify([awardIds[pg.label]]), createdBy: 'Avery Stone', createdAt: now() });
-    for (const d of ['avery', 'mira', 'beatrix']) await insert('board_votes', { id: id('vot'), consentId: approved, stakeholderId: sh[d], vote: 'APPROVE', comment: null, votedAt: now(), createdAt: now() });
+    for (const { holder: d } of BOARD) await insert('board_votes', { id: id('vot'), consentId: approved, stakeholderId: sh[d], vote: 'APPROVE', comment: null, votedAt: now(), createdAt: now() });
     const pending = id('con');
     await insert('board_consents', { id: pending, companyId, title: 'Increase the 2022 Stock Plan by 600,000 shares', type: 'WRITTEN_CONSENT', kind: 'BOARD', body: 'RESOLVED, that the number of shares reserved under the 2022 Stock Plan be increased by 600,000 shares of Common Stock, subject to stockholder approval.', status: 'PENDING', meetingDate: null, effectiveDate: now().slice(0, 10), linkedEntityType: null, linkedEntityIds: '[]', createdBy: 'Avery Stone', createdAt: now() });
-    for (const d of ['avery', 'mira', 'beatrix']) await insert('board_votes', { id: id('vot'), consentId: pending, stakeholderId: sh[d], vote: d === 'avery' ? 'APPROVE' : 'PENDING', comment: null, votedAt: d === 'avery' ? now() : null, createdAt: now() });
+    for (const { holder: d } of BOARD) await insert('board_votes', { id: id('vot'), consentId: pending, stakeholderId: sh[d], vote: d === 'avery' ? 'APPROVE' : 'PENDING', comment: null, votedAt: d === 'avery' ? now() : null, createdAt: now() });
     const voting = [...COMMON, ...SEED].reduce<Record<string, number>>((m, c) => ({ ...m, [c.holder]: (m[c.holder] ?? 0) + c.qty }), {});
     const total = Object.values(voting).reduce((s, v) => s + v, 0);
     const stockholder = id('con');

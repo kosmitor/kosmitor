@@ -20,7 +20,7 @@ await import('../src/routes/analytics.ts');
 await import('../src/routes/workflows.ts');
 await import('../src/routes/imports.ts');
 await import('../src/routes/data.ts');
-const { buildWorkbooks, createSampleCompany, SAMPLE_TOTALS, SAMPLE_COMPANY, SAMPLE_AS_OF, PEOPLE, COMMON, SEED, GRANTS, SAFES, EXERCISE, VALUATIONS } = await import('../src/sample.ts');
+const { buildWorkbooks, createSampleCompany, SAMPLE_TOTALS, SAMPLE_COMPANY, SAMPLE_AS_OF, PEOPLE, BOARD, COMMON, SEED, GRANTS, SAFES, EXERCISE, VALUATIONS } = await import('../src/sample.ts');
 const { parseXlsx } = await import('../src/import/xlsx.ts');
 const { detectSheet, guessHeaderRow } = await import('../src/import/values.ts');
 const { runWorkbook } = await import('../src/import/engine.ts');
@@ -95,9 +95,12 @@ test('the sample workbooks import like a real export and reconcile to the declar
   assert.equal(Number(oscar!.exercised_quantity), 23_437);
   assert.equal(Number(oscar!.cancelled_quantity), 51_563);
 
-  // Importing the same workbook again is refused as duplicates, so the numbers cannot drift.
-  const again = await runWorkbook(cid, capSheets, 'Import Tester', true);
-  assert.ok(again.sheets.some((s) => s.blocked));
+  // Importing the same workbooks again adds nothing, so the numbers cannot drift: every record is recognised as already there.
+  const again = await runWorkbook(cid, [...peopleSheets, ...capSheets], 'Import Tester', true);
+  assert.ok(!again.sheets.some((s) => s.blocked));
+  assert.equal(again.counts.willImport, 0);
+  assert.ok(again.counts.existing > 0);
+  for (const s of again.sheets) for (const r of s.preview.rows) assert.ok(r.outcome === 'existing' || r.outcome === 'skip', `${s.sheetName} row ${r.row}: ${r.outcome}`);
 });
 
 test('the database sample builds the same company with approvals, signatures and an update in flight', async () => {
@@ -114,6 +117,17 @@ test('the database sample builds the same company with approvals, signatures and
   assert.equal((await one<{ n: number }>("SELECT COUNT(*) AS n FROM update_recipients r JOIN investor_updates u ON u.id = r.update_id WHERE u.company_id = ?", companyId))!.n, PEOPLE.filter((p) => p.relation === 'INVESTOR').length);
   assert.equal((await one<{ n: number }>("SELECT COUNT(*) AS n FROM exercises WHERE company_id = ?", companyId))!.n, 1);
   assert.equal((await one<{ status: string }>("SELECT status FROM offers WHERE company_id = ?", companyId))!.status, 'SENT');
+
+  // The board: two of the founders, the seed lead's designee and the independent director. Theo is a founder but not a director.
+  const { directorsOn } = await import('../src/board.ts');
+  const name = (key: string) => PEOPLE.find((p) => p.key === key)!.name;
+  const board = await directorsOn(companyId, SAMPLE_AS_OF);
+  assert.deepEqual(board.map((d) => d.name).sort(), BOARD.map((b) => name(b.holder)).sort());
+  assert.ok(!board.some((d) => d.name === name('theo')));
+  assert.equal(board.find((d) => d.name === name('corinne'))!.designatedByName, name('larkspur'));
+  // Every director signs a board consent: the pending one waits on all of them.
+  const pending = await one<{ id: string }>("SELECT id FROM board_consents WHERE company_id = ? AND kind = 'BOARD' AND status = 'PENDING'", companyId);
+  assert.equal((await all('SELECT id FROM board_votes WHERE consent_id = ?', pending!.id)).length, BOARD.length);
 
   // Nobody real: every email is on a reserved example domain.
   const emails = await all<{ email: string | null }>('SELECT email FROM stakeholders WHERE company_id = ?', companyId);
@@ -142,6 +156,9 @@ test('the sample\'s calendar holds its story together', () => {
   const oscar = PEOPLE.find((p) => p.key === 'oscar')!;
   assert.ok(oscar.end! < EXERCISE.date && EXERCISE.date < EXERCISE.cancelledOn);
   assert.equal(EXERCISE.cancelledOn, addMonths(oscar.end!, 3));
+  // Each director joins the board the day their relationship starts, the seed lead's designee the day the seed closes.
+  for (const b of BOARD) assert.equal(b.from, PEOPLE.find((p) => p.key === b.holder)!.start, b.holder);
+  assert.equal(BOARD.find((b) => b.designatedBy === 'larkspur')!.from, SEED[0].date);
   // Each 409A runs a year less a day.
   for (const [effective, , expires] of VALUATIONS) assert.equal(expires, addDays(addMonths(effective, 12), -1), effective);
   // Nothing in the export is dated after the export, or before the company.

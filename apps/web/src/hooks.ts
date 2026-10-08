@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useLocation } from 'react-router-dom';
 
 /**
@@ -26,4 +26,21 @@ export function useSearchQuery(): [string, (value: string) => void] {
   const [value, setValue] = useState(fromUrl);
   useEffect(() => { if (fromUrl) setValue(fromUrl); }, [fromUrl]);
   return [value, setValue];
+}
+
+/**
+ * Whether a media query matches now, following it as the window changes:
+ * useMediaQuery('(max-width: 639px)') for a phone, '(pointer: coarse)' for a
+ * touch screen. False where matchMedia is missing.
+ */
+export function useMediaQuery(query: string): boolean {
+  return useSyncExternalStore(
+    (changed) => {
+      const list = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query) : null;
+      list?.addEventListener('change', changed);
+      return () => list?.removeEventListener('change', changed);
+    },
+    () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query).matches : false),
+    () => false,
+  );
 }

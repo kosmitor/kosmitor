@@ -14,8 +14,11 @@
  * instructions, CDATA, a DOCTYPE and the five predefined entities are handled;
  * namespace prefixes are dropped so `ss:Index` and `Index` are the same thing.
  */
-import { decodeXml } from './xlsx.ts';
+import { decodeXml, squareUp, EXCEL_MAX_ROWS, EXCEL_MAX_COLUMNS, MAX_COLUMNS, MAX_CELL_LENGTH } from './xlsx.ts';
 import type { Cell } from './values.ts';
+
+/** How deep elements may nest: a table needs a handful of levels, and the readers below recurse through them. */
+const MAX_DEPTH = 64;
 
 export interface XmlNode {
   name: string;
@@ -77,12 +80,16 @@ export function parseXml(input: string): XmlNode {
     const body = selfClosing ? raw.slice(0, -1) : raw;
     const nameMatch = /^\s*([^\s/>]+)/.exec(body);
     if (!nameMatch) throw new Error('Malformed tag in the XML.');
-    const node: XmlNode = { name: local(nameMatch[1]), attrs: {}, children: [], text: '' };
-    for (const m of body.slice(nameMatch[0].length).matchAll(/([^\s=/]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    const node: XmlNode = { name: local(nameMatch[1]), attrs: Object.create(null) as Record<string, string>, children: [], text: '' };
+    // A name is at most 256 characters, so a long run with no "=" costs a bounded retry at each position, not a scan to its end from each.
+    for (const m of body.slice(nameMatch[0].length).matchAll(/([^\s=/]{1,256})\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
       node.attrs[local(m[1])] = decodeXml(m[2] ?? m[3] ?? '');
     }
     stack[stack.length - 1].children.push(node);
-    if (!selfClosing) stack.push(node);
+    if (!selfClosing) {
+      if (stack.length > MAX_DEPTH) throw new Error('The XML is nested too deeply to be a table.');
+      stack.push(node);
+    }
   }
 
   if (stack.length !== 1) throw new Error(`The XML ends before <${stack[stack.length - 1].name}> is closed.`);
@@ -103,6 +110,9 @@ function findTagEnd(text: string, start: number): number {
   return -1;
 }
 
+/** Text as a cell holds it: at most MAX_CELL_LENGTH characters, as in Excel. */
+const cellText = (s: string): string => (s.length > MAX_CELL_LENGTH ? s.slice(0, MAX_CELL_LENGTH) : s);
+
 /** All text beneath a node, in document order. */
 function deepText(node: XmlNode): string {
   let out = node.text;
@@ -110,7 +120,12 @@ function deepText(node: XmlNode): string {
   return out.trim();
 }
 
-export interface XmlSheet { name: string; rows: Cell[][] }
+export interface XmlSheet {
+  name: string;
+  rows: Cell[][];
+  /** True when values lay past MAX_COLUMNS and were not read. */
+  columnsCut?: boolean;
+}
 
 export function parseXmlTable(input: string): XmlSheet[] {
   const root = parseXml(input);
@@ -126,34 +141,42 @@ function spreadsheet2003(workbook: XmlNode): XmlSheet[] {
   const sheets: XmlSheet[] = [];
   for (const ws of workbook.children.filter((c) => c.name === 'Worksheet')) {
     const table = ws.children.find((c) => c.name === 'Table');
-    const grid: Cell[][] = [];
+    // Only rows with a value are kept, in order: a row index far down takes no room.
+    const kept: { index: number; cells: Cell[] }[] = [];
     let rowIndex = 0;
-    let width = 0;
+    let columnsCut = false;
     for (const row of table?.children.filter((c) => c.name === 'Row') ?? []) {
       if (row.attrs.Index) rowIndex = Number(row.attrs.Index) - 1;
+      if (!Number.isInteger(rowIndex) || rowIndex < 0 || rowIndex >= EXCEL_MAX_ROWS) throw new Error('A row of the XML spreadsheet lies outside what Excel allows.');
       const cells: Cell[] = [];
       let col = 0;
       for (const cell of row.children.filter((c) => c.name === 'Cell')) {
         if (cell.attrs.Index) col = Number(cell.attrs.Index) - 1;
+        if (!Number.isInteger(col) || col < 0 || col >= EXCEL_MAX_COLUMNS) throw new Error('A cell of the XML spreadsheet lies outside what Excel allows.');
         const data = cell.children.find((c) => c.name === 'Data');
-        while (cells.length < col) cells.push(null);
-        cells[col] = data ? typedValue(data.attrs.Type, deepText(data)) : null;
-        col += Number(cell.attrs.MergeAcross ?? 0) + 1;
+        const value = data ? typedValue(data.attrs.Type, deepText(data)) : null;
+        if (value != null && value !== '') {
+          if (col >= MAX_COLUMNS) columnsCut = true;
+          else {
+            while (cells.length < col) cells.push(null);
+            cells[col] = value;
+          }
+        }
+        col += Math.max(0, Math.min(Number(cell.attrs.MergeAcross ?? 0) || 0, EXCEL_MAX_COLUMNS)) + 1;
       }
-      while (grid.length < rowIndex) grid.push([]);
-      grid[rowIndex] = cells;
-      width = Math.max(width, cells.length);
+      if (cells.length > 0) kept.push({ index: rowIndex, cells });
       rowIndex++;
     }
-    const rows = grid
-      .map((r) => { const row = r.slice(); while (row.length < width) row.push(null); return row; })
-      .filter((r) => r.some((c) => c !== null && c !== ''));
-    sheets.push({ name: ws.attrs.Name ?? `Sheet ${sheets.length + 1}`, rows });
+    kept.sort((a, b) => a.index - b.index);
+    const sheet: XmlSheet = { name: ws.attrs.Name ?? `Sheet ${sheets.length + 1}`, rows: squareUp(kept.map((k) => k.cells as (string | number | boolean | null)[])) };
+    if (columnsCut) sheet.columnsCut = true;
+    sheets.push(sheet);
   }
   return sheets;
 }
 
-function typedValue(type: string | undefined, text: string): Cell {
+function typedValue(type: string | undefined, raw: string): Cell {
+  const text = raw.length > MAX_CELL_LENGTH ? raw.slice(0, MAX_CELL_LENGTH) : raw;
   if (text === '') return null;
   switch (type) {
     case 'Number': { const n = Number(text); return Number.isFinite(n) ? n : text; }
@@ -187,24 +210,29 @@ function genericRecords(root: XmlNode): XmlSheet[] {
   const positional = records.every((r) => r.children.length > 0 && Object.keys(r.attrs).length === 0
     && r.children.every((c) => c.name === r.children[0].name));
   if (positional && records.some((r) => r.children.length > 1)) {
-    const rows = records.map((r) => r.children.map((c) => deepText(c) as Cell));
-    const width = Math.max(...rows.map((r) => r.length));
-    return [{ name, rows: rows.map((r) => { while (r.length < width) r.push(null); return r; }) }];
+    const columnsCut = records.some((r) => r.children.length > MAX_COLUMNS);
+    const rows: Cell[][] = records.map((r) => r.children.slice(0, MAX_COLUMNS).map((c) => cellText(deepText(c))));
+    const width = rows.reduce((w, r) => Math.max(w, r.length), 0);
+    const sheet: XmlSheet = { name, rows: rows.map((r) => { while (r.length < width) r.push(null); return r; }) };
+    if (columnsCut) sheet.columnsCut = true;
+    return [sheet];
   }
 
   const headers: string[] = [];
   const seen = new Set<string>();
   const fieldRows: Record<string, string>[] = [];
   for (const r of records) {
-    const fields: Record<string, string> = {};
+    const fields: Record<string, string> = Object.create(null);   // a field may be called "constructor"
     for (const [k, v] of Object.entries(r.attrs)) fields[k] = v;
     for (const c of r.children) fields[c.name] = fields[c.name] != null ? `${fields[c.name]}, ${deepText(c)}` : deepText(c);
     if (Object.keys(fields).length === 0 && r.text.trim()) fields[name] = r.text.trim();
     for (const k of Object.keys(fields)) if (!seen.has(k)) { seen.add(k); headers.push(k); }
+    // Every record adds a column per new field name: records that all name different fields are not a table.
+    if (headers.length > MAX_COLUMNS) throw new Error(`The XML records name more than ${MAX_COLUMNS.toLocaleString('en-US')} different fields — that is not a table the import can read.`);
     fieldRows.push(fields);
   }
   if (headers.length === 0) throw new Error('The XML records have no fields — expected attributes or child elements on each record.');
-  const rows: Cell[][] = [headers, ...fieldRows.map((f) => headers.map((h) => (f[h] === undefined || f[h] === '' ? null : f[h])))];
+  const rows: Cell[][] = [headers, ...fieldRows.map((f) => headers.map((h) => (f[h] === undefined || f[h] === '' ? null : cellText(f[h]))))];
   return [{ name, rows }];
 }
 

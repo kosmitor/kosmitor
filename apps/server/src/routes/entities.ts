@@ -35,9 +35,9 @@ const RESOURCES: Resource[] = [
     fields: ['name', 'legalName', 'email', 'secondaryEmail', 'type', 'relation', 'startDate', 'terminationDate', 'terminationReason',
              'taxCountry', 'taxState', 'taxForm', 'accreditedInvestor', 'entityGroupId', 'title', 'department', 'employeeId', 'employmentType',
              'address', 'city', 'region', 'postalCode', 'country', 'phone', 'jurisdiction', 'signatoryName', 'signatoryTitle', 'signatoryEmail',
-             'tags', 'notes'],
+             'tags', 'notes', 'boardSeat', 'boardSeatStart', 'boardSeatEnd', 'boardDesignatedBy'],
     required: ['name'], order: 'name',
-    clean: (b) => {
+    clean: (b, ctx) => {
       const oneOf = (key: string, allowed: string[], label: string) => {
         if (b[key] === undefined) return;
         if (b[key] === null || b[key] === '') { b[key] = null; return; }
@@ -69,6 +69,19 @@ const RESOURCES: Resource[] = [
       if (b.startDate && b.terminationDate && String(b.terminationDate) < String(b.startDate)) throw badRequest('The termination date cannot be before the start date.');
       if (!b.terminationDate && b.terminationReason !== undefined) b.terminationReason = null;
       if (b.tags) b.tags = String(b.tags).split(',').map((t) => t.trim()).filter(Boolean).join(', ');
+      // A board seat stands apart from the relationship. A new Board member starts with one unless
+      // told otherwise, as in the form; without a seat nothing about one is kept, so removing it
+      // clears its dates and designator. The designator's company is checked in validateEntity.
+      if (b.boardSeat === undefined && b.relation === 'BOARD_MEMBER') b.boardSeat = 1;
+      if (b.boardSeat === null) b.boardSeat = 0;
+      if (b.boardSeat !== true && b.boardSeat !== 1) Object.assign(b, { boardSeatStart: null, boardSeatEnd: null, boardDesignatedBy: null });
+      else {
+        b.boardSeatStart = b.boardSeatStart ? date(b.boardSeatStart, 'Board seat start') : null;
+        b.boardSeatEnd = b.boardSeatEnd ? date(b.boardSeatEnd, 'Board seat end') : null;
+        if (b.boardSeatStart && b.boardSeatEnd && String(b.boardSeatEnd) < String(b.boardSeatStart)) throw badRequest('A board seat cannot end before it starts.');
+        b.boardDesignatedBy = b.boardDesignatedBy == null ? null : String(b.boardDesignatedBy).trim() || null;
+        if (b.boardDesignatedBy && b.boardDesignatedBy === ctx.params.id) throw badRequest('A director cannot be designated by themselves.');
+      }
       return b;
     },
     guardDelete: async (id, cid) => {

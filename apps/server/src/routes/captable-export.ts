@@ -19,6 +19,7 @@ const RELATION_LABELS: Record<string, string> = {
   FOUNDER: 'Founder', EMPLOYEE: 'Employee', INVESTOR: 'Investor', ADVISOR: 'Advisor', BOARD_MEMBER: 'Board member',
   CONSULTANT: 'Consultant', CONTRACTOR: 'Contractor', ENTITY: 'Entity', FORMER_EMPLOYEE: 'Former employee', OTHER: 'Other',
 };
+const TYPE_LABELS: Record<string, string> = { INDIVIDUAL: 'Individual', ENTITY: 'Entity', FUND: 'Fund', TRUST: 'Trust' };
 
 interface ExportOptions { asOf: string; view: View; includeConvertibles: boolean; includePool: boolean; groupEntities: boolean }
 
@@ -69,35 +70,41 @@ function tableRows(table: CapTable, o: ExportOptions) {
   const pctOf = (r: CapTableRow): number => ({ FULLY_DILUTED: r.fullyDilutedPct, OUTSTANDING: r.outstandingPct, AS_CONVERTED: r.asConvertedPct, VOTING: r.votingPct })[o.view];
   const totalShares = { FULLY_DILUTED: t.fullyDiluted, OUTSTANDING: t.outstanding, AS_CONVERTED: t.asConverted, VOTING: t.votes }[o.view];
 
-  const columns = [
-    { header: 'Holder', align: 'left' as const }, { header: 'Relationship', align: 'left' as const },
-    { header: 'Shares', align: 'right' as const }, { header: 'Options', align: 'right' as const },
+  // The page's columns, all of them whatever the page is showing, with the type beside the
+  // holder and each holder's share of the issued and outstanding shares (I&O %) beside their
+  // shares. Ownership % follows the view's shares it is a share of, ahead of the money.
+  const columns: { header: string; print?: string; align: 'left' | 'right' }[] = [
+    { header: 'Holder', align: 'left' as const }, { header: 'Relationship', align: 'left' as const }, { header: 'Type', align: 'left' as const },
+    { header: 'Shares', align: 'right' as const }, { header: 'I&O %', align: 'right' as const }, { header: 'Options', align: 'right' as const },
     { header: 'RSUs', align: 'right' as const }, { header: 'Warrants', align: 'right' as const },
-    ...(o.includeConvertibles ? [{ header: 'Convertibles (as converted)', align: 'right' as const }] : []),
-    { header: `${VIEW_LABELS[o.view]} shares`, align: 'right' as const }, { header: 'Ownership %', align: 'right' as const },
+    // The printed table is short of room, so there these two take the page's shorter headings.
+    ...(o.includeConvertibles ? [{ header: 'Convertibles (as converted)', print: 'Convertible', align: 'right' as const }] : []),
+    { header: `${VIEW_LABELS[o.view]} shares`, print: VIEW_LABELS[o.view], align: 'right' as const }, { header: 'Ownership %', align: 'right' as const },
     { header: `Invested (${symbol()})`, align: 'right' as const }, { header: `Value (${symbol()})`, align: 'right' as const },
   ];
 
-  type Numeric = { holder: string; relation: string; shares: number; options: number; rsus: number; warrants: number; convertibles: number | null; view: number; pct: number; invested: number | null; value: number | null; kind: 'holder' | 'pool' | 'total' };
+  type Numeric = { holder: string; relation: string; type: string; shares: number; io: number | null; options: number; rsus: number; warrants: number; convertibles: number | null; view: number; pct: number; invested: number | null; value: number | null; kind: 'holder' | 'pool' | 'total' };
   const body: Numeric[] = [...table.rows].sort((a, b) => sharesOf(b) - sharesOf(a)).map((r) => ({
-    holder: r.name, relation: relation(r.relation), shares: r.outstanding, options: r.optionsOutstanding, rsus: r.rsusOutstanding,
+    holder: r.name, relation: relation(r.relation), type: TYPE_LABELS[r.type] ?? r.type, shares: r.outstanding, io: r.outstanding ? r.outstandingPct : null,
+    options: r.optionsOutstanding, rsus: r.rsusOutstanding,
     warrants: r.warrantsOutstanding, convertibles: o.includeConvertibles ? r.convertibleAsConverted : null, view: sharesOf(r), pct: pctOf(r),
     invested: r.investedAmount, value: r.currentValue, kind: 'holder',
   }));
   if (o.includePool && o.view === 'FULLY_DILUTED' && t.poolAvailable > 0) {
-    body.push({ holder: 'Unallocated pool', relation: 'Plan reserve', shares: 0, options: 0, rsus: 0, warrants: 0, convertibles: o.includeConvertibles ? 0 : null,
+    body.push({ holder: 'Unallocated pool', relation: 'Plan reserve', type: '', shares: 0, io: null, options: 0, rsus: 0, warrants: 0, convertibles: o.includeConvertibles ? 0 : null,
       view: t.poolAvailable, pct: t.fullyDiluted ? t.poolAvailable / t.fullyDiluted : 0, invested: null, value: null, kind: 'pool' });
   }
-  body.push({ holder: 'Total', relation: '', shares: t.outstanding, options: t.optionsOutstanding, rsus: t.rsusOutstanding, warrants: t.warrantsOutstanding,
+  body.push({ holder: 'Total', relation: '', type: '', shares: t.outstanding, io: t.outstanding ? 1 : null, options: t.optionsOutstanding, rsus: t.rsusOutstanding, warrants: t.warrantsOutstanding,
     convertibles: o.includeConvertibles ? t.convertibleAsConverted : null, view: totalShares, pct: 1, invested: t.investedAmount, value: t.companyValue, kind: 'total' });
 
   const cells = (r: Numeric, fmt: 'sheet' | 'print'): Cell[] => {
     const amount = (c: number | null): Cell => (c == null ? (fmt === 'sheet' ? null : '') : fmt === 'sheet' ? round(c / 100, 2) : money(c));
     const count = (n: number | null): Cell => (n == null ? (fmt === 'sheet' ? null : '') : fmt === 'sheet' ? n : shares(n));
+    const share = (fraction: number | null): Cell => (fraction == null ? (fmt === 'sheet' ? null : '') : fmt === 'sheet' ? round(fraction * 100, 4) : pct(fraction));
     return [
-      r.holder, r.relation, count(r.shares), count(r.options), count(r.rsus), count(r.warrants),
+      r.holder, r.relation, r.type, count(r.shares), share(r.io), count(r.options), count(r.rsus), count(r.warrants),
       ...(o.includeConvertibles ? [count(r.convertibles)] : []),
-      count(r.view), fmt === 'sheet' ? round(r.pct * 100, 4) : pct(r.pct), amount(r.invested), amount(r.value),
+      count(r.view), share(r.pct), amount(r.invested), amount(r.value),
     ];
   };
   return { columns, body, cells };
@@ -150,6 +157,7 @@ route.get('/api/c/:cid/captable/export.pdf', 'read', async (ctx) => {
   const { o, table, company } = await load(ctx);
   const { columns, body, cells } = tableRows(table, o);
   const t = table.totals;
+  const printed = columns.map(({ header, print, align }) => ({ header: print ?? header, align }));
   const rows: PdfRow[] = body.map((r) => ({ cells: cells(r, 'print').map((c) => String(c ?? '')), bold: r.kind === 'total', muted: r.kind === 'pool' }));
   const notes = [
     `Values use a price of ${moneyFormat(4, false).format(t.valuationPPS / 1e6)} per share${t.valuationPPS ? ' from the company’s valuation record' : ''}; company value ${money(t.companyValue)}, total invested ${money(t.investedAmount)}.`,
@@ -159,7 +167,7 @@ route.get('/api/c/:cid/captable/export.pdf', 'read', async (ctx) => {
   const pdf = tablePdf({
     title: `${company.name} — Cap table`,
     subtitle: `${company.legal_name && company.legal_name !== company.name ? `${company.legal_name} · ` : ''}${scope(o)}`,
-    columns, rows, notes,
+    columns: printed, rows, notes,
     footer: `${config().brand.productName} · generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`,
   });
   await audit(ctx, 'EXPORT', 'reports', 'captable', 'Cap table exported as PDF');
