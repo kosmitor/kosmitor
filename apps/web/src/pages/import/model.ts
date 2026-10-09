@@ -38,7 +38,7 @@ export interface ParsedSheet {
   numberFormat: NumberFormat; numberDecidedBy: 'file' | 'delimiter' | 'default';
   numberEvidence: { text: string; row: number } | null; numberMixed: boolean; notices: Notice[];
 }
-export interface ParsedFile { fileName: string; format: 'xlsx' | 'csv' | 'xml'; sheets: ParsedSheet[] }
+export interface ParsedFile { uploadId: string | null; fileName: string; format: 'xlsx' | 'csv' | 'xml'; sheets: ParsedSheet[] }
 export interface Detection {
   name: string; file: string | null; kind: Kind | null; mapping: Record<string, number | null>;
   constants: Record<string, string>; missing: string[]; ready: boolean; reason: string | null;
@@ -89,6 +89,8 @@ export interface ImportFile {
   original: string;
   size: number;
   lastModified: number;
+  /** The copy the server kept, so the import can say how it ended. */
+  uploadId: string | null;
   numberFormat?: NumberFormat;
   dateOrder?: DateOrder;
 }
@@ -337,6 +339,7 @@ export function sheetBody(t: Tab, file: ImportFile | undefined, edits: Edits) {
 export function requestBody(tabs: Tab[], files: ImportFile[], edits: Edits, settings: Settings, answers: Answers, schema: Schema) {
   const ready = tabs.filter((t) => isReady(t, schema));
   return {
+    uploadIds: files.map((f) => f.uploadId).filter((id): id is string => !!id),
     sheets: ready.map((t) => sheetBody(t, files.find((f) => f.id === t.fileId), edits)),
     options: {
       createMissingStakeholders: settings.createMissingStakeholders,

@@ -10,6 +10,7 @@
  * table, and the exact text is available for inspection at any time.
  */
 import { route, assertFullView, badRequest, notFound, forbidden, HttpError, newId, nowISO, str } from '../http.ts';
+import { track } from '../telemetry.ts';
 import { all, one, insert, run, toCamel } from '../db.ts';
 import { getCompanyData } from '../store.ts';
 import { seal, open, hint } from '../secrets.ts';
@@ -212,6 +213,7 @@ route.post('/api/c/:cid/ai/chats/:id/messages', 'read', async (ctx) => {
   const replyId = newId('msg');
   await insert('ai_messages', { id: askedId, chatId: chat.id, role: 'user', content: question, createdAt: at });
   await insert('ai_messages', { id: replyId, chatId: chat.id, role: 'assistant', content: answer, createdAt: nowISO() });
+  track(ctx.user!.id, 'ai_question', { companyId: ctx.companyId, provider: settings.provider, chars: question.length });
 
   // The first question names the conversation, so the list is readable later.
   const title = earlier.length === 0

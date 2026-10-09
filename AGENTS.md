@@ -15,10 +15,10 @@ Read README.md for the layout and setup. This file only holds rules that the cod
 - **Roles.** Check roles with `isEditor`, `seesWholeCompany` and `seesWholeVault` from `apps/server/src/auth.ts`. To refuse a member who sees only their own holdings, use `assertFullView(ctx, message)` from `apps/server/src/http.ts`. Do not write a new inline role list.
 - **Shared helpers.** Look for an existing helper before you write a new one:
   - server: `esc` (`email.ts`), `longDate` (`certificate-face.ts`), `usd`, `perShare` and `integer` (`templates.ts`);
+  - server, for anything the operator should see: `log`, `reportError` and `track` (`telemetry.ts`). Do not add `console.*` calls on a request path.
   - core: `INSTRUMENT_NAMES` and `formatMoney` (`@kosmitor/core`);
   - web: `fileSize` and the other formatters (`apps/web/src/format.ts`).
 
   `apps/web` does not import `@kosmitor/core`, so the web keeps its own label maps, such as `INSTRUMENT_LABELS`.
 - **Ledger.** Every change to a security's dated state writes a dated `transactions` entry for that security, in the shares of the event's date. PostgreSQL enforces this: the deferred trigger `ledger_entry_required` (`apps/server/src/db.ts`) fails the `COMMIT` of a transaction that inserts, deletes or changes an issued security, or changes a stock split, without its entry. Do not work around the trigger. Write the entry (`recordIssuance` in `routes/workflows.ts` for a certificate an event issues). In a test, insert a security with `insertSecurity` from `test/helpers.ts`. `PATCH` refuses a change that an event route makes, and writes a dated `CORRECTION` entry for a corrected count or term, or for a typo in a holder, class or date (with a `reason`). See `docs/design/dated-ledger.md`.
 - **Cache.** Call `invalidate(companyId)` after any write that the engine reads.
-- **Dependencies.** The server's only runtime dependency is `pg`. Import parsers, PDF and XLSX writers are written by hand. Do not add a package for something the code already does.

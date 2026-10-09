@@ -13,8 +13,8 @@
  * and size before the engine sees them, and an error the import did not expect
  * is a 500 with nothing of it shown.
  */
-import { route, badRequest, notFound, audit, str, HttpError } from '../http.ts';
-import { all, one, toCamelAll } from '../db.ts';
+import { route, badRequest, notFound, audit, newId, nowISO, str, HttpError, type Ctx } from '../http.ts';
+import { all, insert, one, outsideTransaction, run, toCamelAll } from '../db.ts';
 import { invalidate } from '../store.ts';
 import { parseCsvTable, toCsv, decodeText, looksBinary, detectDelimiter } from '../import/csv.ts';
 import { openZip, zipContents, parseWorkbook, squareUp, ZipTooLarge, MAX_COLUMNS, EXCEL_MAX_COLUMNS, EXCEL_MAX_ROWS, MAX_CELL_LENGTH, type ZipFiles } from '../import/xlsx.ts';
@@ -29,6 +29,7 @@ import {
 } from '../import/engine.ts';
 import { xlsx } from '../xlsx-writer.ts';
 import { config, megabytes } from '../config.ts';
+import { track } from '../telemetry.ts';
 
 const isKind = (k: unknown): k is ImportKind => typeof k === 'string' && Object.hasOwn(IMPORT_KINDS, k);
 
@@ -213,19 +214,29 @@ route.post('/api/c/:cid/imports/parse', 'write', async (ctx) => {
   const body = ctx.rawBody;
   const fileName = str(ctx.query.get('name') ?? 'upload', 'File name', { max: 255 });
   if (!body || body.length === 0) throw refuse('empty', 'This file is empty.');
-  const upload = readUpload(body, fileName);
-  const sheets = upload.sheets.filter((s) => s.rows.length > 0);
-  if (sheets.length === 0) throw refuse('empty', 'This file has no rows.');
-  // A table has columns: text with one value per line is a list or prose, not something to import.
-  if (!sheets.some((s) => s.rows.some((r) => r.filter((c) => c != null && String(c).trim() !== '').length >= 2))) {
-    throw refuse('not-a-table', upload.format === 'xlsx'
-      ? 'None of the tabs in this workbook has more than one column. Each tab needs a header row and a column for each field.'
-      : 'This file has only one column, so it can\'t be read as a table. Save it from Excel as .xlsx or .csv, with a column for each field.');
+  const uploadId = await keepUpload(ctx, fileName, body);
+  let upload: ReturnType<typeof readUpload>;
+  let sheets: UploadSheet[];
+  try {
+    upload = readUpload(body, fileName);
+    sheets = upload.sheets.filter((s) => s.rows.length > 0);
+    if (sheets.length === 0) throw refuse('empty', 'This file has no rows.');
+    // A table has columns: text with one value per line is a list or prose, not something to import.
+    if (!sheets.some((s) => s.rows.some((r) => r.filter((c) => c != null && String(c).trim() !== '').length >= 2))) {
+      throw refuse('not-a-table', upload.format === 'xlsx'
+        ? 'None of the tabs in this workbook has more than one column. Each tab needs a header row and a column for each field.'
+        : 'This file has only one column, so it can\'t be read as a table. Save it from Excel as .xlsx or .csv, with a column for each field.');
+    }
+  } catch (err) {
+    await settleUpload(ctx, uploadId, 'PARSE_FAILED', (err as Error).message);
+    track(ctx.user!.id, 'import_failed', { companyId: ctx.companyId, step: 'parse', error: (err as Error).message });
+    throw err;
   }
+  track(ctx.user!.id, 'import_parsed', { companyId: ctx.companyId, format: upload.format, sheets: sheets.length, rows: sheets.reduce((n, s) => n + s.rows.length, 0) });
   const limit = config().limits.importMaxRows;
   const n = (x: number): string => x.toLocaleString(config().locale.locale);
   return {
-    fileName, format: upload.format, encoding: upload.encoding, delimiter: upload.delimiter,
+    uploadId, fileName, format: upload.format, encoding: upload.encoding, delimiter: upload.delimiter,
     sheets: sheets.map((s) => {
       const headerRow = guessHeaderRow(s.rows);
       const rows = s.rows.slice(0, headerRow + 1 + limit);
@@ -249,6 +260,33 @@ route.post('/api/c/:cid/imports/parse', 'write', async (ctx) => {
     }),
   };
 }, { raw: true, unlocked: true, maxBytes: () => megabytes(config().limits.importUploadMb) });
+
+/**
+ * Keeps the file as it was handed over, so an import that fails can be replayed
+ * and the parser fixed. Null when limits.importUploadRetentionDays is 0. Older
+ * files go each time a new one arrives. Written outside the route's transaction:
+ * a failed import rolls that back, and the file is kept for exactly that case.
+ */
+function keepUpload(ctx: Ctx, fileName: string, content: Buffer): Promise<string | null> {
+  const days = config().limits.importUploadRetentionDays;
+  if (days <= 0) return Promise.resolve(null);
+  return outsideTransaction(async () => {
+    // ponytail: the sweep runs on every upload; a scheduled job if uploads ever come by the thousand.
+    await run('DELETE FROM import_uploads WHERE created_at < ?', new Date(Date.now() - days * 86_400_000).toISOString());
+    const id = newId('upl');
+    await insert('import_uploads', { id, companyId: ctx.companyId, userId: ctx.user?.id ?? null, fileName, content, sizeBytes: content.length, createdAt: nowISO() });
+    return id;
+  });
+}
+
+/** Records how an upload ended. Only the company that uploaded it can say. */
+function settleUpload(ctx: Ctx, uploadIds: unknown, outcome: 'PARSE_FAILED' | 'COMMITTED' | 'FAILED', error: string | null, importId: string | null = null): Promise<void> {
+  const ids = (Array.isArray(uploadIds) ? uploadIds : [uploadIds]).filter((id): id is string => typeof id === 'string' && id !== '');
+  if (ids.length === 0) return Promise.resolve();
+  return outsideTransaction(async () => {
+    for (const id of ids) await run('UPDATE import_uploads SET outcome = ?, error = ?, import_id = ? WHERE id = ? AND company_id = ?', outcome, error, importId, id, ctx.companyId);
+  });
+}
 
 /** A header row as sent: an array of cells, no wider than Excel allows. */
 function readHeaders(v: unknown, where = ''): Cell[] {
@@ -412,11 +450,15 @@ route.post('/api/c/:cid/imports/commit', 'write', async (ctx) => {
   try {
     result = await commitImport(ctx.companyId!, req, ctx.user!.name);
   } catch (err) {
+    await settleUpload(ctx, ctx.body.uploadId, 'FAILED', (err as Error).message);
+    track(ctx.user!.id, 'import_failed', { companyId: ctx.companyId, step: 'commit', error: (err as Error).message });
     if (err instanceof RowsNeedFixing) throw badRequest(err.message, { code: 'rows-need-fixing' });
     throw err;
   }
   invalidate(ctx.companyId!);
+  await settleUpload(ctx, ctx.body.uploadId, 'COMMITTED', null, result.importId);
   const i = result.imported;
+  track(ctx.user!.id, 'import_committed', { companyId: ctx.companyId, kinds: req.kind, sheets: 1, ...i, updated: undefined });
   await audit(ctx, 'IMPORT', 'imports', result.importId,
     `Imported ${IMPORT_KINDS[req.kind].label.toLowerCase()}${req.options?.fileName ? ` from ${req.options.fileName}` : ''}: ` +
     [i.stakeholders && `${i.stakeholders} stakeholders`, i.shareClasses && `${i.shareClasses} share classes`,
@@ -508,13 +550,17 @@ route.post('/api/c/:cid/imports/workbook/commit', 'write', async (ctx) => {
   try {
     result = await runWorkbook(ctx.companyId!, sheets, ctx.user!.name, false, extras);
   } catch (err) {
+    await settleUpload(ctx, ctx.body.uploadIds, 'FAILED', (err as Error).message);
+    track(ctx.user!.id, 'import_failed', { companyId: ctx.companyId, step: 'commit', error: (err as Error).message });
     if (err instanceof NotReviewed) throw new HttpError(409, err.message, { code: 'not-reviewed' });
     if (err instanceof StaleReview) throw new HttpError(409, err.message, { code: 'stale-review', counts: err.counts });
     if (err instanceof RowsNeedFixing) throw badRequest(err.message, { code: 'rows-need-fixing' });
     throw err;
   }
   invalidate(ctx.companyId!);
+  await settleUpload(ctx, ctx.body.uploadIds, 'COMMITTED', null, result.importIds[0] ?? null);
   const i = result.imported;
+  track(ctx.user!.id, 'import_committed', { companyId: ctx.companyId, kinds: [...new Set(sheets.map((s) => s.kind))].join(','), sheets: sheets.length, files: files.length, ...i, updated: undefined });
   const from = files.length ? ` from ${files.length > 2 ? `${files.slice(0, -1).join(', ')} and ${files.at(-1)}` : files.join(' and ')}` : '';
   await audit(ctx, 'IMPORT', 'imports', result.importIds[0] ?? null,
     `Imported ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}${from}: ` +

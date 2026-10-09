@@ -212,6 +212,8 @@ const ENV: { name: string; path: string; parse: (v: string) => Json; problem?: (
   }, problem: (v) => (list(v).some((a) => a.split('@').length > 2)
     ? 'an entry holds more than one @: separate several addresses with commas, not spaces or semicolons' : null) },
   { name: 'VALUATION_APPROVAL_EMAIL', path: 'valuationDesk.approvalEmail', parse: (v) => v.toLowerCase() },
+  { name: 'POSTHOG_KEY', path: 'analytics.posthog.key', parse: (v) => v },
+  { name: 'POSTHOG_HOST', path: 'analytics.posthog.host', parse: (v) => v.replace(/\/+$/, '') },
   { name: 'BACKUP_CONTAINER', path: 'backup.container', parse: (v) => v },
   { name: 'BACKUP_PREFIX', path: 'backup.prefix', parse: (v) => v },
   { name: 'DRILL_DATABASE', path: 'backup.drillDatabase', parse: (v) => v },
@@ -380,6 +382,7 @@ export function publicConfig(c: KosmitorConfig = config()): PublicConfig {
     locale: c.locale,
     legal: { disclaimer: c.legal.disclaimer, taxEstimateNote: c.legal.taxEstimateNote, esignConsent: c.legal.esignConsent, esignAgreement: c.legal.esignAgreement },
     ai: { enabled: c.ai.enabled, examplePrompts: c.ai.examplePrompts },
+    analytics: { posthog: c.analytics.posthog.key ? c.analytics.posthog : null },
   };
 }
 

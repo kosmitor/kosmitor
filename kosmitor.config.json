@@ -325,6 +325,7 @@
     "jsonBodyMb": 8,
     "uploadMb": 25,
     "importUploadMb": 20,
+    "importUploadRetentionDays": 90,
     "importMaxRows": 5000,
     "importMaxSheets": 50,
     "importJsonMb": 48,
@@ -648,6 +649,9 @@
       "If a $2,000,000 SAFE converts at the cap, how much does each founder give up?",
       "Which equity awards are fully vested today?"
     ]
+  },
+  "analytics": {
+    "posthog": { "key": "", "host": "https://eu.i.posthog.com" }
   },
   "backup": {
     "container": "backups",

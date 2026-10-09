@@ -30,3 +30,22 @@ npm run db:migrate-sqlite      # one-shot copy of a database from the earlier SQ
 
 Administrators can see the database, its size and per-table counts under
 Settings → Data & persistence.
+
+
+## Import uploads
+
+Every spreadsheet handed to the import wizard is kept as it was uploaded, in
+`import_uploads`, with how it ended: parsed, parse failed, committed or failed,
+and the error when there was one. That is what lets a failed import be replayed
+and the parser fixed. Files older than `limits.importUploadRetentionDays`
+(90 by default) are removed when the next one arrives; 0 keeps none.
+
+## Logs and analytics
+
+The server prints one JSON line per API call (method, path, status,
+milliseconds, user, company, and the message a refused request answered with)
+and every server error with its stack. Set `analytics.posthog.key` (or
+`POSTHOG_KEY`) and the same goes to PostHog: the lines to Logs, errors to Error
+tracking, and the page loads PostHog's browser SDK for pageviews, clicks and
+uncaught errors, with sign-ups, companies, imports and assistant questions as
+events. `apps/server/src/telemetry.ts` is the whole of it.

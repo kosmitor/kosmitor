@@ -42,6 +42,8 @@ Each of these sets one entry and wins over both files. An empty variable counts 
 | `GOOGLE_ALLOWED_DOMAINS` | `auth.google.allowedDomains` |
 | `VALUATION_DESK_EMAIL` | `valuationDesk.email` |
 | `VALUATION_APPROVAL_EMAIL` | `valuationDesk.approvalEmail` |
+| `POSTHOG_KEY` | `analytics.posthog.key` |
+| `POSTHOG_HOST` | `analytics.posthog.host` |
 | `BACKUP_CONTAINER` | `backup.container` |
 | `BACKUP_PREFIX` | `backup.prefix` |
 | `DRILL_DATABASE` | `backup.drillDatabase` |
@@ -62,7 +64,7 @@ Secrets and wiring stay in the environment and never go in a param file:
 
 ## Settings
 
-[brand](#brand) · [app](#app) · [server](#server) · [database](#database) · [mail](#mail) · [auth](#auth) · [demo](#demo) · [valuationDesk](#valuationdesk) · [limits](#limits) · [compliance](#compliance) · [alerts](#alerts) · [company](#company) · [equity](#equity) · [modeling](#modeling) · [tax](#tax) · [stockComp](#stockcomp) · [locale](#locale) · [legal](#legal) · [ai](#ai) · [backup](#backup)
+[brand](#brand) · [app](#app) · [server](#server) · [database](#database) · [mail](#mail) · [auth](#auth) · [demo](#demo) · [valuationDesk](#valuationdesk) · [limits](#limits) · [compliance](#compliance) · [alerts](#alerts) · [company](#company) · [equity](#equity) · [modeling](#modeling) · [tax](#tax) · [stockComp](#stockcomp) · [locale](#locale) · [legal](#legal) · [ai](#ai) · [analytics](#analytics) · [backup](#backup)
 
 ### brand
 
@@ -248,6 +250,7 @@ Sizes and page lengths.
 | `limits.jsonBodyMb` | `8` | Largest request body the API reads, in MB. From 1 to 100. |
 | `limits.uploadMb` | `25` | Largest document upload, in MB. Files are stored in PostgreSQL. From 1 to 500. |
 | `limits.importUploadMb` | `20` | Largest spreadsheet import, in MB. From 1 to 500. |
+| `limits.importUploadRetentionDays` | `90` | Days a spreadsheet handed to the import wizard is kept (apps/server/src/routes/imports.ts), so a failed import can be replayed and the parser fixed. 0 keeps none. At least 0. |
 | `limits.importMaxRows` | `5000` | Rows read from one import sheet. At least 1. |
 | `limits.importMaxSheets` | `50` | Sheets one import takes, across all its files. At least 1. |
 | `limits.importJsonMb` | `48` | Largest import preview or commit request, in MB: it carries every row of every file being imported. From 1 to 500. |
@@ -453,6 +456,16 @@ The assistant: people bring their own API key, and each question sends a summary
 | `ai.snapshot.maxValuations` | `10` | Valuations. At least 0. |
 | `ai.snapshot.maxComplianceFindings` | `25` | Compliance findings. At least 0. |
 | `ai.examplePrompts` | 4 entries, see `kosmitor.config.json` | Questions offered in an empty conversation. |
+
+### analytics
+
+Product analytics, error tracking and logs in PostHog (apps/server/src/telemetry.ts). Off until a key is set. With or without one, the server prints one JSON line per request and error to its log.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `analytics.posthog` |  | The PostHog project to send to. |
+| `analytics.posthog.key` | `""` | Project token (starts with phc_). Empty turns PostHog off. Environment variable POSTHOG_KEY wins over it. |
+| `analytics.posthog.host` | `"https://eu.i.posthog.com"` | Ingestion host: https://eu.i.posthog.com, https://us.i.posthog.com or a self-hosted instance. Environment variable POSTHOG_HOST wins over it. |
 
 ### backup
 

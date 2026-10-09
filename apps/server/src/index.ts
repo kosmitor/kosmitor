@@ -72,6 +72,12 @@ const server = createServer((req, res) => {
   void handle(req, res);
 });
 
+// Stopping the container: let what is queued for PostHog go out first.
+const { shutdown } = await import('./telemetry.ts');
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => { server.close(); void shutdown().finally(() => process.exit(0)); });
+}
+
 const { port } = settings.server;
 server.listen(port, () => {
   console.log(`API listening on http://localhost:${port}`);

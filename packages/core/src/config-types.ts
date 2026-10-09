@@ -119,6 +119,7 @@ export interface KosmitorConfig {
     jsonBodyMb: number;
     uploadMb: number;
     importUploadMb: number;
+    importUploadRetentionDays: number;
     importMaxRows: number;
     importMaxSheets: number;
     importJsonMb: number;
@@ -213,6 +214,7 @@ export interface KosmitorConfig {
     snapshot: { maxHolders: number; maxConvertibles: number; maxValuations: number; maxComplianceFindings: number };
     examplePrompts: string[];
   };
+  analytics: { posthog: { key: string; host: string } };
   backup: { container: string; prefix: string; drillDatabase: string; maxRowDrift: number };
 }
 
@@ -240,4 +242,6 @@ export interface PublicConfig {
   locale: KosmitorConfig['locale'];
   legal: Pick<KosmitorConfig['legal'], 'disclaimer' | 'taxEstimateNote' | 'esignConsent' | 'esignAgreement'>;
   ai: Pick<KosmitorConfig['ai'], 'enabled' | 'examplePrompts'>;
+  /** PostHog in the browser; null until analytics.posthog.key is set. */
+  analytics: { posthog: { key: string; host: string } | null };
 }

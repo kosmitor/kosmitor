@@ -229,10 +229,10 @@ export default function ImportData() {
     if (parsed.length === 0) { nothing(); return; }
 
     const taken = new Set(known.map((f) => f.name));
-    const newFiles: ImportFile[] = parsed.map(({ file }) => {
+    const newFiles: ImportFile[] = parsed.map(({ file, data }) => {
       const name = uniqueName(file.name, taken);
       taken.add(name);
-      return { id: `f${Date.now().toString(36)}-${++fileSeq}`, name, original: file.name, size: file.size, lastModified: file.lastModified };
+      return { id: `f${Date.now().toString(36)}-${++fileSeq}`, name, original: file.name, size: file.size, lastModified: file.lastModified, uploadId: data.uploadId ?? null };
     });
     // Each tab under the name the check reads it by: trimmed, within its length, unique in its file.
     const names = parsed.map(({ data }) => sheetNames(data.sheets.map((s) => s.name)));

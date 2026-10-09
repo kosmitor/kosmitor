@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api.ts';
 import { config } from './config.ts';
+import { forget, identify } from './analytics.ts';
 
 export interface User {
   id: string; email: string; name: string; avatarColor: string | null;
@@ -71,6 +72,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       const me = await api<{ user: User; companies: CompanyRef[] }>('/auth/me');
       setUser(me.user);
+      identify(me.user);
       setCompanies(me.companies);
       setCompanyId((current) => {
         // The demo account everyone shares always opens onto the sample company, whatever
@@ -114,6 +116,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     try { await api('/auth/logout', { body: {} }); } catch { /* the local session is cleared regardless */ }
     localStorage.removeItem(LAST_COMPANY);
+    forget();
     setUser(null);
     setCompanies([]);
     setCompanyId(null);

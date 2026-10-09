@@ -2,6 +2,7 @@ import { route, newId, nowISO, audit, badRequest, notFound, forbidden, unauthori
          setSessionCookie, clearSessionCookie, str, personName, type Ctx } from '../http.ts';
 import { all, one, run, insert, update, toCamel, toCamelAll, afterCommit, transaction, inTransaction } from '../db.ts';
 import { deleteCompany } from '../company-admin.ts';
+import { track } from '../telemetry.ts';
 import {
   createUser, findUserByEmail, upsertGoogleAccount, verifyPassword, createSession, destroySession, publicUser,
   issuePasswordReset, readPasswordReset, consumePasswordReset, markPasswordResetHandedOut, setPassword, generateTemporaryPassword,
@@ -49,6 +50,7 @@ route.post('/api/auth/register', 'public', async (ctx) => {
 
   const user = await createUser(email, name, password);
   ctx.user = user;
+  track(user.id, 'signed_up', { via: 'password', $set: { email: user.email, name: user.name } });
   if (verifyingEmail()) {
     // The address is shown to be the person's before the account can be used: the
     // welcome carries a link to open, and signing in waits for it.
@@ -596,6 +598,7 @@ route.post('/api/companies', 'user', async (ctx) => {
   if (isDemoAccount(ctx.user!.email)) throw forbidden('The demo account is for exploring the sample company. Create your own account to set up a company.');
   const name = str(ctx.body.name, 'Company name', { max: 160 });
   const id = newId('co');
+  track(ctx.user!.id, 'company_created', { companyId: id });
   const defaults = config().company;
   const portal = defaults.portal;
   await insert('companies', {

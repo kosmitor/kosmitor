@@ -6,6 +6,7 @@ import { isEditor, seesWholeCompany, userForToken, membershipFor, type AuthUser,
 import { insert, one, transaction } from './db.ts';
 import { invalidate } from './store.ts';
 import { config, megabytes } from './config.ts';
+import { log, reportError } from './telemetry.ts';
 
 export interface Ctx {
   req: IncomingMessage;
@@ -81,7 +82,9 @@ function add(method: Method, path: string, access: Route['access'], handler: Han
       return await transaction(async () => {
         // Serialize company mutations before reading balances. This prevents two
         // concurrent exercises, transfers or grants from spending the same shares.
-        if (ctx.companyId) await one('SELECT id FROM companies WHERE id = ? FOR UPDATE', ctx.companyId);
+        // NO KEY, so a row that only refers to the company (an import upload kept
+        // outside this transaction) can still be written meanwhile.
+        if (ctx.companyId) await one('SELECT id FROM companies WHERE id = ? FOR NO KEY UPDATE', ctx.companyId);
         return handler(ctx);
       });
     } finally {
@@ -229,6 +232,10 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
   }
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
 
+  const started = performance.now();
+  let ctx: Ctx | undefined;
+  let failure: string | null = null;   // the message a 4xx answered with: where people get stuck
+  let reported = false;
   try {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const found = match(req.method ?? 'GET', url.pathname);
@@ -244,7 +251,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
   const token = cookie(req, 'kosmitor_session') ?? bearer;
   const user = await userForToken(token);
 
-  const ctx: Ctx = {
+  ctx = {
     req, res, url, params: found.params, query: url.searchParams,
     body: {}, rawBody: null, user, membership: null, companyId: found.params.cid ?? null, ip,
   };
@@ -317,12 +324,27 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
       // Given up on partway through its body (too large): the rest is not read, so the connection cannot carry
       // another request. A body never started on (not signed in, not allowed) is drained by Node as usual.
       if (!req.complete && req.readableDidRead && !res.headersSent) res.setHeader('Connection', 'close');
+      failure = err.message;
       json(res, err.status, { error: err.message, detail: err.detail });
     } else {
-      console.error('[api]', (err as Error).stack ?? err);
       json(res, 500, { error: 'Something went wrong on our side.' });
+      reportError(err, requestFields(req, res, started, ctx), ctx?.user?.id);
+      reported = true;
+    }
+  } finally {
+    // One line per API call. Probes are left out: they would be most of the log.
+    const path = (req.url ?? '/').split('?')[0];
+    if (!reported && path.startsWith('/api/') && !/^\/api\/(health|ready)$/.test(path)) {
+      log(res.statusCode >= 400 ? 'warn' : 'info', `${req.method} ${path}`, { ...requestFields(req, res, started, ctx), error: failure });
     }
   }
+}
+
+function requestFields(req: IncomingMessage, res: ServerResponse, started: number, ctx: Ctx | undefined): Record<string, unknown> {
+  return {
+    method: req.method, path: (req.url ?? '/').split('?')[0], status: res.statusCode, ms: Math.round(performance.now() - started),
+    userId: ctx?.user?.id ?? null, companyId: ctx?.companyId ?? null, ip: ctx?.ip ?? null,
+  };
 }
 
 export function json(res: ServerResponse, status: number, payload: unknown): void {

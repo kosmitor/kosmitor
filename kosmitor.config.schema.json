@@ -769,6 +769,11 @@
           "minimum": 1,
           "maximum": 500
         },
+        "importUploadRetentionDays": {
+          "description": "Days a spreadsheet handed to the import wizard is kept (apps/server/src/routes/imports.ts), so a failed import can be replayed and the parser fixed. 0 keeps none.",
+          "type": "integer",
+          "minimum": 0
+        },
         "importMaxRows": {
           "description": "Rows read from one import sheet.",
           "type": "integer",
@@ -1662,6 +1667,29 @@
           "items": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      }
+    },
+    "analytics": {
+      "description": "Product analytics, error tracking and logs in PostHog (apps/server/src/telemetry.ts). Off until a key is set. With or without one, the server prints one JSON line per request and error to its log.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "posthog": {
+          "description": "The PostHog project to send to.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "description": "Project token (starts with phc_). Empty turns PostHog off. Environment variable POSTHOG_KEY wins over it.",
+              "type": "string"
+            },
+            "host": {
+              "description": "Ingestion host: https://eu.i.posthog.com, https://us.i.posthog.com or a self-hosted instance. Environment variable POSTHOG_HOST wins over it.",
+              "type": "string",
+              "pattern": "^https?://"
+            }
           }
         }
       }

@@ -164,6 +164,12 @@ export function afterCommit(fn: () => Promise<unknown>): void {
  * Runs `fn` inside one transaction on a dedicated connection. Nested calls
  * use savepoints so a failed or preview-only nested operation cannot leak writes.
  */
+/**
+ * Runs fn on the pool rather than the open transaction, so what it writes
+ * stays when the transaction rolls back: a record of the attempt itself.
+ */
+export const outsideTransaction = <T>(fn: () => Promise<T>): Promise<T> => activeTransaction.exit(fn);
+
 export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
   const active = activeTransaction.getStore();
   if (active) {
@@ -1077,6 +1083,22 @@ CREATE TABLE IF NOT EXISTS imports (
   created_by TEXT,
   created_at TEXT NOT NULL
 );
+-- The spreadsheet as it was handed to the import wizard, kept for
+-- limits.importUploadRetentionDays so a failed import can be replayed.
+CREATE TABLE IF NOT EXISTS import_uploads (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  user_id TEXT,
+  file_name TEXT NOT NULL,
+  content BYTEA NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  -- PARSED, PARSE_FAILED, COMMITTED or FAILED
+  outcome TEXT NOT NULL DEFAULT 'PARSED',
+  error TEXT,
+  import_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS import_uploads_created ON import_uploads(created_at);
 
 -- --- Assistant ------------------------------------------------------------
 -- The API key belongs to the person, not the company: it is their account and
