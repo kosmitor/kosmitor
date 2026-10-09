@@ -141,12 +141,13 @@ test('signing up sends one welcome email to the new address, with the first step
 });
 
 test('with the valuation team on, the first steps include requesting a 409A', async () => {
-  configure({ valuationDesk: { enabled: true, email: 'desk@example.com' } });
+  configure({ valuationDesk: { enabled: true, email: 'desk@example.com', approvalEmail: 'approvals@example.com' } });
   try {
     assert.equal((await register('ilse.brandt@example.com', 'Ilse Brandt')).status, 200);
     await settled();
     const [welcome] = welcomesTo('ilse.brandt@example.com');
     assert.ok(welcome.text.includes(`4. Request a 409A: ${config().app.url}/compliance/409a`), welcome.text);
+    assert.doesNotMatch(welcome.text, /approvals@example\.com/, 'the internal review inbox is not shown to new users');
   } finally {
     resetConfig();
   }

@@ -91,6 +91,8 @@ export interface KosmitorConfig {
     name: string | null;
     /** One address, or a list with one per evaluator; each gets an email of its own. */
     email: string | string[] | null;
+    /** Internal inbox for mandatory approval before evaluator delivery. Empty only while the desk is disabled. */
+    approvalEmail: string;
     linkOpenDays: number;
     linkClosedDays: number;
     requestsPerCompanyPerDay: number;

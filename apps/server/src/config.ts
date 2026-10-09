@@ -123,6 +123,9 @@ function checkTogether(c: KosmitorConfig): string[] {
   if (c.limits.reportRows > c.limits.reportMaxRows) errors.push('limits.reportRows cannot be more than limits.reportMaxRows');
   if (c.limits.reportPreviewRows > c.limits.reportMaxRows) errors.push('limits.reportPreviewRows cannot be more than limits.reportMaxRows');
   if (!c.valuationDesk.intake.plans.some((p) => p.value === 'NEITHER')) errors.push('valuationDesk.intake.plans must keep the NEITHER answer');
+  if (c.valuationDesk.enabled && !c.valuationDesk.approvalEmail) {
+    errors.push('valuationDesk.approvalEmail must be configured when valuationDesk.enabled is true');
+  }
   // noticesPerHour counts emails, one per address, so a list longer than it could never be sent a notice.
   const desk = c.valuationDesk.email;
   const evaluators = new Set((desk == null ? [] : Array.isArray(desk) ? desk : [desk]).map((a) => a.trim().toLowerCase())).size;
@@ -208,6 +211,7 @@ const ENV: { name: string; path: string; parse: (v: string) => Json; problem?: (
     return addresses.length === 1 ? addresses[0] : addresses;
   }, problem: (v) => (list(v).some((a) => a.split('@').length > 2)
     ? 'an entry holds more than one @: separate several addresses with commas, not spaces or semicolons' : null) },
+  { name: 'VALUATION_APPROVAL_EMAIL', path: 'valuationDesk.approvalEmail', parse: (v) => v.toLowerCase() },
   { name: 'BACKUP_CONTAINER', path: 'backup.container', parse: (v) => v },
   { name: 'BACKUP_PREFIX', path: 'backup.prefix', parse: (v) => v },
   { name: 'DRILL_DATABASE', path: 'backup.drillDatabase', parse: (v) => v },

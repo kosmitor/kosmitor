@@ -64,9 +64,9 @@ export interface ValuationRefresh {
 
 export interface RequestEvent {
   id: string;
-  kind: 'IN_PROGRESS' | 'DELIVERED' | 'CANCELLED' | 'COMPLETED' | 'MESSAGE' | 'CONTACT_CHANGED';
+  kind: 'APPROVED' | 'IN_PROGRESS' | 'DELIVERED' | 'CANCELLED' | 'COMPLETED' | 'MESSAGE' | 'CONTACT_CHANGED';
   message: string | null;
-  author: 'company' | 'desk';
+  author: 'company' | 'desk' | 'approval';
   authorName: string;
   createdAt: string;
 }
@@ -104,6 +104,9 @@ export interface ValuationRequest {
   contactPhone: string | null;
   recapSentAt: string | null;
   deskNotifiedAt: string | null;
+  approvalRequired: boolean;
+  approvedAt: string | null;
+  approvalNotifiedAt: string | null;
   /** Set by the team when it delivers the report. */
   appraiser: string | null;
   reportDate: string | null;
@@ -116,6 +119,16 @@ export interface ValuationRequest {
   completedAt: string | null;
   targetDate: string | null;
   events: RequestEvent[];
+}
+
+export interface RequestSendOutcome {
+  recap: 'sent' | 'failed' | 'not needed';
+  recapTo: string | null;
+  recapError: string | null;
+  desk: 'sent' | 'partial' | 'failed' | 'not needed';
+  deskError: string | null;
+  approval: 'sent' | 'failed' | 'not needed';
+  approvalError: string | null;
 }
 
 /** Keep in step with the server's OPEN_STATUSES. */
@@ -168,18 +181,22 @@ export function useDataWorkbook() {
 
 interface Step { label: string; done: boolean; when: string | null; note?: string }
 
-/** The four steps a request goes through, and how far this one has got. */
-export function stepsOf(r: Pick<ValuationRequest, 'status' | 'createdAt' | 'events' | 'deskNotifiedAt' | 'closedAt'>, audience: 'company' | 'desk'): Step[] {
+/** Older requests keep their original steps; new requests require internal approval first. */
+export function stepsOf(r: Pick<ValuationRequest, 'status' | 'createdAt' | 'events' | 'deskNotifiedAt' | 'closedAt'> & Partial<Pick<ValuationRequest, 'approvalRequired' | 'approvedAt' | 'approvalNotifiedAt'>>, audience: 'company' | 'desk'): Step[] {
   const first = (kind: RequestEvent['kind']) => r.events.find((e) => e.kind === kind)?.createdAt ?? null;
   const last = (kind: RequestEvent['kind']) => [...r.events].reverse().find((e) => e.kind === kind)?.createdAt ?? null;
   const started = r.status === 'IN_PROGRESS' || r.status === 'DELIVERED' || (r.status === 'COMPLETED' && !!first('IN_PROGRESS'));
   const delivered = r.status === 'DELIVERED' || (r.status === 'COMPLETED' && !!first('DELIVERED'));
   return [
     {
-      label: 'Sent', done: true, when: r.createdAt,
-      note: audience === 'company' && !r.deskNotifiedAt && r.status === 'REQUESTED' && !r.events.some((e) => e.author === 'desk')
+      label: r.approvalRequired ? 'Submitted' : 'Sent', done: true, when: r.createdAt,
+      note: !r.approvalRequired && audience === 'company' && !r.deskNotifiedAt && r.status === 'REQUESTED' && !r.events.some((e) => e.author === 'desk')
         ? 'Not yet with the team' : undefined,
     },
+    ...(r.approvalRequired ? [{
+      label: r.approvedAt ? 'Approved' : 'Awaiting approval', done: !!r.approvedAt, when: r.approvedAt ?? null,
+      note: audience === 'company' && !r.approvedAt && !r.approvalNotifiedAt ? 'Approval email not sent' : undefined,
+    }] : []),
     { label: 'In progress', done: started, when: first('IN_PROGRESS') },
     { label: 'Report delivered', done: delivered, when: delivered ? last('DELIVERED') : null },
     { label: audience === 'company' ? 'Recorded' : 'Recorded by the company', done: r.status === 'COMPLETED', when: r.status === 'COMPLETED' ? r.closedAt : null },
@@ -191,7 +208,7 @@ export function RequestTracker({ steps, cancelled }: { steps: Step[]; cancelled?
   // if it skipped a step on the way (recorded before the team marked it delivered).
   const current = cancelled || steps[steps.length - 1]?.done ? -1 : steps.findIndex((s) => !s.done);
   return (
-    <ol className="grid gap-3 sm:grid-cols-4" aria-label="Where the request is">
+    <ol className={cx('grid gap-3', steps.length === 5 ? 'sm:grid-cols-5' : 'sm:grid-cols-4')} aria-label="Where the request is">
       {steps.map((s, i) => (
         <li key={s.label} aria-current={i === current ? 'step' : undefined} className="flex items-start gap-2.5">
           <span className={cx('mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold',
@@ -213,6 +230,7 @@ export function RequestTracker({ steps, cancelled }: { steps: Step[]; cancelled?
 
 const EVENT_LABELS = (e: RequestEvent, previous: RequestEvent[]): string => {
   switch (e.kind) {
+    case 'APPROVED': return 'Approved for evaluation';
     case 'IN_PROGRESS': return previous.some((p) => p.kind === 'DELIVERED') ? 'Back in progress' : 'Started';
     case 'DELIVERED': return 'Report delivered';
     case 'MESSAGE': return 'Note';
@@ -229,7 +247,7 @@ export function RequestHistory({ request }: { request: Pick<ValuationRequest, 'c
     <ol className="space-y-3 border-l border-ink-200 pl-4">
       <li className="relative">
         <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-ink-300" aria-hidden />
-        <p className="text-[13px] text-ink-900"><span className="font-medium">Sent</span> by {request.requestedBy}</p>
+        <p className="text-[13px] text-ink-900"><span className="font-medium">Submitted</span> by {request.requestedBy}</p>
         <p className="text-[11px] text-ink-500">{dateTime(request.createdAt)}</p>
       </li>
       {request.events.map((e, i) => (
@@ -252,7 +270,7 @@ export function RequestHistory({ request }: { request: Pick<ValuationRequest, 'c
 const KEPT = 'Your answers are kept while the app is open, even if you go to another page.';
 
 /** What the form is and what happens after it, said before the first question so nobody starts it with five minutes to spare. */
-const WHAT_HAPPENS = `The appraiser’s information request. It takes about ten minutes with the documents to hand; the ${DESK} takes it from there, and you follow each step here${STATUS_EMAILS ? ' and by email' : ''}.`;
+const WHAT_HAPPENS = `The appraiser’s information request. It takes about ten minutes with the documents to hand. Our team reviews and approves it before sending it to the ${DESK}. Follow each step here${STATUS_EMAILS ? ' and by email' : ''}.`;
 
 /** The form in progress: what was typed, how far it has got, and which steps Next or Send has checked. */
 interface Draft {
@@ -480,12 +498,18 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
 
   /** Sends what has not gone yet, and says exactly what went: nothing more, and to whom it really went. */
   const send = async (requestId: string, again = false) => {
-    type Outcome = 'sent' | 'failed' | 'not needed';
-    // The team's list can hold several addresses, and the notice can reach some of them only.
-    type DeskOutcome = Outcome | 'partial';
-    const res = await api<{ recap: Outcome; recapTo: string | null; recapError: string | null; desk: DeskOutcome; deskError: string | null }>(
+    const res = await api<RequestSendOutcome>(
       `/c/${companyId}/valuation-requests/${requestId}/send`, { body: again ? { again: true } : {} });
     const recapTo = res.recapTo && res.recapTo !== user?.name ? res.recapTo : 'you';
+    if (res.approval === 'sent' || res.approval === 'failed') {
+      const notice = res.approval === 'sent'
+        ? `Request sent for internal approval${again ? ' with a new review link' : ''}. It will reach the evaluator after approval.`
+        : 'Request saved, but the approval email did not go out. Send it again from this request.';
+      const recap = res.recap === 'sent' ? ` A recap is on its way to ${recapTo}.`
+        : res.recap === 'failed' ? ' The recap email did not go out.' : '';
+      toast(`${notice}${recap}`, res.approval === 'failed' || res.recap === 'failed' ? 'error' : 'success');
+      return;
+    }
     const noMail = [res.deskError, res.recapError].filter(Boolean).every((e) => /Mail is not set up/.test(String(e)));
     if (res.desk === 'failed' && res.recap !== 'sent' && noMail) {
       toast('Request saved. Mail is not set up on this server, so nothing was emailed.', 'info');
@@ -601,6 +625,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   const hiddenSent = open?.documentsHidden ?? 0;
   const delivered = open?.status === 'DELIVERED';
   const reached = !!open && (!!open.deskNotifiedAt || open.events.some((e) => e.author === 'desk'));
+  const awaitingApproval = !!open?.approvalRequired && !open.approvedAt;
 
   // The one thing to do next, when it is the company's to do. Recording from a
   // delivered report is offered beside the report's values, in the banner, so
@@ -619,7 +644,8 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   const toldYouClosed = (what: string) => (open && !open.mine && open.emailsRequester ? ` ${open.requestedBy} is emailed that you ${what} it.` : '');
   const next = !open || legacy ? null
     : answer ? null
-      : delivered ? 'check the values against the report and record the 409A. This request closes against it.'
+      : awaitingApproval ? 'our team reviews your request. It will be sent to the evaluator once approved.'
+        : delivered ? 'check the values against the report and record the 409A. This request closes against it.'
         : !reached ? null
           : open.status === 'IN_PROGRESS' ? `the ${open.provider} delivers the report. Nothing to do on your side meanwhile.${emailedAtEachStep}`
             : `the ${open.provider} starts on it and contacts you. Nothing to do on your side meanwhile.${emailedAtEachStep}`;
@@ -628,6 +654,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
     // A fresh notice mints a new link and retires the old one, for an email the team lost.
     // With the service turned off, the team is sent nothing.
     ...(DESK_ON && !legacy && reached ? [{ label: 'Send to the team again, with a new link', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
+    ...(DESK_ON && !legacy && awaitingApproval && open.approvalNotifiedAt ? [{ label: 'Resend the approval request', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
     ...(main?.label !== 'Record the result' && !reviewInBanner
       ? [{ label: answer ? 'Record a different 409A' : 'Record a 409A from another appraiser', icon: 'document' as const, onClick: () => onRecordResult(open), disabled: busy }]
       : []),
@@ -663,9 +690,9 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 sm:flex-1">
               <h3 className="flex flex-wrap items-center gap-2 text-[15px] font-semibold leading-tight text-ink-900">
-                {legacy ? `409A requested from ${open.provider}` : `409A request to the ${open.provider}`} <StatusBadge status={open.status} />
+                {legacy ? `409A requested from ${open.provider}` : '409A request'} <StatusBadge status={awaitingApproval ? 'PENDING_APPROVAL' : open.status} />
               </h3>
-              <p className="mt-0.5 text-[13px] text-ink-500">Sent on {date(open.createdAt.slice(0, 10))} by {open.requestedBy}</p>
+              <p className="mt-0.5 text-[13px] text-ink-500">Submitted on {date(open.createdAt.slice(0, 10))} by {open.requestedBy}</p>
               {next && <p className="mt-1.5 text-[13px] text-ink-700"><span className="font-medium">Next:</span> {next}</p>}
             </div>
             {canEdit && (
@@ -685,10 +712,19 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
               <RequestTracker steps={stepsOf(open, 'company')} />
 
               {/* Once the team has done anything, it plainly has the request, whatever the mail said. */}
-              {canEdit && !open.deskNotifiedAt && !open.events.some((e) => e.author === 'desk') && (
+              {canEdit && awaitingApproval && !open.approvalNotifiedAt && (
+                <div className="mt-4">
+                  <Banner tone="warning" title="The approval email has not been sent yet">
+                    <p>Your request is saved. Our team needs to receive and approve it before the evaluator can begin.</p>
+                    {DESK_ON ? <div className="mt-2"><Button size="sm" variant="primary" loading={busy} onClick={() => resend(open, false)}>Send for approval</Button></div>
+                      : <p className="mt-1">Requests are turned off on this server. Cancel this one, or record a 409A from your own appraiser.</p>}
+                  </Banner>
+                </div>
+              )}
+              {canEdit && !awaitingApproval && !open.deskNotifiedAt && !open.events.some((e) => e.author === 'desk') && (
                 <div className="mt-4">
                   <Banner tone="warning" title={`The ${open.provider} has not been told about this request yet`}>
-                    <p>The notice with your answers did not go out, so nobody has started on it.{!open.recapSentAt && ' Your recap email did not go out either.'}</p>
+                    <p>{open.approvedAt ? 'Your request is approved, but the notice to the evaluator did not go out.' : 'The notice with your answers did not go out, so nobody has started on it.'}{!open.recapSentAt && ' Your recap email did not go out either.'}</p>
                     {DESK_ON ? (
                       <div className="mt-2">
                         <Button size="sm" variant="primary" loading={busy} onClick={() => resend(open, false)}>Send it to the team</Button>
@@ -699,7 +735,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
                   </Banner>
                 </div>
               )}
-              {DESK_ON && canEdit && (open.deskNotifiedAt || open.events.some((e) => e.author === 'desk')) && !open.recapSentAt && (
+              {DESK_ON && canEdit && (open.approvalNotifiedAt || reached) && !open.recapSentAt && (
                 <p className="mt-3 text-[12px] text-ink-600">
                   Your recap email did not go out.{' '}
                   <button type="button" className="font-medium text-brand-600 hover:text-brand-700" onClick={() => resend(open, false)}>Send it again</button>
@@ -778,7 +814,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
 
               <div className="mt-5 grid gap-5 lg:grid-cols-2">
                 <div className="min-w-0">
-                  <h4 className="mb-2 text-[13px] font-semibold text-ink-900">What you told the team</h4>
+                  <h4 className="mb-2 text-[13px] font-semibold text-ink-900">Request details</h4>
                   <dl className="space-y-1.5 text-[13px]">
                     {open.answerLines.map((l) => (
                       <div key={l.label} className="flex gap-3">
@@ -848,7 +884,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
             : <Button variant="secondary" onClick={() => setRequesting(false)}>Close</Button>}
           {step < STEPS.length - 1
             ? <Button variant="primary" onClick={goNext}>Next</Button>
-            : <Button variant="primary" loading={busy} onClick={() => void submit()}>Send to the team</Button>}
+            : <Button variant="primary" loading={busy} onClick={() => void submit()}>Submit for approval</Button>}
         </>}>
         <form data-intake className="space-y-3"
           onSubmit={(e) => { e.preventDefault(); if (step < STEPS.length - 1) goNext(); else void submit(); }}>

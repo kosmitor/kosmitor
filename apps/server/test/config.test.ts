@@ -237,6 +237,53 @@ test('the valuation team can be several addresses: a list in the file, comma sep
   });
 });
 
+test('an enabled 409A desk requires one privately configured approval mailbox', async () => {
+  const { SINGLE_ADDRESS } = await import('../src/mail.ts');
+  assert.equal(schema.properties.valuationDesk.properties.approvalEmail.pattern, '^$|' + SINGLE_ADDRESS.source);
+  withEnv(noEnvOverrides(), () => {
+    assert.equal(config().valuationDesk.enabled, false);
+    assert.equal(config().valuationDesk.approvalEmail, '', 'the shipped disabled desk has no internal mailbox');
+  });
+
+  const file = overrides({ valuationDesk: { enabled: true, approvalEmail: 'file-approvals@example.com' } });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: file, VALUATION_APPROVAL_EMAIL: ' Approvals@Example.com ' }, () => {
+    assert.equal(config().valuationDesk.approvalEmail, 'approvals@example.com', 'the environment wins, trimmed and lowercased');
+  });
+  for (const blank of ['', '   ']) {
+    withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: file, VALUATION_APPROVAL_EMAIL: blank }, () => {
+      assert.equal(config().valuationDesk.approvalEmail, 'file-approvals@example.com', 'an empty environment variable cannot disable approval');
+    });
+  }
+
+  const enabledWithoutInbox = overrides({ valuationDesk: { enabled: true } });
+  for (const approvalEmail of [undefined, '', '   ']) {
+    withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: enabledWithoutInbox, VALUATION_APPROVAL_EMAIL: approvalEmail }, () => {
+      assert.throws(() => config(), problem(/valuationDesk\.approvalEmail must be configured when valuationDesk\.enabled is true/),
+        'an enabled desk never starts without an approval inbox');
+    });
+  }
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: enabledWithoutInbox, VALUATION_APPROVAL_EMAIL: 'approvals@example.com' }, () => {
+    assert.equal(config().valuationDesk.approvalEmail, 'approvals@example.com', 'the environment can supply the required private inbox');
+  });
+
+  const invalidAddresses = [
+    ' ', 'not-an-address', 'a@example.com,b@example.com', 'a@example.com;b@example.com',
+    'a@example.com b@example.com', 'Approvals <a@example.com>', 'a@example.com\r\nBcc: b@example.com',
+    'a\u00a0b@example.com',
+  ];
+  for (const approvalEmail of [...invalidAddresses, null, ['approvals@example.com']]) {
+    withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ valuationDesk: { approvalEmail } }) }, () => {
+      assert.throws(() => config(), problem(/valuationDesk\.approvalEmail/), `rejects file value ${JSON.stringify(approvalEmail)}`);
+    });
+  }
+  for (const approvalEmail of invalidAddresses.filter((value) => value.trim())) {
+    withEnv({ ...noEnvOverrides(), VALUATION_APPROVAL_EMAIL: approvalEmail }, () => {
+      assert.throws(() => config(), problem(/environment \(VALUATION_APPROVAL_EMAIL\): valuationDesk\.approvalEmail/),
+        `rejects environment value ${JSON.stringify(approvalEmail)}`);
+    });
+  }
+});
+
 test('configure() layers its changes and resetConfig() goes back to the files', () => {
   try {
     configure({ auth: { sessionDays: 7 } });
@@ -260,7 +307,7 @@ test('publicConfig() holds nothing the browser should not see', () => {
   const email = /[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+/;
   try {
     configure({
-      valuationDesk: { enabled: true, email: 'desk@example.com' },
+      valuationDesk: { enabled: true, email: 'desk@example.com', approvalEmail: 'private-approvals@example.com' },
       mail: { from: 'Example <mailer@example.com>' },
       backup: { drillDatabase: 'secret_drill_db' },
     });
@@ -268,6 +315,7 @@ test('publicConfig() holds nothing the browser should not see', () => {
     const json = JSON.stringify(pc);
     for (const section of ['app', 'server', 'database', 'mail', 'backup']) assert.ok(!(section in pc), `${section} is not public`);
     assert.ok(!('email' in pc.valuationDesk), 'the desk inbox is not public');
+    assert.ok(!('approvalEmail' in pc.valuationDesk), 'the approval inbox is not public');
     assert.equal(pc.valuationDesk.enabled, true);
     assert.deepEqual(strings(pc).filter((s) => email.test(s)), [], 'no email address, demo disabled');
     assert.ok(!json.includes('secret_drill_db'));

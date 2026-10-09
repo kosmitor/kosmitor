@@ -61,7 +61,7 @@ after(() => { release(); smtp.close(); });
 
 // Mail goes to the stand-in and nowhere else. These win over apps/server/.env.
 process.env.SMTP_URL = `smtp://127.0.0.1:${(smtp.address() as AddressInfo).port}`;
-delete process.env.ACS_CONNECTION_STRING;
+process.env.ACS_CONNECTION_STRING = '';
 process.env.VALUATION_DESK_EMAIL = 'desk@example.test';
 
 await freshDatabase();

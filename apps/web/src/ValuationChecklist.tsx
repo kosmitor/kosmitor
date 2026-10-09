@@ -1536,8 +1536,8 @@ export function ContactStep({ form, update, problems, shown }: StepProps) {
       <p className="rise flex items-start gap-2 px-1 text-[12px] leading-relaxed text-ink-500" style={{ animationDelay: '180ms' }}>
         <Icon name="lock" className="mt-0.5 size-3.5 shrink-0" />
         <span>
-          The team gets your answers, the cap table with no holder names, and the documents you attached, as they are: a SAFE,
-          for one, names its investor. A recap goes to {user?.email ?? 'your account address'}.
+          Our team reviews your request first. After approval, the evaluator gets your answers, the cap table with no holder names,
+          and the documents you attached, as they are: a SAFE, for one, names its investor. A recap goes to {user?.email ?? 'your account address'}.
         </span>
       </p>
     </>

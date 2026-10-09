@@ -54,8 +54,8 @@ done
 ```
 
 Copy `terraform.tfvars.example` to `terraform.tfvars` (ignored by git) and fill in
-at least `subscription_id` and `alert_email`; every other variable is listed there
-with its default. The Terraform state will hold the database password and the
+`subscription_id`, `alert_email` and `valuation_approval_email`; every other
+variable is listed there with its default. The Terraform state will hold the database password and the
 app's other secrets, so keep it in Azure Storage from the start: apply
 [`infra/tfstate`](../tfstate/README.md) once per subscription (it creates the
 storage; `terraform output -raw backend_hcl` there prints the account details),
@@ -139,7 +139,15 @@ them, or is refused while the network is in use.
   to its own domain. `TF_VAR_smtp_url` still works if you would rather use your
   own mail server; Communication Services takes precedence when both are set.
 - **Google sign-in**: set `google_client_id` (and `google_allowed_domains`).
-- **409A valuation desk**: `valuation_desk_emails` lists the evaluators each request
+- **409A valuation desk**: set the required `valuation_approval_email` in your
+  private variables file to the internal approval inbox. Every new request must
+  be approved there before evaluator delivery. Terraform passes it as `VALUATION_APPROVAL_EMAIL`,
+  overriding `valuationDesk.approvalEmail`; use one mailbox, not a list. Blank is
+  rejected and cannot bypass approval. Deploy an image containing this workflow
+  before relying on it: v23 and older ignore this setting. Existing requests keep
+  their previous workflow. After that image is deployed, changing the inbox only
+  needs `terraform apply`, which creates a new app revision.
+  `valuation_desk_emails` lists the evaluators each approved request
   goes to, up to 10. Each gets an email of its own with the same private request
   link, so none sees the others' addresses, and the closing notice and a resend with
   a new link reach all of them; replies to the recap and status emails reach the

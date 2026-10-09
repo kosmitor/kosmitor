@@ -79,7 +79,7 @@ after(() => smtp.close());
 
 // Mail goes to the stand-in and nowhere else. These win over apps/server/.env.
 process.env.SMTP_URL = `smtp://127.0.0.1:${(smtp.address() as AddressInfo).port}`;
-delete process.env.ACS_CONNECTION_STRING;
+process.env.ACS_CONNECTION_STRING = '';
 // Three made-up evaluators, the first written twice in another case: each is mailed once.
 const TEAM_ENV = 'Lead@Example.test, second@example.test, third@example.test, lead@example.test';
 const TEAM = ['lead@example.test', 'second@example.test', 'third@example.test'];
@@ -105,7 +105,7 @@ const offerTheDesk = (changes: Record<string, unknown> = {}) => {
   resetConfig();
   configure({
     valuationDesk: {
-      enabled: true, sendCooldownSeconds: 0, resendCooldownMinutes: 0, requestsPerCompanyPerDay: 100, requestsPerPersonPerDay: 100,
+      enabled: true, approvalEmail: 'approvals@example.com', sendCooldownSeconds: 0, resendCooldownMinutes: 0, requestsPerCompanyPerDay: 100, requestsPerPersonPerDay: 100,
       noticesPerCompanyPerDay: 100, noticesPerPersonPerDay: 100, noticesPerHour: 100, ...changes,
     },
   });
@@ -206,6 +206,10 @@ async function newRequest(name: string): Promise<{ cid: string; id: string }> {
   for (const [item, [fileName, category]] of Object.entries(FILES)) documents.push({ item, documentId: await upload(cid, fileName, category) });
   const made = await call('POST', `/api/c/${cid}/valuation-requests`, { ...ANSWERS, documents }, admin);
   assert.equal(made.status, 200, JSON.stringify(made.json));
+  // These tests exercise evaluator delivery after internal review. The approval
+  // handshake itself is covered by valuation-approval.test.ts.
+  await run('UPDATE valuation_requests SET approved_at = ?, approved_by = ? WHERE id = ?',
+    new Date().toISOString(), 'Internal review fixture', made.json.id);
   return { cid, id: made.json.id };
 }
 const send = (r: { cid: string; id: string }, again = false) =>
@@ -231,7 +235,7 @@ test('the list is read from the environment lowercased, each address once, in th
 
 // --- Sending ---------------------------------------------------------------------------
 
-test('a new request emails each evaluator once, alone in its To, all with the same link that works', async () => {
+test('an approved request emails each evaluator once, alone in its To, all with the same link that works', async () => {
   const r = await newRequest('Shared Harbor');
   received.length = 0;
   const sent = await send(r);

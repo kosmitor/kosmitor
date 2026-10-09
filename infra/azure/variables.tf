@@ -287,7 +287,7 @@ variable "google_allowed_domains" {
 }
 
 variable "valuation_desk_emails" {
-  description = "The evaluators each new 409A request is emailed to, passed as VALUATION_DESK_EMAIL (comma separated). Each address gets an email of its own with the same private request link, so none sees the others; replies to the recap and status emails reach the first. Empty leaves valuationDesk.email from the param file. Removing an address does not take back the request links it was already sent (docs/valuation-desk.md). More than one needs an image newer than v21, which stops at start on a list."
+  description = "The evaluators each approved 409A request is emailed to, passed as VALUATION_DESK_EMAIL (comma separated). Each address gets an email of its own with the same private request link, so none sees the others; replies to the recap and status emails reach the first. Empty leaves valuationDesk.email from the param file. Removing an address does not take back the request links it was already sent (docs/valuation-desk.md). More than one needs an image newer than v21, which stops at start on a list."
   type        = list(string)
   default     = []
   nullable    = false
@@ -309,6 +309,17 @@ variable "valuation_desk_emails" {
   validation {
     condition     = length(var.valuation_desk_emails) <= 10
     error_message = "valuation_desk_emails can hold at most 10 addresses (the server's limit)."
+  }
+}
+
+variable "valuation_approval_email" {
+  description = "Internal inbox that must approve each new 409A request before delivery to evaluators. Passed as VALUATION_APPROVAL_EMAIL, overriding valuationDesk.approvalEmail. Requires an image containing the internal approval workflow; v23 and older ignore this setting. One mailbox is required; an empty value cannot disable approval."
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+@[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+\\.[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+$", var.valuation_approval_email))
+    error_message = "valuation_approval_email must be one email address, with no name, spaces, commas or semicolons. Approval cannot be disabled with an empty value."
   }
 }
 

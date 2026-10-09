@@ -503,7 +503,7 @@
       }
     },
     "valuationDesk": {
-      "description": "An optional service: companies ask a valuation team you run for a new 409A, the team gets an email with a private status link, and the company follows the request in the app. Off by default.",
+      "description": "An optional service: companies ask for a new 409A, your internal team approves the request by email before it reaches the evaluators, and the company follows the request in the app. Off by default.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -520,7 +520,7 @@
           "minLength": 2
         },
         "email": {
-          "description": "Where each new request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it.",
+          "description": "Where an approved request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves approved requests without notifying an evaluator; internal approval is still required. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it.",
           "type": [
             "string",
             "array",
@@ -533,6 +533,11 @@
           },
           "minItems": 1,
           "maxItems": 10
+        },
+        "approvalEmail": {
+          "description": "Private internal inbox that approves each new 409A request before any evaluator receives it. Configure one email address through VALUATION_APPROVAL_EMAIL or your private local configuration before enabling the valuation desk. The shipped empty value is allowed only while the desk is disabled; enabling it without an inbox stops startup. The address is not exposed in the public browser configuration. The environment variable wins over the file; an empty variable leaves the file setting in effect.",
+          "type": "string",
+          "pattern": "^$|^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+\\.[^\\s@<>,;\"]+$"
         },
         "linkOpenDays": {
           "description": "How long the team's status link works while a request is open.",
@@ -555,22 +560,22 @@
           "minimum": 1
         },
         "noticesPerRequestPerDay": {
-          "description": "Times one request can be sent to the team per day.",
+          "description": "Notices one request can send per day at each stage. Internal approval and evaluator notices have separate allowances, so approval reminders cannot consume the allowance for forwarding to evaluators.",
           "type": "integer",
           "minimum": 1
         },
         "noticesPerCompanyPerDay": {
-          "description": "Notices to the team one company can trigger per day.",
+          "description": "Notices one company can trigger per day at each stage. Internal approval and evaluator notices have separate allowances.",
           "type": "integer",
           "minimum": 1
         },
         "noticesPerPersonPerDay": {
-          "description": "Notices to the team one person can trigger per day.",
+          "description": "Notices one signed-in person can trigger per day at each stage. Internal approval and evaluator notices have separate allowances.",
           "type": "integer",
           "minimum": 1
         },
         "noticesPerHour": {
-          "description": "Emails to the team across all companies per hour: a notice counts once for each address in valuationDesk.email, so a longer list sends no more mail. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. It cannot be fewer than the addresses in valuationDesk.email.",
+          "description": "Approval and evaluator emails across all companies per hour, sharing one limit. An approval notice counts once; an evaluator notice counts once for each address in valuationDesk.email, so a longer list sends no more mail. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. It cannot be fewer than the addresses in valuationDesk.email.",
           "type": "integer",
           "minimum": 1
         },
@@ -585,12 +590,12 @@
           "minimum": 0
         },
         "sendCooldownSeconds": {
-          "description": "Wait between two sends of the same request.",
+          "description": "Wait between two sends of the same request, for approval or to evaluators.",
           "type": "integer",
           "minimum": 0
         },
         "resendCooldownMinutes": {
-          "description": "Wait before a request can be sent to the team again with a new link.",
+          "description": "Wait before a request can be sent for approval or to evaluators again with a new link.",
           "type": "integer",
           "minimum": 0
         },

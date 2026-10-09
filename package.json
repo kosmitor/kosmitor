@@ -14,7 +14,7 @@
     "dev:server": "npm run dev --workspace=@kosmitor/server",
     "dev:web": "npm run dev --workspace=@kosmitor/web",
     "build": "npm run build --workspace=@kosmitor/core && npm run build --workspace=@kosmitor/web",
-    "test": "npm run test --workspace=@kosmitor/core && npm run test --workspace=@kosmitor/server",
+    "test": "npm run test --workspace=@kosmitor/core && npm run test --workspace=@kosmitor/web && npm run test --workspace=@kosmitor/server",
     "sample": "npm run sample --workspace=@kosmitor/server --",
     "reconcile": "npm run reconcile --workspace=@kosmitor/server --",
     "seed": "npm run seed --workspace=@kosmitor/server --",

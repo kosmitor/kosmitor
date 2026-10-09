@@ -518,9 +518,11 @@ export function leaveLayer(id: symbol): void {
 /** Whether a layer is the newest one open: the one that answers Escape. */
 export const isNewestLayer = (id: symbol): boolean => openDialogs.at(-1) === id;
 
-export function Modal({ open, onClose, title, description, children, footer, size = 'md' }: {
+export function Modal({ open, onClose, title, description, children, footer, size = 'md', bodyClassName }: {
   open: boolean; onClose: () => void; title: React.ReactNode; description?: React.ReactNode;
   children: React.ReactNode; footer?: React.ReactNode; size?: 'sm' | 'md' | 'lg' | 'xl';
+  /** Optional body surface and padding for more involved workflows. */
+  bodyClassName?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [id] = useState(() => Symbol('dialog'));
@@ -613,7 +615,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
             </svg>
           </button>
         </div>
-        <div className="relative min-h-0 flex-1 overscroll-contain px-5 py-4 max-h-[70vh] overflow-y-auto">{children}</div>
+        <div className={cx('relative min-h-0 flex-1 overscroll-contain max-h-[70vh] overflow-y-auto', bodyClassName ?? 'px-5 py-4')}>{children}</div>
         {footer && <div className="shrink-0 px-5 py-3.5 border-t border-ink-100 bg-ink-50/60 rounded-b-xl flex justify-end gap-2">{footer}</div>}
       </div>
     </div>,

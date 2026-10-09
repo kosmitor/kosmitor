@@ -41,6 +41,7 @@ Each of these sets one entry and wins over both files. An empty variable counts 
 | `GOOGLE_CLIENT_ID` | `auth.google.clientId` |
 | `GOOGLE_ALLOWED_DOMAINS` | `auth.google.allowedDomains` |
 | `VALUATION_DESK_EMAIL` | `valuationDesk.email` |
+| `VALUATION_APPROVAL_EMAIL` | `valuationDesk.approvalEmail` |
 | `BACKUP_CONTAINER` | `backup.container` |
 | `BACKUP_PREFIX` | `backup.prefix` |
 | `DRILL_DATABASE` | `backup.drillDatabase` |
@@ -195,25 +196,26 @@ A card on the sign-in page that hands out a demo login. Create the account with 
 
 ### valuationDesk
 
-An optional service: companies ask a valuation team you run for a new 409A, the team gets an email with a private status link, and the company follows the request in the app. Off by default.
+An optional service: companies ask for a new 409A, your internal team approves the request by email before it reaches the evaluators, and the company follows the request in the app. Off by default.
 
 | Setting | Default | Description |
 | --- | --- | --- |
 | `valuationDesk.enabled` | `false` | Offer the service. Off hides it everywhere and refuses new requests. |
 | `valuationDesk.name` | `null` | What the team is called, as it reads after "the" (for example "Acme valuation team"). null uses "<productName> valuation team". |
-| `valuationDesk.email` | `null` | Where each new request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves requests without telling anyone. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it. |
+| `valuationDesk.email` | `null` | Where an approved request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves approved requests without notifying an evaluator; internal approval is still required. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it. |
+| `valuationDesk.approvalEmail` | `""` | Private internal inbox that approves each new 409A request before any evaluator receives it. Configure one email address through VALUATION_APPROVAL_EMAIL or your private local configuration before enabling the valuation desk. The shipped empty value is allowed only while the desk is disabled; enabling it without an inbox stops startup. The address is not exposed in the public browser configuration. The environment variable wins over the file; an empty variable leaves the file setting in effect. |
 | `valuationDesk.linkOpenDays` | `180` | How long the team's status link works while a request is open. At least 1. |
 | `valuationDesk.linkClosedDays` | `30` | How long it keeps working after the request closes. At least 1. |
 | `valuationDesk.requestsPerCompanyPerDay` | `5` | New requests one company can make per day. At least 1. |
 | `valuationDesk.requestsPerPersonPerDay` | `5` | New requests one person can make per day. At least 1. |
-| `valuationDesk.noticesPerRequestPerDay` | `3` | Times one request can be sent to the team per day. At least 1. |
-| `valuationDesk.noticesPerCompanyPerDay` | `5` | Notices to the team one company can trigger per day. At least 1. |
-| `valuationDesk.noticesPerPersonPerDay` | `10` | Notices to the team one person can trigger per day. At least 1. |
-| `valuationDesk.noticesPerHour` | `30` | Emails to the team across all companies per hour: a notice counts once for each address in valuationDesk.email, so a longer list sends no more mail. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. It cannot be fewer than the addresses in valuationDesk.email. At least 1. |
+| `valuationDesk.noticesPerRequestPerDay` | `3` | Notices one request can send per day at each stage. Internal approval and evaluator notices have separate allowances, so approval reminders cannot consume the allowance for forwarding to evaluators. At least 1. |
+| `valuationDesk.noticesPerCompanyPerDay` | `5` | Notices one company can trigger per day at each stage. Internal approval and evaluator notices have separate allowances. At least 1. |
+| `valuationDesk.noticesPerPersonPerDay` | `10` | Notices one signed-in person can trigger per day at each stage. Internal approval and evaluator notices have separate allowances. At least 1. |
+| `valuationDesk.noticesPerHour` | `30` | Approval and evaluator emails across all companies per hour, sharing one limit. An approval notice counts once; an evaluator notice counts once for each address in valuationDesk.email, so a longer list sends no more mail. Keep it well below the mail provider's hourly limit, so password resets and invitations still go out: a new Azure Communication Services custom domain allows 100 emails an hour. It cannot be fewer than the addresses in valuationDesk.email. At least 1. |
 | `valuationDesk.statusEmailsPerRequestPerDay` | `10` | Emails one request can send the person who asked per day, each time its status changes. 0 turns them off. At least 0. |
 | `valuationDesk.reportUploadsPerRequestPerDay` | `10` | Reports the team can upload to one request per day from its page. The app reads the values from each one for the company to check. 0 turns uploads off. At least 0. |
-| `valuationDesk.sendCooldownSeconds` | `60` | Wait between two sends of the same request. At least 0. |
-| `valuationDesk.resendCooldownMinutes` | `10` | Wait before a request can be sent to the team again with a new link. At least 0. |
+| `valuationDesk.sendCooldownSeconds` | `60` | Wait between two sends of the same request, for approval or to evaluators. At least 0. |
+| `valuationDesk.resendCooldownMinutes` | `10` | Wait before a request can be sent for approval or to evaluators again with a new link. At least 0. |
 | `valuationDesk.intake` |  | The questions a company answers when it asks for a 409A. Keep each value: answers already given are stored by it. |
 | `valuationDesk.intake.companySizes` | 5 entries, see `kosmitor.config.json` | Company size. |
 | `valuationDesk.intake.companySizes[].value` |  | Stored value. Do not change it once answers exist. |

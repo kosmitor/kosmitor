@@ -704,6 +704,17 @@ ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS report_date TEXT;
 ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS closed_at TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_valreq_desk_token ON valuation_requests(desk_token_hash) WHERE desk_token_hash IS NOT NULL;
 
+-- Only new requests require internal approval. Existing requests and evaluator
+-- links keep working; the separate approval credential cannot be used by a desk.
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approval_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approval_email TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approval_token_hash TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approval_token_at TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approval_notified_at TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approved_at TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approved_by TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_valreq_approval_token ON valuation_requests(approval_token_hash) WHERE approval_token_hash IS NOT NULL;
+
 -- What happened to a request after it was sent, in order: the team starting it,
 -- delivering the report, a note from the team, a change of contact details, and
 -- how it closed. The company's page reads its status history from here.

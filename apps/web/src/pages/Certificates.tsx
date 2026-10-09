@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useCrud, FormModal, FormGrid } from '../crud.tsx';
 import { useSession } from '../session.tsx';
@@ -16,6 +16,7 @@ import { DocumentPreview } from '../PdfFrame.tsx';
 import { shares, money, date, today, parseShares, parsePPS } from '../format.ts';
 import { readableDocumentPath, documentFilename, isUploadedFile, documentAccess, newestPerHolding, downloadDocumentPath } from '../documents.ts';
 import { config } from '../config.ts';
+import { IssueShares } from '../IssueShares.tsx';
 
 /** Common stock's par value (company.commonClass.parValue), the price a founder's shares are usually bought at. */
 const PAR = String(config.company.commonClass.parValue);
@@ -33,7 +34,7 @@ export default function Certificates() {
   const { data: documents, reload: reloadDocuments } = useQuery<any[]>(companyId ? `/c/${companyId}/documents` : null, [companyId]);
   const { data: contacts } = useQuery<any>(companyId && canEdit ? `/c/${companyId}/contacts` : null, [companyId]);
   const [forSignature, setForSignature] = useState(true);
-  const [signer, setSigner] = useState({ name: '', title: config.equity.signerTitle, message: '' });
+  const [signer, setSigner] = useState({ name: '', title: config.equity.signerTitle, message: '', templateId: '' });
   const [countersigning, setCountersigning] = useState<any>(null);
   const [signature, setSignature] = useState('');
   const [viewing, setViewing] = useState<any>(null);
@@ -63,12 +64,13 @@ export default function Certificates() {
   }, [documents]);
   const { data: stakeholders } = useQuery<any[]>(companyId ? `/c/${companyId}/stakeholders` : null, [companyId]);
   const { data: classes } = useQuery<any[]>(companyId ? `/c/${companyId}/share-classes` : null, [companyId]);
-  const { data: schedules } = useQuery<any[]>(companyId ? `/c/${companyId}/vesting-schedules` : null, [companyId]);
+  const { data: schedules, loading: schedulesLoading, error: schedulesError, reload: reloadSchedules } = useQuery<any[]>(companyId ? `/c/${companyId}/vesting-schedules` : null, [companyId]);
 
   const [search, setSearch] = useSearchQuery();
   const [status, setStatus] = useState<'OUTSTANDING' | 'ALL'>('OUTSTANDING');
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState(blank);
+  const pendingVestingDefault = useRef(false);
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
   const [transferring, setTransferring] = useState<any>(null);
   const [transfer, setTransfer] = useState({ toStakeholderId: '', quantity: '', date: today(), pricePerShare: '' });
@@ -76,6 +78,15 @@ export default function Certificates() {
 
   const nameOf = useMemo(() => new Map((stakeholders ?? []).map((s) => [s.id, s.name])), [stakeholders]);
   const classOf = useMemo(() => new Map((classes ?? []).map((c) => [c.id, c])), [classes]);
+  const defaultVestingScheduleId = schedules?.find((s) => s.name === '4 years, 1 year cliff, monthly')?.id ?? '';
+
+  useEffect(() => {
+    // A new issuance can open before schedules finish loading. Apply its default
+    // once, while preserving any schedule the user has already chosen.
+    if (!pendingVestingDefault.current || !editing || editing.id || !schedules) return;
+    pendingVestingDefault.current = false;
+    setForm((current) => ({ ...current, vestingScheduleId: defaultVestingScheduleId }));
+  }, [editing, schedules, defaultVestingScheduleId]);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -87,9 +98,10 @@ export default function Certificates() {
   }, [crud.items, search, status, nameOf]);
 
   const openNew = () => {
-    setForm({ ...blank, shareClassId: classes?.[0]?.id ?? '', stakeholderId: stakeholders?.[0]?.id ?? '' });
+    pendingVestingDefault.current = !schedules;
+    setForm({ ...blank, issueDate: today(), shareClassId: classes?.[0]?.id ?? '', vestingScheduleId: defaultVestingScheduleId });
     setForSignature(true);
-    setSigner({ name: contacts?.defaultSignatory?.name ?? user?.name ?? '', title: contacts?.defaultSignatory?.title ?? config.equity.signerTitle, message: '' });
+    setSigner({ name: contacts?.defaultSignatory?.name ?? user?.name ?? '', title: contacts?.defaultSignatory?.title ?? config.equity.signerTitle, message: '', templateId: '' });
     setEditing({ id: null });
   };
   const refreshAll = () => { crud.reload(); reloadDocuments(); };
@@ -171,22 +183,22 @@ export default function Certificates() {
     || (form.vestingStartDate || (form.vestingScheduleId ? form.issueDate : null)) !== (editing.vestingStartDate ?? null));
   const signedCertificate = (i: any) => (documentsOf.get(i.id) ?? []).some((d: any) => d.category === 'CERTIFICATE' && d.status === 'EXECUTED');
 
-  const save = async () => {
+  const save = async (values = form) => {
     const payload = {
-      certificateNo: form.certificateNo || null, stakeholderId: form.stakeholderId,
-      shareClassId: form.shareClassId, quantity: parseShares(form.quantity),
-      pricePerShare: parsePPS(form.pricePerShare), issueDate: form.issueDate,
-      vestingScheduleId: form.vestingScheduleId || null,
-      vestingStartDate: form.vestingStartDate || (form.vestingScheduleId ? form.issueDate : null),
-      earlyExercised: form.earlyExercised,
-      election83bFiledOn: form.election83bFiledOn || null,
-      boardApprovalDate: form.boardApprovalDate || null, notes: form.notes || null,
+      certificateNo: values.certificateNo || null, stakeholderId: values.stakeholderId,
+      shareClassId: values.shareClassId, quantity: parseShares(values.quantity),
+      pricePerShare: parsePPS(values.pricePerShare), issueDate: values.issueDate,
+      vestingScheduleId: values.vestingScheduleId || null,
+      vestingStartDate: values.vestingStartDate || (values.vestingScheduleId ? values.issueDate : null),
+      earlyExercised: values.earlyExercised,
+      election83bFiledOn: values.election83bFiledOn || null,
+      boardApprovalDate: values.boardApprovalDate || null, notes: values.notes || null,
     };
     if (!editing?.id && forSignature) {
       setBusy(true);
       try {
         const r = await api<{ emailed: boolean; issuance: any }>(`/c/${companyId}/issuances/issue-for-signature`, {
-          body: { ...payload, signerName: signer.name, signerTitle: signer.title, message: signer.message || null },
+          body: { ...payload, signerName: signer.name, signerTitle: signer.title, message: signer.message || null, templateId: signer.templateId || null },
         });
         toast(`Certificate ${r.issuance.certificateNo} sent for signature${r.emailed ? ' — the holder has been emailed' : ''}`);
         setEditing(null);
@@ -424,35 +436,22 @@ export default function Certificates() {
           { key: 'actions', label: '', width: 120, align: 'right', hidden: !canEdit, cell: rowActions },
         ]} />
 
-      <FormModal open={!!editing} onClose={() => setEditing(null)} busy={crud.busy || busy} size="lg"
-        title={editing?.id ? 'Edit certificate' : 'Issue shares'}
-        description={editing?.id
-          ? 'Records an issuance of shares against a class. Restricted stock can carry a vesting schedule and an 83(b) election.'
-          : 'A certificate signed on the platform becomes outstanding once the holder and the Company have both signed. Record it directly instead when the paperwork was signed elsewhere.'}
-        onSubmit={save} submitLabel={editing?.id ? 'Save changes' : forSignature ? 'Issue & send for signature' : 'Record issuance'}>
-        {!editing?.id && (
-          <div className="mb-4 rounded-lg border border-ink-200 p-4">
-            <Checkbox label="Send the certificate for electronic signature" checked={forSignature} onChange={setForSignature}
-              hint="The holder reviews and signs it from My equity; you countersign for the Company. Nothing is outstanding until both have signed." />
-            {forSignature && (
-              <div className="mt-3">
-                <FormGrid>
-                  <Field label="Signing for the Company" required>
-                    <Input value={signer.name} onChange={(e) => setSigner({ ...signer, name: e.target.value })} required />
-                  </Field>
-                  <Field label="Title" required>
-                    <Input value={signer.title} onChange={(e) => setSigner({ ...signer, title: e.target.value })} placeholder="Chief Executive Officer" required />
-                  </Field>
-                </FormGrid>
-                <div className="mt-3">
-                  <Field label="Note to the holder" hint="Printed on the certificate.">
-                    <Input value={signer.message} onChange={(e) => setSigner({ ...signer, message: e.target.value })} placeholder="Optional" />
-                  </Field>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+      {editing && !editing.id && (
+        <IssueShares companyId={companyId!} form={form} setForm={setForm}
+          stakeholders={stakeholders ?? []} classes={classes ?? []} schedules={schedules ?? []}
+          schedulesLoading={schedulesLoading} schedulesError={schedulesError} onRetrySchedules={reloadSchedules}
+          onVestingScheduleChange={(vestingScheduleId) => {
+            pendingVestingDefault.current = false;
+            setForm((current) => ({ ...current, vestingScheduleId, vestingStartDate: vestingScheduleId ? current.vestingStartDate : '' }));
+          }}
+          forSignature={forSignature} setForSignature={setForSignature} signer={signer} setSigner={setSigner}
+          busy={crud.busy || busy} onClose={() => setEditing(null)} onSubmit={save} />
+      )}
+
+      <FormModal open={!!editing?.id} onClose={() => setEditing(null)} busy={crud.busy || busy} size="lg"
+        title="Edit certificate"
+        description="Records an issuance of shares against a class. Restricted stock can carry a vesting schedule and an 83(b) election."
+        onSubmit={save} submitLabel="Save changes">
         <FormGrid>
           <Field label="Holder" required>
             <Select value={form.stakeholderId} onChange={(e) => setForm({ ...form, stakeholderId: e.target.value })} required>

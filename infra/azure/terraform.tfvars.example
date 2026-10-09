@@ -9,8 +9,9 @@
 
 # --- Required -----------------------------------------------------------------
 
-subscription_id = "<your-subscription-id>"
-alert_email     = "ops@example.com"
+subscription_id          = "<your-subscription-id>"
+alert_email              = "ops@example.com"
+valuation_approval_email = "approvals@example.com"
 
 # --- Naming and regions ---------------------------------------------------------
 
@@ -105,7 +106,12 @@ alert_email     = "ops@example.com"
 
 # --- 409A valuation desk ----------------------------------------------------------
 
-# The evaluators each 409A request is sent to, each in an email of their own with the
+# The internal inbox that approves new requests before they reach any evaluator.
+# Requires an image containing the approval workflow; v23 and older ignore this.
+# Must be a single mailbox. This cannot be blank to bypass approval.
+# Set valuation_approval_email in the required block above to your review inbox.
+
+# The evaluators each approved 409A request is sent to, each in an email of their own with the
 # same private link, so none sees the others; replies from the company reach the first.
 # Up to 10. Wins over valuationDesk.email in the param file; the desk itself is
 # switched on there (valuationDesk.enabled).

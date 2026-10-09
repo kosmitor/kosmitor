@@ -48,7 +48,7 @@ const { documentPdf } = await import('../src/pdf-writer.ts');
 const { longDate } = await import('@kosmitor/core');
 
 /** The service is off by default; these tests are about it running. */
-const offerTheDesk = () => { resetConfig(); configure({ valuationDesk: { enabled: true } }); };
+const offerTheDesk = () => { resetConfig(); configure({ valuationDesk: { enabled: true, approvalEmail: 'approvals@example.com' } }); };
 offerTheDesk();
 
 // --- Mail, as the console transport prints it ---------------------------------

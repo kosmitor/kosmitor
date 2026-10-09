@@ -24,10 +24,42 @@ made earlier keep their history and their status links.
 
   The server refuses a request missing any required answer or document, not only
   the form. The answer lists are in `valuationDesk.intake`. Sending it emails the
-  valuation team the answers, the capital structure (no holder names) and the
-  documents' names, and emails a recap to the account of the person who asked. The
-  documents themselves never travel by email: the team downloads them from its
-  page while the request is open.
+  internal review team a private approval link and emails a recap to the account
+  of the person who asked. The request stays **Awaiting approval** until
+  a reviewer opens the link, reviews the request and chooses **Approve and send
+  to evaluator**. Opening the link alone does not approve anything. After approval,
+  the evaluators receive the answers, the capital structure (no holder names),
+  the documents' names and their own private link. Documents themselves never
+  travel by email: evaluators download them from their page while the request is
+  open.
+- **Internal approval** — set `valuationDesk.approvalEmail` to your internal
+  review inbox in the private configuration before enabling requests.
+  `VALUATION_APPROVAL_EMAIL` overrides it. In Terraform, set
+  `valuation_approval_email` in your private variables file and run
+  an apply to change the inbox. The evaluator recipients remain a separate
+  setting (`valuation_desk_emails`); the internal inbox is not shown to the
+  requesting company or included in its recap's reply address.
+
+  The approval link grants permission to review and approve one request only.
+  It cannot open the evaluator's page, download its files or move a request
+  through the evaluator's workflow. Only a hash of its token is stored. It
+  expires after `valuationDesk.linkOpenDays`, when replaced by another approval
+  email, or when the configured approval inbox changes. Closing a request
+  immediately prevents approval or forwarding; its link remains read-only for
+  up to `valuationDesk.linkClosedDays` after closure, subject to its original
+  expiration date.
+  After changing the inbox, resend the pending request to give the new reviewer
+  a fresh link. Keep approval links within your internal team.
+
+  If the approval email fails, the company can retry sending it; the request
+  remains saved and nothing goes to an evaluator. If evaluator delivery fails
+  after approval, the approval remains recorded and the reviewer can retry
+  sending it from the same page. A repeated approval does not create another
+  approval or repeat a completed evaluator notification. An explicit retry after
+  partial delivery resends to every evaluator with a new link. The company's
+  page also supports explicit evaluator resends after approval.
+  Requests created before this approval step was introduced keep their existing
+  evaluator workflow and links; the approval requirement applies to new requests.
 - **Status** — the team works the request from a private link in its email: it
   marks the request started, adds notes, delivers the report (naming the
   appraisal firm and the valuation date) or closes it. The company sees each step
@@ -59,12 +91,13 @@ made earlier keep their history and their status links.
   and in emails.
 - **The evaluators** — `valuationDesk.email` is one address or a list of up to
   10; `VALUATION_DESK_EMAIL` wins over it, comma separated (Terraform sets it
-  from `valuation_desk_emails`). With none set, requests are saved but nobody is
-  told. Each address gets an email of its own, so no evaluator sees another's
+  from `valuation_desk_emails`). With none set, requests and internal approvals
+  are saved, but evaluator delivery waits until an address is configured. Each
+  address gets an email of its own, so no evaluator sees another's
   address, and every one carries the same link; the closing notice and *Send to
-  the team again, with a new link* go to all of them. Replies to the recap and
-  the status emails reach the first address only, so the company learns no more
-  of the list than it did of one inbox. When some addresses are reached and
+  the team again, with a new link* go to all of them. When a message offers
+  replies to the evaluator, its reply address is the first evaluator only, so
+  the company learns no more of the list than it did of one inbox. When some addresses are reached and
   others are not, the company is told that some of the team did not get it,
   never which addresses or how many there are, the link moves to the new one,
   and the server log names the addresses that failed; a resend reaches everyone
@@ -74,7 +107,10 @@ made earlier keep their history and their status links.
   a company's allowance faster; the audit log holds one entry per notice and no
   address. `valuationDesk.noticesPerHour` (30) is the exception: it guards the
   mail the server sends, so it counts emails, one per address, and a list of
-  three lets ten notices out an hour. Keep it well below the mail provider's
+  three lets ten notices out an hour. Internal approval emails also count
+  against this hourly cap; approval and evaluator notices have separate daily
+  allowances so the first step does not use up the next step's allowance.
+  Keep it well below the mail provider's
   hourly limit (a new Azure Communication Services custom domain allows 100);
   the server refuses to start with fewer than the addresses on the list.
   Closing notices are not held back by it: one goes to each address on the list

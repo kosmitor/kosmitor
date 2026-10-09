@@ -5,7 +5,8 @@
  * in the param file), and only when valuationDesk.enabled offers the service.
  * The company answers an appraiser's information request for a 409A, every item
  * of it mandatory, and attaches the documents it asks for from its vault; the
- * team is emailed the answers, the names of the documents, the capital structure
+ * internal team must approve the request first. Only then is the evaluator
+ * emailed the answers, the names of the documents, the capital structure
  * and a private link to work the request from; and the person who asked gets a
  * recap. From there the team moves the request along (started, report
  * delivered, or closed) and the company sees each step on its 409A page, until
@@ -42,6 +43,7 @@
  * against the report and pressed the button. Nothing is ever recorded from a
  * reading alone.
  *
+ * Internal approval has its own emailed credential, separate from the evaluator's.
  * The team's link is a credential: whoever has it can change the status the
  * company sees. Only a hash of its token is stored, each notice to the team
  * mints a new one and retires the last, it never appears in anything the company
@@ -105,6 +107,9 @@ export function deskAddresses(): string[] {
  * addresses than they did when there was one.
  */
 export const deskReplyTo = (): string | null => deskAddresses()[0] ?? null;
+
+const approvalAddress = (): string => config().valuationDesk.approvalEmail.trim().toLowerCase();
+const awaitingApproval = (row: RequestRow): boolean => row.approval_required && !row.approved_at;
 
 // --- Counts and waits, in words -------------------------------------------------
 
@@ -869,6 +874,8 @@ export interface RecapEmail {
   statusUrl: string;
   /** Replies reach the team, when there is one to reach. */
   replyTo: string | null;
+  /** New requests wait for internal review before an evaluator receives anything. */
+  awaitingApproval?: boolean;
 }
 
 /** How to reach someone, one way per line, the way the details box shows it. */
@@ -880,7 +887,7 @@ export function composeRecapEmail(r: RecapEmail): Message {
   const product = config().brand.productName;
   const subject = `Your 409A request for ${subjectName(r.companyName)} was received`;
   const { html, text } = renderEmail({
-    preview: `The ${desk} will contact you to confirm scope, price and timing.`,
+    preview: r.awaitingApproval ? 'Your request is awaiting internal approval before it is sent to an evaluator.' : `The ${desk} will contact you to confirm scope, price and timing.`,
     heading: 'We have your 409A request',
     greeting: `Hi ${r.toName},`,
     intro: [
@@ -899,7 +906,8 @@ export function composeRecapEmail(r: RecapEmail): Message {
       {
         title: 'What happens next',
         bullets: [
-          `The ${desk} will contact you at ${r.contact.email} or ${r.contact.phone} to confirm scope, price and timing.`,
+          ...(r.awaitingApproval ? ['Our internal team reviews your request first. It is sent to the evaluator only after approval.'] : []),
+          `${r.awaitingApproval ? 'After approval, the' : 'The'} ${desk} will contact you at ${r.contact.email} or ${r.contact.phone} to confirm scope, price and timing.`,
           // Only while the emails are on (valuationDesk.statusEmailsPerRequestPerDay), so the recap never promises one that cannot come.
           ...(config().valuationDesk.statusEmailsPerRequestPerDay > 0
             ? ['We will email you at each step, such as when the team starts and when the report is delivered.'] : []),
@@ -909,7 +917,7 @@ export function composeRecapEmail(r: RecapEmail): Message {
       ...tableSections(r.intake),
       ...(r.documents.length ? [{
         title: 'The documents you attached',
-        paragraphs: ['They stay in your vault. The team opens them from its request page while the request is open.'],
+        paragraphs: [r.awaitingApproval ? 'They stay in your vault. The evaluator receives access only after internal approval.' : 'They stay in your vault. The team opens them from its request page while the request is open.'],
         details: documentDetails(r.documents),
       }] : []),
       ...(r.notes ? [{ title: 'Your notes', paragraphs: paragraphsOf(r.notes) }] : []),
@@ -938,6 +946,28 @@ export interface DeskEmail {
   link: string;
   /** Whether the same link went to more than one address on the team's list, so the email does not tell its reader the link is theirs alone. */
   shared?: boolean;
+}
+
+export interface ApprovalEmail {
+  companyName: string; to: string; requestedBy: string; requestedAt: string; contact: Contact; link: string;
+}
+
+/** This credential is for internal review only; opening the email link never approves a request. */
+export function composeApprovalEmail(r: ApprovalEmail): Message {
+  const subject = `409A request awaiting approval: ${subjectName(r.companyName)}`;
+  const { html, text } = renderEmail({
+    preview: 'Review this request before it is sent to the evaluator.',
+    heading: 'A 409A request needs your approval',
+    intro: [`${r.requestedBy} requested a 409A valuation for ${sentence(r.companyName)} The evaluator has not been notified.`,
+      'Review the request, then select “Approve and send to evaluator” to release it. Opening this link alone does not approve anything.'],
+    details: [{ label: 'Company', value: r.companyName }, { label: 'Requested by', value: r.requestedBy },
+      { label: 'Requested on', value: longDate(r.requestedAt.slice(0, 10)) }, { label: 'Contact', value: contactLines(r.contact) }],
+    action: { label: 'Review the request', url: r.link },
+    actionNote: `Keep this link within the internal approval team. It opens only this request and expires after ${count(config().valuationDesk.linkOpenDays, 'day')}, when replaced, or when the approval inbox changes.`,
+    signoff: `— ${mailSignature()}`,
+    footer: `Sent to the internal approval inbox configured for ${config().brand.productName}. Do not forward this email to the requester or evaluator.`,
+  }, subject);
+  return { to: r.to, toName: 'Internal review team', subject, text, html };
 }
 
 /** The notice to the valuation team that a request is waiting. Pure, like the recap. */
@@ -1163,6 +1193,8 @@ interface RequestRow {
   desk_token_hash: string | null; desk_token_at: string | null; recap_sent_at: string | null;
   desk_notified_at: string | null; appraiser: string | null; report_date: string | null; closed_at: string | null;
   report_document_id: string | null; report_detected: string | null; report_fmv: number | null; report_method: string | null;
+  approval_required: boolean; approval_email: string | null; approval_token_hash: string | null;
+  approval_token_at: string | null; approval_notified_at: string | null; approved_at: string | null; approved_by: string | null;
 }
 
 interface EventRow { id: string; request_id: string; kind: string; message: string | null; author: string; author_name: string; created_at: string }
@@ -1322,6 +1354,7 @@ function present(
     contactEmail: editor ? row.contact_email : null,
     contactPhone: editor ? row.contact_phone : null,
     recapSentAt: row.recap_sent_at, deskNotifiedAt: row.desk_notified_at,
+    approvalRequired: row.approval_required, approvalNotifiedAt: row.approval_notified_at, approvedAt: row.approved_at,
     appraiser: row.appraiser, reportDate: row.report_date,
     /** The report the team uploaded, what was read from it, and the figures the team gave with it. */
     report,
@@ -1360,7 +1393,7 @@ async function presentById(ctx: Ctx, id: string) {
     companyReport(row, files, role));
 }
 
-async function addEvent(row: { id: string; company_id: string }, kind: string, message: string | null, author: 'company' | 'desk', authorName: string): Promise<void> {
+async function addEvent(row: { id: string; company_id: string }, kind: string, message: string | null, author: 'company' | 'desk' | 'approval', authorName: string): Promise<void> {
   await insert('valuation_request_events', {
     id: newId('vre'), requestId: row.id, companyId: row.company_id, kind, message, author, authorName, createdAt: nowISO(),
   });
@@ -1388,11 +1421,13 @@ const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
  * point the link, token and all, at a site the requester chose.
  */
 const deskLink = (token: string): string => `${config().app.url}/409a-desk#${token}`;
+const approvalLink = (token: string): string => `${config().app.url}/409a-approval#${token}`;
 
 // --- Sending -------------------------------------------------------------------
 
 /** The kinds of message a request sends, for the audit log and the limits read from it. */
-const SEND_ACTIONS = ['SEND_RECAP', 'SEND_RECAP_FAILED', 'NOTIFY_DESK', 'NOTIFY_DESK_FAILED', 'NOTIFY_DESK_SKIPPED'];
+const SEND_ACTIONS = ['SEND_RECAP', 'SEND_RECAP_FAILED', 'NOTIFY_DESK', 'NOTIFY_DESK_FAILED', 'NOTIFY_DESK_SKIPPED',
+  'NOTIFY_APPROVAL', 'NOTIFY_APPROVAL_FAILED', 'NOTIFY_APPROVAL_SKIPPED'];
 
 interface Outcome { delivered: boolean; error: string | null }
 
@@ -1420,6 +1455,8 @@ export interface SendOutcome {
   recapError: string | null;
   desk: 'sent' | 'partial' | 'failed' | 'not needed';
   deskError: string | null;
+  approval: 'sent' | 'failed' | 'not needed';
+  approvalError: string | null;
 }
 
 /**
@@ -1443,19 +1480,23 @@ const countSince = async (where: string, ms: number, ...params: unknown[]): Prom
  * company resending cannot use up the hour's allowance and keep every other
  * company's notice waiting.
  */
-async function deskHold(ctx: Ctx, row: RequestRow): Promise<string | null> {
+async function deskHold(ctx: Ctx, row: RequestRow, approval = false): Promise<string | null> {
   if (!deskOn()) return '409A requests are turned off on this server, so the team was not notified.';
-  if (!deskAddresses().length) return 'No valuation team address is set on this server, so the team was not notified.';
+  if (!approval && awaitingApproval(row)) return 'Internal approval is required before the evaluator can be notified.';
+  if (!approval && !deskAddresses().length) return 'No valuation team address is set on this server, so the team was not notified.';
   // In production an unsent notice would be printed to the log, link and all.
   if (isProduction() && !mailConfigured()) return 'Mail is not set up on this server, so the team was not notified.';
   const limits = config().valuationDesk;
-  if (await countSince(`entity_id = ? AND action IN ('NOTIFY_DESK', 'NOTIFY_DESK_FAILED')`, DAY, row.id) >= limits.noticesPerRequestPerDay) {
+  // Each stage has its own request/company allowance so reminders to an approver
+  // cannot consume the later evaluator's allowance. Both share the hourly email cap.
+  const action = approval ? 'NOTIFY_APPROVAL' : 'NOTIFY_DESK';
+  if (await countSince(`entity_id = ? AND action IN ('${action}', '${action}_FAILED')`, DAY, row.id) >= limits.noticesPerRequestPerDay) {
     return `This request has been sent to the team ${times(limits.noticesPerRequestPerDay)} today. Try again tomorrow.`;
   }
-  if (await countSince(`company_id = ? AND action = 'NOTIFY_DESK'`, DAY, row.company_id) >= limits.noticesPerCompanyPerDay) {
+  if (await countSince(`company_id = ? AND action = '${action}'`, DAY, row.company_id) >= limits.noticesPerCompanyPerDay) {
     return `The team has had ${count(limits.noticesPerCompanyPerDay, 'notice')} from this company today. Try again tomorrow.`;
   }
-  if (ctx.user && await countSince(`user_id = ? AND action IN ('NOTIFY_DESK', 'NOTIFY_DESK_FAILED')`, DAY, ctx.user.id) >= limits.noticesPerPersonPerDay) {
+  if (ctx.user && await countSince(`user_id = ? AND action IN ('${action}', '${action}_FAILED')`, DAY, ctx.user.id) >= limits.noticesPerPersonPerDay) {
     return `You have sent the team ${count(limits.noticesPerPersonPerDay, 'notice')} today. Try again tomorrow.`;
   }
   // The hour's allowance is counted in emails, not notices: each address is an email
@@ -1463,7 +1504,9 @@ async function deskHold(ctx: Ctx, row: RequestRow): Promise<string | null> {
   // share. Notices sent earlier in the hour count at the list's length now, which
   // only changes when the server restarts.
   const emailsPerNotice = deskAddresses().length;
-  if ((await countSince(`action = 'NOTIFY_DESK'`, 3_600_000) + 1) * emailsPerNotice > limits.noticesPerHour) {
+  const deskEmails = (await countSince(`action = 'NOTIFY_DESK'`, 3_600_000)) * emailsPerNotice;
+  const approvalEmails = await countSince(`action = 'NOTIFY_APPROVAL'`, 3_600_000);
+  if (deskEmails + approvalEmails + (approval ? 1 : emailsPerNotice) > limits.noticesPerHour) {
     return 'The valuation team is receiving a lot of requests right now. Try again in an hour.';
   }
   return null;
@@ -1487,10 +1530,13 @@ async function deskHold(ctx: Ctx, row: RequestRow): Promise<string | null> {
  */
 async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<SendOutcome> {
   const intake = intakeOf(row)!;
+  const pending = awaitingApproval(row);
   const wantRecap = !row.recap_sent_at;
-  const wantDesk = !row.desk_notified_at || again;
-  const outcome: SendOutcome = { recap: 'not needed', recapTo: null, recapError: null, desk: 'not needed', deskError: null };
-  if (!wantRecap && !wantDesk) return outcome;
+  const wantDesk = !pending && (!row.desk_notified_at || again);
+  const wantApproval = pending && (!row.approval_notified_at || again || row.approval_email !== approvalAddress());
+  const outcome: SendOutcome = { recap: 'not needed', recapTo: null, recapError: null, desk: 'not needed', deskError: null,
+    approval: 'not needed', approvalError: null };
+  if (!wantRecap && !wantDesk && !wantApproval) return outcome;
 
   const company = await companyName(row.company_id);
   const contact: Contact = { name: row.contact_name, email: row.contact_email!, phone: row.contact_phone! };
@@ -1510,7 +1556,7 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
       outcome.recapTo = requester.name;
       recap = composeRecapEmail({
         companyName: company, to: requester.email, toName: requester.name, contact, intake, documents, notes: row.notes,
-        statusUrl: `${config().app.url}/compliance/409a`, replyTo: desk[0] ?? null,
+        statusUrl: `${config().app.url}/compliance/409a`, replyTo: pending ? null : desk[0] ?? null, awaitingApproval: pending,
       });
     }
   }
@@ -1519,6 +1565,19 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
   // sees another's address. Every one carries the same link.
   let notices: Message[] = [];
   let token: string | null = null;
+  let approvalNotice: Message | null = null;
+  let approvalToken: string | null = null;
+  if (wantApproval) {
+    const hold = await deskHold(ctx, row, true);
+    if (hold) {
+      outcome.approval = 'failed';
+      outcome.approvalError = hold;
+    } else {
+      approvalToken = randomBytes(32).toString('base64url');
+      approvalNotice = composeApprovalEmail({ companyName: company, to: approvalAddress(), requestedBy: row.requested_by,
+        requestedAt: row.created_at, contact, link: approvalLink(approvalToken) });
+    }
+  }
   if (wantDesk) {
     const hold = await deskHold(ctx, row);
     if (hold) {
@@ -1536,8 +1595,9 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
   }
 
   // All at once, so a slow mail server holds the company's records for one wait, not one per email.
-  const [recapOutcome, ...deskOutcomes] = await Promise.all([
+  const [recapOutcome, approvalOutcome, ...deskOutcomes] = await Promise.all([
     recap ? deliver(recap, row.id, 'recap') : Promise.resolve(null),
+    approvalNotice ? deliver(approvalNotice, row.id, 'internal approval notice') : Promise.resolve(null),
     ...notices.map((n) => deliver(n, row.id, `notice to the valuation team at ${n.to}`)),
   ]);
 
@@ -1549,6 +1609,22 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
     if (recapOutcome.delivered) values.recapSentAt = now;
     await audit(ctx, recapOutcome.delivered ? 'SEND_RECAP' : 'SEND_RECAP_FAILED', 'valuation_requests', row.id,
       recapOutcome.delivered ? '409A request recap emailed to the person who asked' : '409A request recap was not emailed');
+  }
+  if (approvalOutcome && approvalToken) {
+    outcome.approval = approvalOutcome.delivered ? 'sent' : 'failed';
+    outcome.approvalError = approvalOutcome.error;
+    if (approvalOutcome.delivered) values.approvalNotifiedAt = now;
+    // As with desk links, a failed delivery cannot retire a link that already
+    // works. Development without a mail transport keeps the logged link usable.
+    if (approvalOutcome.delivered || !mailConfigured()) {
+      values.approvalTokenHash = hashToken(approvalToken);
+      values.approvalTokenAt = now;
+      values.approvalEmail = approvalAddress();
+    }
+    await audit(ctx, approvalOutcome.delivered ? 'NOTIFY_APPROVAL' : 'NOTIFY_APPROVAL_FAILED', 'valuation_requests', row.id,
+      approvalOutcome.delivered ? '409A request sent for internal approval' : '409A internal approval email was not sent');
+  } else if (wantApproval && outcome.approvalError) {
+    await audit(ctx, 'NOTIFY_APPROVAL_SKIPPED', 'valuation_requests', row.id, '409A internal approval email was not sent');
   }
   if (deskOutcomes.length && token) {
     const total = deskOutcomes.length;
@@ -1683,6 +1759,24 @@ async function tellRequester(ctx: Ctx, row: RequestRow, change: StatusChange, me
   }
 }
 
+/** The same retry waits apply to both mail stages. Approval itself need not wait for its own notification. */
+async function checkSendCooldown(row: RequestRow, again: boolean, evaluatorOnly = false): Promise<void> {
+  const { sendCooldownSeconds, resendCooldownMinutes } = config().valuationDesk;
+  const actions = evaluatorOnly ? ['NOTIFY_DESK', 'NOTIFY_DESK_FAILED', 'NOTIFY_DESK_SKIPPED'] : SEND_ACTIONS;
+  if (sendCooldownSeconds > 0) {
+    const recent = await one<{ id: string }>(
+      `SELECT id FROM audit_log WHERE company_id = ? AND entity_type = 'valuation_requests' AND entity_id = ?
+         AND action IN (${actions.map((a) => `'${a}'`).join(', ')}) AND created_at > ? LIMIT 1`,
+      row.company_id, row.id, since(sendCooldownSeconds * 1000));
+    const wait = span(sendCooldownSeconds);
+    if (recent) throw badRequest(`This request was sent, or tried, less than ${wait} ago. Wait ${wait} before trying again.`);
+  }
+  const lastNotice = awaitingApproval(row) ? row.approval_notified_at : row.desk_notified_at;
+  if (again && resendCooldownMinutes > 0 && lastNotice && lastNotice > since(resendCooldownMinutes * 60_000)) {
+    throw badRequest(`The ${awaitingApproval(row) ? 'internal approval' : 'valuation'} team was sent this request a few minutes ago. Wait ${span(resendCooldownMinutes * 60)} before sending it again.`);
+  }
+}
+
 // --- The company's routes --------------------------------------------------------
 
 route.get('/api/c/:cid/valuation-refresh', 'read', async (ctx) => {
@@ -1754,7 +1848,7 @@ route.post('/api/c/:cid/valuation-requests', 'write', async (ctx) => {
   // together or not at all, so the team is never sent a request missing a part.
   await transaction(async () => {
     await insert('valuation_requests', {
-      id, companyId: ctx.companyId, status: 'REQUESTED', reasons: JSON.stringify(reasons),
+      id, companyId: ctx.companyId, status: 'REQUESTED', approvalRequired: true, reasons: JSON.stringify(reasons),
       provider: deskName(), answers: JSON.stringify(intake), contactName, contactEmail, contactPhone, notes,
       requestedBy: ctx.user!.name, requestedById: ctx.user!.id, createdAt: now, updatedAt: now,
     });
@@ -1852,19 +1946,8 @@ route.post('/api/c/:cid/valuation-requests/:id/send', 'write', async (ctx) => {
   if (!isOpen(row.status)) throw badRequest('Only an open request can be sent.');
   if (!row.answers) throw badRequest('This request was made before the intake questions, so it cannot go to the valuation team. Cancel it and make a new one.');
 
-  const { sendCooldownSeconds, resendCooldownMinutes } = config().valuationDesk;
-  if (sendCooldownSeconds > 0) {
-    const recent = await one<{ id: string }>(
-      `SELECT id FROM audit_log WHERE company_id = ? AND entity_type = 'valuation_requests' AND entity_id = ?
-         AND action IN (${SEND_ACTIONS.map((a) => `'${a}'`).join(', ')}) AND created_at > ? LIMIT 1`,
-      ctx.companyId, row.id, since(sendCooldownSeconds * 1000));
-    const wait = span(sendCooldownSeconds);
-    if (recent) throw badRequest(`This request was sent, or tried, less than ${wait} ago. Wait ${wait} before trying again.`);
-  }
   const again = ctx.body.again === true;
-  if (again && resendCooldownMinutes > 0 && row.desk_notified_at && row.desk_notified_at > since(resendCooldownMinutes * 60_000)) {
-    throw badRequest(`The valuation team was sent this request a few minutes ago. Wait ${span(resendCooldownMinutes * 60)} before sending it again.`);
-  }
+  await checkSendCooldown(row, again);
 
   const outcome = await sendPending(ctx, row, again);
   return { request: await presentById(ctx, row.id), ...outcome };
@@ -2114,6 +2197,66 @@ route.get('/api/c/:cid/valuation-requests/package.xlsx', 'read', async (ctx) => 
   return undefined;
 });
 
+// --- Internal review ----------------------------------------------------------
+
+/** Separate authority from an evaluator token and from a company's membership. */
+async function approvalRequest(ctx: Ctx): Promise<RequestRow> {
+  ctx.res.setHeader('Cache-Control', 'no-store');
+  const token = String(ctx.req.headers['x-approval-token'] ?? '');
+  const invalid = () => notFound('This approval link is not valid. It may have expired or been replaced.');
+  if (!TOKEN_SHAPE.test(token)) throw invalid();
+  const row = await one<RequestRow>('SELECT * FROM valuation_requests WHERE approval_token_hash = ?', hashToken(token));
+  if (!row || !row.approval_required || row.approval_email !== approvalAddress()) throw invalid();
+  const { linkOpenDays, linkClosedDays } = config().valuationDesk;
+  if (!row.approval_token_at || row.approval_token_at <= since(linkOpenDays * DAY)
+    || (!isOpen(row.status) && (row.closed_at ?? row.updated_at ?? row.created_at) <= since(linkClosedDays * DAY))) throw invalid();
+  return row;
+}
+
+async function approvalView(row: RequestRow) {
+  return {
+    ...(await deskView(row)),
+    canApprove: deskOn() && isOpen(row.status) && awaitingApproval(row),
+  };
+}
+
+/** A GET only reads the request. Email scanners cannot approve it by opening a link. */
+route.get('/api/valuation-approval', 'public', async (ctx) => approvalView(await approvalRequest(ctx)));
+
+route.post('/api/valuation-approval/approve', 'public', async (ctx) => {
+  const found = await approvalRequest(ctx);
+  if (!deskOn()) throw forbidden('409A requests are turned off on this server, so the request cannot be forwarded.');
+  const again = ctx.body.again === true;
+  const actor = { companyId: found.company_id, userName: 'Internal review team' };
+  const internalCtx: Ctx = { ...ctx, companyId: found.company_id, user: null, membership: null };
+  const lockAndRead = async () => {
+    await one('SELECT id FROM companies WHERE id = ? FOR UPDATE', found.company_id);
+    const row = await approvalRequest(ctx);
+    if (row.id !== found.id) throw notFound('This approval link has been replaced.');
+    if (!isOpen(row.status)) throw badRequest('This request is closed and cannot be approved or sent.');
+    return row;
+  };
+  // Approval commits before mail is attempted. A transport failure leaves an
+  // approved request that can be retried, and parallel approvals record one event.
+  await transaction(async () => {
+    const row = await lockAndRead();
+    if (!row.approved_at) {
+      const now = nowISO();
+      await update('valuation_requests', row.id, { approvedAt: now, approvedBy: approvalAddress(), updatedAt: now });
+      await addEvent(row, 'APPROVED', null, 'approval', actor.userName);
+      await audit(ctx, 'APPROVE_REQUEST', 'valuation_requests', row.id, '409A request approved for the evaluator', actor);
+    }
+  });
+  const outcome = await transaction(async () => {
+    const row = await lockAndRead();
+    // Sending shares the company's lock with cancel and resend. Successful sends
+    // are idempotent; only an explicit resend can replace a delivered link.
+    if (!row.desk_notified_at || again) await checkSendCooldown(row, again, true);
+    return sendPending(internalCtx, row, again);
+  });
+  return { request: await approvalView(await approvalRequest(ctx)), ...outcome };
+});
+
 // --- The valuation team's page -------------------------------------------------
 //
 // Reached from the emailed link, with no account. The token arrives in a header,
@@ -2128,7 +2271,7 @@ async function deskRequest(ctx: Ctx): Promise<RequestRow> {
   const invalid = () => notFound('This link is not valid. It may have been replaced by a newer one, or the request closed a while ago.');
   if (!TOKEN_SHAPE.test(token)) throw invalid();
   const row = await one<RequestRow>('SELECT * FROM valuation_requests WHERE desk_token_hash = ?', hashToken(token));
-  if (!row) throw invalid();
+  if (!row || awaitingApproval(row)) throw invalid();
   // A link lasts valuationDesk.linkOpenDays from when it was sent, and a closed
   // request's no more than linkClosedDays past its close, whichever ends first:
   // closing never revives one.
@@ -2148,6 +2291,8 @@ async function deskView(row: RequestRow) {
   const open = isOpen(row.status);
   const base = {
     id: row.id, status: row.status, open, deskName: deskName(),
+    approvalRequired: row.approval_required, approvedAt: row.approved_at,
+    approvalNotifiedAt: row.approval_notified_at, deskNotifiedAt: row.desk_notified_at,
     companyName: await companyName(row.company_id),
     createdAt: row.created_at, closedAt: row.closed_at,
     appraiser: row.appraiser, reportDate: row.report_date,

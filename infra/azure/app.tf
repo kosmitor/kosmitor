@@ -62,7 +62,7 @@ resource "azurerm_container_app_environment" "main" {
 
 locals {
   # The app's environment. APP_URL, ALLOWED_ORIGINS, PG_POOL_MAX, TRUST_PROXY,
-  # MAIL_FROM, GOOGLE_* and VALUATION_DESK_EMAIL win over kosmitor.config.json in the image, which (with
+  # MAIL_FROM, GOOGLE_* and VALUATION_*_EMAIL win over kosmitor.config.json in the image, which (with
   # kosmitor.config.local.json when the build context has one) supplies every
   # other setting. Container Apps ingress is a proxy in front of every request,
   # so the client address comes from X-Forwarded-For.
@@ -78,6 +78,7 @@ locals {
     VERIFY_EMAIL = "true"
     },
     { MAIL_FROM = local.mail_from },
+    { VALUATION_APPROVAL_EMAIL = var.valuation_approval_email },
     var.google_client_id != "" ? { GOOGLE_CLIENT_ID = var.google_client_id } : {},
     var.google_allowed_domains != "" ? { GOOGLE_ALLOWED_DOMAINS = var.google_allowed_domains } : {},
     length(var.valuation_desk_emails) > 0 ? { VALUATION_DESK_EMAIL = join(",", var.valuation_desk_emails) } : {},
@@ -240,6 +241,8 @@ locals {
     AZURE_CLIENT_ID    = azurerm_user_assigned_identity.app.client_id
     NODE_ENV           = "production"
     },
+    # Jobs load the same validated configuration as the app, including the review inbox.
+    { VALUATION_APPROVAL_EMAIL = var.valuation_approval_email },
     var.drill_database != "" ? { DRILL_DATABASE = var.drill_database } : {},
   )
 }

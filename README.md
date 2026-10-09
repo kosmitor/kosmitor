@@ -45,7 +45,7 @@ To have the sign-in page show that login and fill it in, put
 > only on a throwaway database.
 
 ```bash
-npm test              # engine tests, then server tests (each server test file gets its own scratch database)
+npm test              # engine, web helper, then server tests (each server test file gets its own scratch database)
 ```
 
 ## Layout
@@ -116,5 +116,4 @@ with one. The seat decides who votes on board consents and who gets the board's 
 - [Importing data](docs/importing.md): the import wizard, and checking the math against a Pulley or Carta export
 - [Signing in](docs/auth.md): Google sign-in, invitations, password resets, email
 - [Data and files](docs/data.md): documents, where data lives, backups
-- [409A requests and reports](docs/valuation-desk.md): the optional valuation desk
 - [Dated ledger](docs/design/dated-ledger.md): design notes on past-date views

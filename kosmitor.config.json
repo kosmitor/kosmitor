@@ -168,6 +168,7 @@
     "enabled": false,
     "name": null,
     "email": null,
+    "approvalEmail": "",
     "linkOpenDays": 180,
     "linkClosedDays": 30,
     "requestsPerCompanyPerDay": 5,

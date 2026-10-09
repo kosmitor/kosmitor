@@ -23,6 +23,9 @@ import { freshDatabase, sessionCookie } from './helpers.ts';
 
 // A fictional team inbox. Tests run with no mail transport, so the console
 // transport prints each message, and that output is read back below.
+// Empty values override any developer mail credentials; this suite logs mail only.
+process.env.SMTP_URL = '';
+process.env.ACS_CONNECTION_STRING = '';
 process.env.VALUATION_DESK_EMAIL = 'desk@example.test';
 
 await freshDatabase();
@@ -37,7 +40,7 @@ const { composeDeskEmail, composeRecapEmail, composeClosedEmail, composeStatusEm
   await import('../src/routes/valuation-requests.ts');
 const { config, configure, resetConfig, deskName, mailSignature, publicConfig } = await import('../src/config.ts');
 /** The service is off by default; these tests are about it running, so they turn it on. */
-const offerTheDesk = () => { resetConfig(); configure({ valuationDesk: { enabled: true } }); };
+const offerTheDesk = () => { resetConfig(); configure({ valuationDesk: { enabled: true, approvalEmail: 'approvals@example.com' } }); };
 offerTheDesk();
 const limits = () => config().valuationDesk;
 const { getCompanyData, invalidate } = await import('../src/store.ts');
@@ -197,6 +200,11 @@ const INTAKE = await intakeFor(cid);
 const forgetLimits = () =>
   run(`UPDATE audit_log SET created_at = ? WHERE entity_type = 'valuation_requests'`, new Date(Date.now() - 2 * 86_400_000).toISOString());
 
+/** This suite exercises evaluator workflows after review; the real approval handshake is covered separately. */
+const approveFixture = (requestId: string) =>
+  run('UPDATE valuation_requests SET approved_at = ?, approved_by = ? WHERE id = ?',
+    new Date().toISOString(), 'Internal review fixture', requestId);
+
 /** Clears the one-minute gate between sends, which a person would wait out. */
 const forgetRecentSends = (requestId: string) =>
   run(`UPDATE audit_log SET created_at = ? WHERE entity_id = ? AND action LIKE 'SEND%' OR entity_id = ? AND action LIKE 'NOTIFY%'`,
@@ -252,6 +260,9 @@ test('a request records the answers and why it was asked for, and a second open 
   const made = await call('POST', `/api/c/${cid}/valuation-requests`, INTAKE, admin);
   assert.equal(made.status, 200, JSON.stringify(made.json));
   assert.equal(made.json.status, 'REQUESTED');
+  assert.equal(made.json.approvalRequired, true);
+  assert.equal(made.json.approvedAt, null);
+  assert.equal(made.json.approvalNotifiedAt, null);
   assert.equal(made.json.provider, deskName());
   assert.ok(made.json.reasons.includes('PRICED_ROUND'), JSON.stringify(made.json.reasons));
   // The company's dates come from its record, not the form: this one was set up today, with the usual year end.
@@ -282,6 +293,7 @@ test('a request records the answers and why it was asked for, and a second open 
 
 test('sending mails the recap to the account of whoever asked and the notice to the team, and claims neither without a transport', async () => {
   outbox.length = 0;
+  await approveFixture(requestId);
   const sent = await call('POST', `/api/c/${cid}/valuation-requests/${requestId}/send`, {}, admin);
   assert.equal(sent.status, 200, JSON.stringify(sent.json));
   assert.match(sent.json.recapError, /Mail is not set up/);
@@ -571,6 +583,7 @@ test('the request completes against a 409A of this company, and then the team’
 test('a cancel stops the team’s page from changing anything and tells the team, if it was told in the first place', async () => {
   const req = (await call('POST', `/api/c/${cid}/valuation-requests`, INTAKE, admin)).json;
   outbox.length = 0;
+  await approveFixture(req.id);
   await call('POST', `/api/c/${cid}/valuation-requests/${req.id}/send`, {}, admin);
   const token = tokenIn(outbox.find((m) => m.to === 'desk@example.test')!.text);
   // As if the notice had arrived, which the console transport cannot do.
@@ -593,6 +606,7 @@ test('a cancel stops the team’s page from changing anything and tells the team
 test('the team can close a request itself, with a reason the company reads', async () => {
   const req = (await call('POST', `/api/c/${cid}/valuation-requests`, INTAKE, admin)).json;
   outbox.length = 0;
+  await approveFixture(req.id);
   await call('POST', `/api/c/${cid}/valuation-requests/${req.id}/send`, {}, admin);
   const token = tokenIn(outbox.find((m) => m.to === 'desk@example.test')!.text);
   assert.equal((await desk('POST', '/status', token, { action: 'CLOSE' })).status, 400, 'a close needs a reason');
@@ -660,6 +674,7 @@ test('requests are limited per company and per person, and notices to the team p
     await run(`INSERT INTO audit_log (id, company_id, action, entity_type, entity_id, detail, created_at)
                VALUES (?, ?, 'NOTIFY_DESK', 'valuation_requests', ?, 'sent', ?)`, `aud_d${i}`, cid, `vrq_d${i}`, stamp);
   }
+  await approveFixture(req.id);
   const busy = await call('POST', `/api/c/${other}/valuation-requests/${req.id}/send`, {}, admin);
   assert.equal(busy.status, 200, 'the request is kept; only the notice waits');
   assert.match(busy.json.deskError, /a lot of requests/);
@@ -689,6 +704,7 @@ test('the team’s address is set per server, there is none unless it is given o
     const req = await call('POST', `/api/c/${other}/valuation-requests`, await intakeFor(other), admin);
     assert.equal(req.status, 200, JSON.stringify(req.json));
     outbox.length = 0;
+    await approveFixture(req.json.id);
     const sent = await call('POST', `/api/c/${other}/valuation-requests/${req.json.id}/send`, {}, admin);
     assert.equal(sent.status, 200, JSON.stringify(sent.json));
     assert.equal(sent.json.desk, 'failed');
@@ -718,6 +734,7 @@ test('the service is off unless the param file turns it on, and off it takes no 
   const other = (await call('POST', '/api/companies', { name: 'Paused Harbor' }, admin)).json.id as string;
   const req = (await call('POST', `/api/c/${other}/valuation-requests`, await intakeFor(other), admin)).json;
   outbox.length = 0;
+  await approveFixture(req.id);
   await call('POST', `/api/c/${other}/valuation-requests/${req.id}/send`, {}, admin);
   const token = tokenIn(outbox.find((m) => m.to === 'desk@example.test')!.text);
   // As if the notice had arrived, so a cancel would ordinarily tell the team.
@@ -822,6 +839,7 @@ test('a cancel and a team update sent at the same moment cannot both win', async
     const other = (await call('POST', '/api/companies', { name: `Race Harbor ${round}` }, admin)).json.id as string;
     const req = (await call('POST', `/api/c/${other}/valuation-requests`, await intakeFor(other), admin)).json;
     outbox.length = 0;
+    await approveFixture(req.id);
     await call('POST', `/api/c/${other}/valuation-requests/${req.id}/send`, {}, admin);
     const token = tokenIn(outbox.find((m) => m.to === 'desk@example.test')!.text);
     await Promise.all([
@@ -841,6 +859,7 @@ test('an expired link stays expired when the request later closes', async () => 
   const other = (await call('POST', '/api/companies', { name: 'Stale Harbor' }, admin)).json.id as string;
   const req = (await call('POST', `/api/c/${other}/valuation-requests`, await intakeFor(other), admin)).json;
   outbox.length = 0;
+  await approveFixture(req.id);
   await call('POST', `/api/c/${other}/valuation-requests/${req.id}/send`, {}, admin);
   const token = tokenIn(outbox.find((m) => m.to === 'desk@example.test')!.text);
   await run('UPDATE valuation_requests SET desk_token_at = ? WHERE id = ?', new Date(Date.now() - (limits().linkOpenDays + 1) * 86_400_000).toISOString(), req.id);
@@ -860,6 +879,7 @@ test('notices to the team are limited per request, per company and per person, b
                  VALUES (?, ?, ?, 'NOTIFY_DESK', 'valuation_requests', ?, 'sent', ?)`, `${prefix}${i}`, company, userId, entity, stamp);
     }
   };
+  await approveFixture(req.id);
   await insertNotices('aud_r', limits().noticesPerRequestPerDay, other, req.id, null);
   const perRequest = await call('POST', `/api/c/${other}/valuation-requests/${req.id}/send`, { again: true }, admin);
   assert.equal(perRequest.status, 200);
@@ -1241,6 +1261,7 @@ test('the team’s page lists the documents and the tables, and its link alone d
   documentNames.push(...made.json.documents.map((d: any) => d.name));
   documentIds.push(...made.json.documents.map((d: any) => d.id));
   outbox.length = 0;
+  await approveFixture(id);
   await call('POST', `/api/c/${cid}/valuation-requests/${id}/send`, {}, admin);
   documentsNotice = outbox.find((m) => m.to === 'desk@example.test');
   documentsRecap = outbox.find((m) => m.subject.startsWith('Your 409A request'));
@@ -1516,6 +1537,7 @@ async function sentRequest(companyId: string, asker = admin) {
   const made = await call('POST', `/api/c/${companyId}/valuation-requests`, await intakeFor(companyId), asker);
   assert.equal(made.status, 200, JSON.stringify(made.json));
   outbox.length = 0;
+  await approveFixture(made.json.id);
   await call('POST', `/api/c/${companyId}/valuation-requests/${made.json.id}/send`, {}, asker);
   const token = tokenIn(outbox.find((m) => m.to === 'desk@example.test')!.text);
   outbox.length = 0;
