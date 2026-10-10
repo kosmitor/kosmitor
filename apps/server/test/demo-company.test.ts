@@ -75,3 +75,26 @@ test('the shared demo account cannot create companies while the demo card is on;
   const demo = (await call('POST', '/api/auth/login', { email: config().demo.email, password: config().demo.password })).token as string;
   assert.equal((await call('POST', '/api/companies', { name: 'Avery Co' }, demo)).status, 200);
 });
+
+test('the shared demo account cannot lock others out, delete the sample company, invite, or edit its profile', async () => {
+  configure({ demo: { enabled: true } });
+  try {
+    const { email, password } = config().demo;
+    const demo = (await call('POST', '/api/auth/login', { email, password })).token as string;
+    const cid = (await sampleCompaniesOf(email))[0].id;
+    const refuse = async (method: string, path: string, body?: unknown) => assert.equal((await call(method, path, body, demo)).status, 403, `${method} ${path}`);
+    await refuse('POST', '/api/auth/change-password', { currentPassword: password, newPassword: 'locked-out-1' });
+    await refuse('PATCH', '/api/auth/me', { name: 'Vandal' });
+    await refuse('POST', `/api/c/${cid}/members`, { email: 'spam@example.com', name: 'Spam', role: 'VIEWER' });
+    await refuse('DELETE', `/api/c/${cid}?confirm=anything`);
+    // A reset link is neither issued nor shown for it.
+    const forgot = await call('POST', '/api/auth/forgot', { email });
+    assert.equal(forgot.json.resetUrl, undefined);
+    assert.equal((await one<{ n: number }>('SELECT COUNT(*)::int AS n FROM password_resets WHERE user_id = (SELECT id FROM users WHERE LOWER(email) = LOWER(?))', email))!.n, 0);
+    // The password still works, and the company is still there.
+    assert.equal((await call('POST', '/api/auth/login', { email, password })).status, 200);
+    assert.ok(await one('SELECT id FROM companies WHERE id = ?', cid));
+  } finally {
+    resetConfig();
+  }
+});

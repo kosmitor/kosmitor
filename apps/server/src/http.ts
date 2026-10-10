@@ -2,7 +2,7 @@ import { UNSHOWABLE, HEADER_SYNTAX, HAS_SUBSTANCE, NAME_MAX } from './names.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { serveStatic } from './static.ts';
 import { randomUUID } from 'node:crypto';
-import { isEditor, seesWholeCompany, userForToken, membershipFor, type AuthUser, type Membership, type Role } from './auth.ts';
+import { isEditor, isDemoAccount, seesWholeCompany, userForToken, membershipFor, type AuthUser, type Membership, type Role } from './auth.ts';
 import { insert, one, transaction } from './db.ts';
 import { invalidate } from './store.ts';
 import { config, megabytes } from './config.ts';
@@ -296,7 +296,10 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
           const computes = suffix.startsWith('model/') || suffix === 'report-builder/run'
             || suffix.startsWith('ai/chats') || suffix === 'valuations/report-reading'
             || (suffix.startsWith('imports/') && !suffix.endsWith('/commit'));
-          const housekeeping = (suffix === '' && req.method === 'DELETE') || suffix === 'members' || suffix.startsWith('members/');
+          // Not for the shared demo account: its password is public, so it could delete the company,
+          // lock the account out or send invitations from this server.
+          const housekeeping = !isDemoAccount(user.email)
+            && ((suffix === '' && req.method === 'DELETE') || suffix === 'members' || suffix.startsWith('members/'));
           if (!computes && !housekeeping) throw forbidden('This is sample data and cannot be changed.');
         }
       }
