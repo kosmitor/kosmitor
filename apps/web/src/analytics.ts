@@ -11,6 +11,11 @@ if (settings) {
   posthog.init(settings.key, { api_host: settings.host, capture_pageview: 'history_change', capture_exceptions: true, person_profiles: 'identified_only' });
 }
 
+/** Reports errors caught by React before they reach the browser's global handlers. */
+export function captureException(error: unknown): void {
+  if (settings) posthog.captureException(error);
+}
+
 /** Names the signed-in person, so their pageviews and errors are theirs. */
 export function identify(user: User): void {
   if (settings) posthog.identify(user.id, { email: user.email, name: user.name });
