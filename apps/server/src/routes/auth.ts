@@ -6,7 +6,7 @@ import { track } from '../telemetry.ts';
 import {
   createUser, findUserByEmail, upsertGoogleAccount, verifyPassword, createSession, destroySession, publicUser,
   issuePasswordReset, readPasswordReset, consumePasswordReset, markPasswordResetHandedOut, setPassword, generateTemporaryPassword,
-  neverSignedIn, ROLES, seesWholeCompany, type AuthUser, type Role, type UserRow,
+  neverSignedIn, isDemoAccount, ROLES, seesWholeCompany, type AuthUser, type Role, type UserRow,
 } from '../auth.ts';
 import { verifyGoogleIdToken, GoogleAuthError } from '../google.ts';
 import { issueNonce, consumeNonce } from '../nonces.ts';
@@ -258,7 +258,7 @@ route.post('/api/auth/forgot', 'public', async (ctx) => {
   if (!SINGLE_ADDRESS.test(email)) throw badRequest('Enter a valid email address.');
   const response: Record<string, unknown> = { ok: true, mailConfigured: mailConfigured() };
   const user = await findUserByEmail(email);
-  if (!user) return response;
+  if (!user || isDemoAccount(user.email)) return response;   // the demo password is public: no reset link for it
   const issued = await issuePasswordReset(user.id, { ttlMinutes: config().auth.resetLinkMinutes });
   if (!issued) return response;                                    // throttled — say nothing
   const link = resetLink(issued.token);
@@ -316,6 +316,7 @@ route.post('/api/auth/reset', 'public', async (ctx) => {
 /** Signed-in password change; keeps this session and signs out the others. */
 route.post('/api/auth/change-password', 'user', async (ctx) => {
   assertPasswordSignIn();
+  assertNotDemo(ctx, 'The demo password is shared by everyone, so it cannot be changed.');
   const current = str(ctx.body.currentPassword, 'Current password');
   const next = str(ctx.body.newPassword, 'New password');
   checkNewPassword(next);
@@ -563,6 +564,7 @@ route.get('/api/auth/me', 'user', async (ctx) => {
  * empty name is refused rather than quietly kept.
  */
 route.patch('/api/auth/me', 'user', async (ctx) => {
+  assertNotDemo(ctx, 'The demo account is shared by everyone, so its profile cannot be changed.');
   const values: Record<string, unknown> = {};
   if (ctx.body.name !== undefined) values.name = personName(ctx.body.name, 'Name');
   if (ctx.body.avatarColor !== undefined) {
@@ -585,17 +587,16 @@ route.patch('/api/auth/me', 'user', async (ctx) => {
   return publicUser(toCamel<UserRow>(await one('SELECT * FROM users WHERE id = ?', ctx.user!.id))!);
 });
 
-// --- Companies -------------------------------------------------------------
-
-/** The account the sign-in page's demo card hands out to everyone, when the card is on. */
-const isDemoAccount = (email: string): boolean => {
-  const { enabled, email: demo } = config().demo;
-  return enabled && email.trim().toLowerCase() === demo.trim().toLowerCase();
+/** Refuses the shared demo account: its password is public, so it may only look. */
+const assertNotDemo = (ctx: Ctx, message: string): void => {
+  if (isDemoAccount(ctx.user!.email)) throw forbidden(message);
 };
+
+// --- Companies -------------------------------------------------------------
 
 route.post('/api/companies', 'user', async (ctx) => {
   // Everyone shares the demo account's password, so it explores the sample company only.
-  if (isDemoAccount(ctx.user!.email)) throw forbidden('The demo account is for exploring the sample company. Create your own account to set up a company.');
+  assertNotDemo(ctx, 'The demo account is for exploring the sample company. Create your own account to set up a company.');
   const name = str(ctx.body.name, 'Company name', { max: 160 });
   const id = newId('co');
   track(ctx.user!.id, 'company_created', { companyId: id });
