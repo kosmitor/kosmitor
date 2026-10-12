@@ -13,11 +13,13 @@ resource "azurerm_key_vault" "main" {
   tags                       = local.tags
 }
 
-# Whoever runs Terraform writes the secrets.
+# The deployers write the secrets.
 resource "azurerm_role_assignment" "kv_deployer" {
+  for_each = local.deployer_object_ids
+
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
-  principal_id         = data.azurerm_client_config.current.object_id
+  principal_id         = each.value
 }
 
 # The application and its jobs read them.

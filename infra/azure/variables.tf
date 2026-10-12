@@ -54,6 +54,18 @@ variable "alert_email" {
   type        = string
 }
 
+variable "deployer_object_ids" {
+  description = "Entra ID object ids (users, groups or service principals) given Key Vault Secrets Officer on the vault and Storage Blob Data Reader on the backups: what plan and apply need to read the secrets, and a restore needs to download a dump. Listed here rather than taken from whoever runs apply, so a colleague's apply cannot swap the owner's access for theirs. Empty means whoever runs apply, alone. Your own is az ad signed-in-user show --query id -o tsv."
+  type        = list(string)
+  default     = []
+  validation {
+    condition = alltrue([
+      for id in var.deployer_object_ids : can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", id))
+    ])
+    error_message = "Each object id must be a GUID."
+  }
+}
+
 variable "alerts" {
   description = "When each operational alert fires. Set only what you change, for example { postgres_cpu = { percent = 90 } }. postgres_storage and postgres_cpu fire above percent, averaged over the window; app_5xx above that many server-error responses in the window. frequency is how often the rule is evaluated (PT1M, PT5M, PT15M, PT30M or PT1H) and window the period it looks back over (one of those, or PT6H, PT12H or P1D, and no shorter than frequency)."
   type = object({
@@ -272,6 +284,18 @@ variable "smtp_url" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "posthog_key" {
+  description = "PostHog project token (phc_...) for product analytics, error tracking and logs, from the server and the browser; empty turns PostHog off. Public by design: the browser receives it."
+  type        = string
+  default     = ""
+}
+
+variable "posthog_host" {
+  description = "PostHog ingestion host: https://eu.i.posthog.com, https://us.i.posthog.com or a self-hosted instance. Used only with posthog_key."
+  type        = string
+  default     = "https://eu.i.posthog.com"
 }
 
 variable "google_client_id" {
