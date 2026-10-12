@@ -8,7 +8,7 @@ import type { User } from './session.tsx';
 
 const settings = config.analytics.posthog;
 if (settings) {
-  posthog.init(settings.key, { api_host: settings.host, capture_pageview: 'history_change', capture_exceptions: true, person_profiles: 'identified_only' });
+  posthog.init(settings.key, { api_host: settings.host, defaults: '2026-05-30', capture_pageview: 'history_change', capture_exceptions: true, person_profiles: 'identified_only' });
 }
 
 /** Names the signed-in person, so their pageviews and errors are theirs. */

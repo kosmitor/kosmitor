@@ -13,6 +13,9 @@ subscription_id          = "<your-subscription-id>"
 alert_email              = "ops@example.com"
 valuation_approval_email = "approvals@example.com"
 
+# Everyone who runs plan and apply; empty means whoever runs it, alone.
+# deployer_object_ids = ["<your-object-id>", "<a-colleague's-object-id>"]
+
 # --- Naming and regions ---------------------------------------------------------
 
 # Resource names are built from these: rg-<name>-<environment>, and so on.
@@ -103,6 +106,12 @@ valuation_approval_email = "approvals@example.com"
 # google_client_id       = "<your-client-id>.apps.googleusercontent.com"
 # Comma separated; empty accepts any Google account.
 # google_allowed_domains = "example.com"
+
+# --- PostHog ----------------------------------------------------------------------
+
+# Project token; empty keeps analytics off. Wins over analytics.posthog in the param file.
+# posthog_key  = "phc_..."
+# posthog_host = "https://eu.i.posthog.com"
 
 # --- 409A valuation desk ----------------------------------------------------------
 

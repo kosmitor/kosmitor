@@ -78,9 +78,11 @@ resource "azurerm_role_assignment" "backup_writer" {
   skip_service_principal_aad_check = true
 }
 
-# Whoever runs Terraform can list and download dumps for a restore; never delete (immutability).
+# The deployers can list and download dumps for a restore; never delete (immutability).
 resource "azurerm_role_assignment" "backup_reader_deployer" {
+  for_each = local.deployer_object_ids
+
   scope                = azurerm_storage_container.backups.id
   role_definition_name = "Storage Blob Data Reader"
-  principal_id         = data.azurerm_client_config.current.object_id
+  principal_id         = each.value
 }
