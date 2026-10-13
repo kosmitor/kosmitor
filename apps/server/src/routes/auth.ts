@@ -653,9 +653,11 @@ route.post('/api/companies', 'user', async (ctx) => {
 });
 
 route.get('/api/c/:cid', 'read', async (ctx) => {
-  const company = toCamel(await one('SELECT * FROM companies WHERE id = ?', ctx.companyId));
+  const company = toCamel<Record<string, unknown>>(await one('SELECT * FROM companies WHERE id = ?', ctx.companyId));
   if (!company) throw notFound('Company not found.');
-  return { ...company, role: ctx.membership!.role, stakeholderId: ctx.membership!.stakeholderId };
+  // Stripe's ids are for the server; the page needs only the status (routes/billing.ts).
+  const { stripeCustomerId: _customer, stripeSubscriptionId: _subscription, stripeCheckoutSessionId: _checkout, ...shown } = company;
+  return { ...shown, role: ctx.membership!.role, stakeholderId: ctx.membership!.stakeholderId };
 });
 
 /**

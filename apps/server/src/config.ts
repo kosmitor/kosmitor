@@ -123,8 +123,8 @@ function checkTogether(c: KosmitorConfig): string[] {
   if (c.limits.reportRows > c.limits.reportMaxRows) errors.push('limits.reportRows cannot be more than limits.reportMaxRows');
   if (c.limits.reportPreviewRows > c.limits.reportMaxRows) errors.push('limits.reportPreviewRows cannot be more than limits.reportMaxRows');
   if (!c.valuationDesk.intake.plans.some((p) => p.value === 'NEITHER')) errors.push('valuationDesk.intake.plans must keep the NEITHER answer');
-  if (c.valuationDesk.enabled && !c.valuationDesk.approvalEmail) {
-    errors.push('valuationDesk.approvalEmail must be configured when valuationDesk.enabled is true');
+  if (c.valuationDesk.enabled && !c.valuationDesk.approvalEmail && !relayUrl(c)) {
+    errors.push('valuationDesk.approvalEmail must be configured when valuationDesk.enabled is true, unless valuationDesk.relayUrl sends requests to another server');
   }
   // noticesPerHour counts emails, one per address, so a list longer than it could never be sent a notice.
   const desk = c.valuationDesk.email;
@@ -214,6 +214,7 @@ const ENV: { name: string; path: string; parse: (v: string) => Json; problem?: (
   { name: 'VALUATION_APPROVAL_EMAIL', path: 'valuationDesk.approvalEmail', parse: (v) => v.toLowerCase() },
   { name: 'POSTHOG_KEY', path: 'analytics.posthog.key', parse: (v) => v },
   { name: 'POSTHOG_HOST', path: 'analytics.posthog.host', parse: (v) => v.replace(/\/+$/, '') },
+  { name: 'STRIPE_PRICE_ID', path: 'billing.priceId', parse: (v) => v },
   { name: 'BACKUP_CONTAINER', path: 'backup.container', parse: (v) => v },
   { name: 'BACKUP_PREFIX', path: 'backup.prefix', parse: (v) => v },
   { name: 'DRILL_DATABASE', path: 'backup.drillDatabase', parse: (v) => v },
@@ -337,6 +338,15 @@ export function resetConfig(): void {
 export const deskName = (c: KosmitorConfig = config()): string =>
   c.valuationDesk.name ?? `${c.brand.productName} valuation team`;
 
+/**
+ * The server this one sends its 409A requests to, or null to keep them here. Never
+ * itself, so a server configured with its own address keeps its requests.
+ */
+export function relayUrl(c: KosmitorConfig = config()): string | null {
+  const url = c.valuationDesk.relayUrl.replace(/\/+$/, '');
+  return url && url !== c.app.url.replace(/\/+$/, '') ? url : null;
+}
+
 /** The name signed at the end of system emails. */
 export const mailSignature = (c: KosmitorConfig = config()): string => c.mail.signature ?? c.brand.productName;
 
@@ -366,7 +376,7 @@ export function publicConfig(c: KosmitorConfig = config()): PublicConfig {
     // Whether the person who asked is emailed at each step, and whether the team can
     // upload the report, so the pages offer and promise only what the server does.
     valuationDesk: {
-      enabled: c.valuationDesk.enabled, name: deskName(c), intake: c.valuationDesk.intake,
+      enabled: c.valuationDesk.enabled, name: deskName(c), intake: c.valuationDesk.intake, relay: relayUrl(c),
       statusEmails: c.valuationDesk.statusEmailsPerRequestPerDay > 0, reportUploads: c.valuationDesk.reportUploadsPerRequestPerDay > 0,
     },
     limits: {
@@ -383,6 +393,7 @@ export function publicConfig(c: KosmitorConfig = config()): PublicConfig {
     legal: { disclaimer: c.legal.disclaimer, taxEstimateNote: c.legal.taxEstimateNote, esignConsent: c.legal.esignConsent, esignAgreement: c.legal.esignAgreement },
     ai: { enabled: c.ai.enabled, examplePrompts: c.ai.examplePrompts },
     analytics: { posthog: c.analytics.posthog.key ? c.analytics.posthog : null },
+    billing: { enabled: !!c.billing.priceId },
   };
 }
 

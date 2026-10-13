@@ -169,6 +169,8 @@
     "name": null,
     "email": null,
     "approvalEmail": "",
+    "relayUrl": "",
+    "relayRequestsPerServerPerDay": 50,
     "linkOpenDays": 180,
     "linkClosedDays": 30,
     "requestsPerCompanyPerDay": 5,
@@ -652,6 +654,9 @@
   },
   "analytics": {
     "posthog": { "key": "", "host": "https://eu.i.posthog.com" }
+  },
+  "billing": {
+    "priceId": ""
   },
   "backup": {
     "container": "backups",

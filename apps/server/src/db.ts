@@ -316,6 +316,13 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS payment_instructions TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS is_sample INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS portal_settings TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS certificate_terms TEXT;
+-- Stripe billing (billing.ts): billing_status is the subscription's Stripe status, NULL before any.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_status TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_period_end TEXT;
+-- The Checkout session last opened, handed out again while it is open so one company never pays twice.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS stripe_checkout_session_id TEXT;
 
 -- The company's own document templates; built-ins live in code.
 CREATE TABLE IF NOT EXISTS document_templates (
@@ -720,6 +727,34 @@ ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approval_notified_at TEX
 ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approved_at TEXT;
 ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approved_by TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_valreq_approval_token ON valuation_requests(approval_token_hash) WHERE approval_token_hash IS NOT NULL;
+
+-- A request this server sends to another (valuationDesk.relayUrl): that server, its id
+-- for the request, the token that reads its status there, the status last read and when.
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS relay_id TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS relay_token TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS relay_checked_at TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS relay_url TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS relay_status TEXT;
+
+-- A request another server sent here (routes/desk-relay.ts). It has no company on
+-- this server: the answers it carries are all there is. Only hashes of its three
+-- tokens are kept: the sending server's, the contact's and the approval team's.
+CREATE TABLE IF NOT EXISTS desk_relay_requests (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  confirm_token_hash TEXT UNIQUE,
+  team_token_hash TEXT UNIQUE,
+  company_name TEXT NOT NULL,
+  contact_name TEXT NOT NULL,
+  contact_email TEXT NOT NULL,
+  contact_phone TEXT NOT NULL,
+  request TEXT NOT NULL,
+  ip TEXT,
+  created_at TEXT NOT NULL,
+  confirmed_at TEXT,
+  decided_at TEXT
+);
 
 -- What happened to a request after it was sent, in order: the team starting it,
 -- delivering the report, a note from the team, a change of contact details, and

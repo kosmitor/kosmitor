@@ -83,6 +83,7 @@ locals {
     var.google_allowed_domains != "" ? { GOOGLE_ALLOWED_DOMAINS = var.google_allowed_domains } : {},
     var.posthog_key != "" ? { POSTHOG_KEY = var.posthog_key, POSTHOG_HOST = var.posthog_host } : {},
     length(var.valuation_desk_emails) > 0 ? { VALUATION_DESK_EMAIL = join(",", var.valuation_desk_emails) } : {},
+    var.stripe_price_id != "" ? { STRIPE_PRICE_ID = var.stripe_price_id } : {},
   )
 }
 
@@ -120,6 +121,15 @@ resource "azurerm_container_app" "main" {
     name                = "acs-connection-string"
     identity            = azurerm_user_assigned_identity.app.id
     key_vault_secret_id = azurerm_key_vault_secret.acs_connection.versionless_id
+  }
+
+  dynamic "secret" {
+    for_each = toset(keys(azurerm_key_vault_secret.stripe))
+    content {
+      name                = secret.value
+      identity            = azurerm_user_assigned_identity.app.id
+      key_vault_secret_id = azurerm_key_vault_secret.stripe[secret.value].versionless_id
+    }
   }
 
   dynamic "secret" {
@@ -172,6 +182,14 @@ resource "azurerm_container_app" "main" {
       env {
         name        = "ACS_CONNECTION_STRING"
         secret_name = "acs-connection-string"
+      }
+
+      dynamic "env" {
+        for_each = toset(keys(azurerm_key_vault_secret.stripe))
+        content {
+          name        = upper(replace(env.value, "-", "_"))
+          secret_name = env.value
+        }
       }
 
       dynamic "env" {

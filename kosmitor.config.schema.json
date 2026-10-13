@@ -539,6 +539,16 @@
           "type": "string",
           "pattern": "^$|^[^\\s@<>,;\"]+@[^\\s@<>,;\"]+\\.[^\\s@<>,;\"]+$"
         },
+        "relayUrl": {
+          "description": "The Kosmitor server that takes 409A requests on this server's behalf (apps/server/src/routes/desk-relay.ts). Set, the request goes there over HTTPS instead of by email: that server confirms the contact's email address and its own team approves the request, so this server needs no approvalEmail, valuation team or mail. Set it to https://app.kosmitor.com to order 409As from Kosmitor. HTTPS only, but for localhost. Empty, or the same as app.url, keeps requests on this server.",
+          "type": "string",
+          "pattern": "^$|^https://|^http://(localhost|127\\.0\\.0\\.1)(:|/|$)"
+        },
+        "relayRequestsPerServerPerDay": {
+          "description": "On the server that takes relayed requests: how many one sending server (one address) may send in a day. Each address it names is also held to requestsPerPersonPerDay.",
+          "type": "integer",
+          "minimum": 1
+        },
         "linkOpenDays": {
           "description": "How long the team's status link works while a request is open.",
           "type": "integer",
@@ -1691,6 +1701,18 @@
               "pattern": "^https?://"
             }
           }
+        }
+      }
+    },
+    "billing": {
+      "description": "Subscriptions through Stripe (apps/server/src/routes/billing.ts). Off until a price is set. The secrets stay in the environment: STRIPE_SECRET_KEY (sk_test_ or sk_live_) and STRIPE_WEBHOOK_SECRET (whsec_), for the endpoint /api/billing/webhook.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "priceId": {
+          "description": "The Stripe price a company subscribes to (price_...). Empty hides billing. Environment variable STRIPE_PRICE_ID wins over it.",
+          "type": "string",
+          "pattern": "^(price_[A-Za-z0-9]+)?$"
         }
       }
     },

@@ -25,6 +25,7 @@ const Offers = lazy(() => import('./pages/Offers.tsx'));
 const OfferView = lazy(() => import('./pages/OfferView.tsx'));
 const ValuationDesk = lazy(() => import('./pages/ValuationDesk.tsx'));
 const ValuationApproval = lazy(() => import('./pages/ValuationApproval.tsx'));
+const DeskRelay = lazy(() => import('./pages/DeskRelay.tsx'));
 const Convertibles = lazy(() => import('./pages/Convertibles.tsx'));
 const ConvertibleDetail = lazy(() => import('./pages/ConvertibleDetail.tsx'));
 const Warrants = lazy(() => import('./pages/Warrants.tsx'));
@@ -249,6 +250,8 @@ function Shell() {
   // So does the valuation team's link to a 409A request, signed in or not.
   if (pathname === '/409a-desk') return <ValuationDesk />;
   if (pathname === '/409a-approval') return <ValuationApproval />;
+  // And the links of a request a self-hosted server sent here: its contact's and the approval team's.
+  if (pathname === '/409a-relay') return <DeskRelay />;
   if (!user) return <SignIn />;
   // Only while passwords are in use: with password sign-in off the gate could never be passed.
   if (user.mustChangePassword && config.auth.passwordSignIn) return <MustChangePasswordGate />;

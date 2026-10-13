@@ -57,7 +57,8 @@ import { all, one, insert, update, run, transaction, afterCommit } from '../db.t
 import { getCompanyData } from '../store.ts';
 import { sendMail, mailConfigured, SINGLE_ADDRESS, type Message } from '../mail.ts';
 import { xlsx } from '../xlsx-writer.ts';
-import { config, deskName, mailSignature } from '../config.ts';
+import { config, deskName, mailSignature, relayUrl } from '../config.ts';
+import { log } from '../telemetry.ts';
 import { renderEmail, paragraphsOf, type EmailSection } from '../email.ts';
 import { readFile, storeFile, maxUploadBytes, uploadName } from './files.ts';
 import { readReport, ReaderBusy } from '../report-reader.ts';
@@ -85,7 +86,7 @@ const OPEN_SQL = OPEN_STATUSES.map((s) => `'${s}'`).join(', ');
  * Whether this server offers the service at all. Off, nothing new is asked for
  * and the team is sent nothing; what was asked for before stays readable.
  */
-const deskOn = (): boolean => config().valuationDesk.enabled;
+export const deskOn = (): boolean => config().valuationDesk.enabled;
 
 /**
  * Where a new request is sent: every address in valuationDesk.email, or in
@@ -108,7 +109,7 @@ export function deskAddresses(): string[] {
  */
 export const deskReplyTo = (): string | null => deskAddresses()[0] ?? null;
 
-const approvalAddress = (): string => config().valuationDesk.approvalEmail.trim().toLowerCase();
+export const approvalAddress = (): string => config().valuationDesk.approvalEmail.trim().toLowerCase();
 const awaitingApproval = (row: RequestRow): boolean => row.approval_required && !row.approved_at;
 
 // --- Counts and waits, in words -------------------------------------------------
@@ -679,7 +680,7 @@ const tableBullets = (t: AnswerTable): string[] =>
  * Commas, semicolons, angle brackets, spaces and line breaks are all refused
  * rather than cleaned, because a cleaned address is still one nobody typed.
  */
-function email(v: unknown, field: string, optional = true): string | null {
+export function email(v: unknown, field: string, optional = true): string | null {
   const s = str(v, field, { max: 254, optional });
   if (!s) return null;
   if (!SINGLE_ADDRESS.test(s)) throw badRequest(`${field} must be a single email address.`);
@@ -687,7 +688,7 @@ function email(v: unknown, field: string, optional = true): string | null {
 }
 
 /** A name that goes into a greeting, on one line. */
-const name = (v: unknown, field: string, optional: boolean): string | null => {
+export const name = (v: unknown, field: string, optional: boolean): string | null => {
   const s = str(v, field, { max: 200, optional }).replace(/\s+/g, ' ');
   return s || null;
 };
@@ -970,6 +971,64 @@ export function composeApprovalEmail(r: ApprovalEmail): Message {
   return { to: r.to, toName: 'Internal review team', subject, text, html };
 }
 
+/**
+ * Anyone can post a request, naming any address, so the email carries nothing they
+ * chose but the company's name (as text) and nothing to click but our own link.
+ */
+export interface RelayConfirmEmail { companyName: string; to: string; toName: string | null; link: string; linkDays: number }
+
+/** Asks the contact a self-hosted server named to confirm the request is theirs, before any team sees it. */
+export function composeRelayConfirmEmail(r: RelayConfirmEmail): Message {
+  const product = config().brand.productName;
+  const subject = `Confirm your 409A request for ${subjectName(r.companyName)}`;
+  const { html, text } = renderEmail({
+    preview: 'One click, and the request goes to our team.',
+    heading: 'Confirm your 409A request',
+    greeting: r.toName ? `Hi ${r.toName},` : null,
+    intro: [`A ${product} server asked the ${deskName()} for a 409A valuation for ${sentence(r.companyName)}`,
+      'Confirm it is yours and our team reviews it. We reply to this address with the price and the next steps.'],
+    action: { label: 'Confirm the request', url: r.link },
+    actionNote: `The link works for ${count(r.linkDays, 'day')}.`,
+    signoff: `— ${mailSignature()}`,
+    footer: `You are receiving this because a ${product} server gave this address as the contact for a 409A request. If you did not ask for one, ignore this email and nothing happens.`,
+  }, subject);
+  return { to: r.to, toName: r.toName ?? undefined, subject, text, html };
+}
+
+export interface RelayApprovalEmail {
+  companyName: string; to: string; requestedBy: string; requestedAt: string; contact: Contact; instanceUrl: string | null;
+  intake: Intake; documents: ListedDocument[]; notes: string | null; reasons: string[]; link: string;
+}
+
+/**
+ * A confirmed request from a self-hosted server, to the approval inbox. Everything
+ * the server sent is here, since there is no company on this server to look at.
+ */
+export function composeRelayApprovalEmail(r: RelayApprovalEmail): Message {
+  const subject = `Self-hosted 409A request awaiting approval: ${subjectName(r.companyName)}`;
+  const { html, text } = renderEmail({
+    preview: 'The contact confirmed their email. Quote, take payment, then approve or decline.',
+    heading: 'A self-hosted 409A request needs your approval',
+    intro: [`${r.requestedBy} requested a 409A valuation for ${sentence(r.companyName)} from a self-hosted server, and the contact confirmed their email address.`,
+      'Write to the contact with the price and payment link. Approve the request once it is paid, or decline it. Opening the link alone changes nothing.'],
+    details: [{ label: 'Company', value: r.companyName }, { label: 'Requested by', value: r.requestedBy },
+      { label: 'Requested on', value: longDate(r.requestedAt.slice(0, 10)) }, { label: 'Contact', value: contactLines(r.contact) },
+      ...(r.instanceUrl ? [{ label: 'Server', value: r.instanceUrl }] : [])],
+    action: { label: 'Approve or decline', url: r.link },
+    actionNote: `Keep this link within the internal approval team. It expires after ${count(config().valuationDesk.linkOpenDays, 'day')}.`,
+    sections: [
+      { title: 'Their answers', details: intakeLines(r.intake) },
+      ...tableSections(r.intake),
+      ...(r.documents.length ? [{ title: 'Documents they will send', details: documentDetails(r.documents) }] : []),
+      ...(r.notes ? [{ title: 'Notes from the company', paragraphs: paragraphsOf(r.notes) }] : []),
+      ...(r.reasons.length ? [{ title: 'Why now', bullets: r.reasons }] : []),
+    ],
+    signoff: `— ${mailSignature()}`,
+    footer: `Sent to the internal approval inbox configured for ${config().brand.productName}. Do not forward this email to the requester or evaluator.`,
+  }, subject);
+  return { to: r.to, toName: 'Internal review team', subject, text, html };
+}
+
 /** The notice to the valuation team that a request is waiting. Pure, like the recap. */
 export function composeDeskEmail(r: DeskEmail): Message {
   const who = r.contact.name ?? r.requestedBy;
@@ -1195,6 +1254,7 @@ interface RequestRow {
   report_document_id: string | null; report_detected: string | null; report_fmv: number | null; report_method: string | null;
   approval_required: boolean; approval_email: string | null; approval_token_hash: string | null;
   approval_token_at: string | null; approval_notified_at: string | null; approved_at: string | null; approved_by: string | null;
+  relay_id: string | null; relay_token: string | null; relay_checked_at: string | null; relay_url: string | null; relay_status: string | null;
 }
 
 interface EventRow { id: string; request_id: string; kind: string; message: string | null; author: string; author_name: string; created_at: string }
@@ -1355,6 +1415,8 @@ function present(
     contactPhone: editor ? row.contact_phone : null,
     recapSentAt: row.recap_sent_at, deskNotifiedAt: row.desk_notified_at,
     approvalRequired: row.approval_required, approvalNotifiedAt: row.approval_notified_at, approvedAt: row.approved_at,
+    /** Where a relayed request stands at its relay (UNCONFIRMED, CONFIRMED, ...), or null. */
+    relayStatus: row.relay_status,
     appraiser: row.appraiser, reportDate: row.report_date,
     /** The report the team uploaded, what was read from it, and the figures the team gave with it. */
     report,
@@ -1410,9 +1472,9 @@ const DAY = 86_400_000;
 
 // --- The team's link -----------------------------------------------------------
 
-const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
 /** 32 random bytes in base64url: always 43 characters, so anything else is not a token. */
-const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
+export const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 
 /**
  * The page the team works from. The token rides after the #, which a browser
@@ -1484,8 +1546,8 @@ async function deskHold(ctx: Ctx, row: RequestRow, approval = false): Promise<st
   if (!deskOn()) return '409A requests are turned off on this server, so the team was not notified.';
   if (!approval && awaitingApproval(row)) return 'Internal approval is required before the evaluator can be notified.';
   if (!approval && !deskAddresses().length) return 'No valuation team address is set on this server, so the team was not notified.';
-  // In production an unsent notice would be printed to the log, link and all.
-  if (isProduction() && !mailConfigured()) return 'Mail is not set up on this server, so the team was not notified.';
+  // In production an unsent notice would be printed to the log, link and all. A relayed request is not emailed from here.
+  if (isProduction() && !mailConfigured() && !(approval && relayUrl())) return 'Mail is not set up on this server, so the team was not notified.';
   const limits = config().valuationDesk;
   // Each stage has its own request/company allowance so reminders to an approver
   // cannot consume the later evaluator's allowance. Both share the hourly email cap.
@@ -1531,9 +1593,13 @@ async function deskHold(ctx: Ctx, row: RequestRow, approval = false): Promise<st
 async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<SendOutcome> {
   const intake = intakeOf(row)!;
   const pending = awaitingApproval(row);
-  const wantRecap = !row.recap_sent_at;
-  const wantDesk = !pending && (!row.desk_notified_at || again);
-  const wantApproval = pending && (!row.approval_notified_at || again || row.approval_email !== approvalAddress());
+  // Sent on to another server, the request is that server's to approve and pass to
+  // its team, and this one may have no mail: the recap goes only if it can.
+  const relay = relayUrl();
+  const wantRecap = !row.recap_sent_at && (!relay || mailConfigured());
+  const wantDesk = !relay && !pending && (!row.desk_notified_at || again);
+  // A relayed request goes once: a second would email its contact again and orphan the first, whose approval then never arrives.
+  const wantApproval = pending && (relay ? !row.relay_id : !row.approval_notified_at || again || row.approval_email !== approvalAddress());
   const outcome: SendOutcome = { recap: 'not needed', recapTo: null, recapError: null, desk: 'not needed', deskError: null,
     approval: 'not needed', approvalError: null };
   if (!wantRecap && !wantDesk && !wantApproval) return outcome;
@@ -1567,11 +1633,16 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
   let token: string | null = null;
   let approvalNotice: Message | null = null;
   let approvalToken: string | null = null;
+  let relayed: Relayed | null = null;
+  let relayToken: string | null = null;
   if (wantApproval) {
     const hold = await deskHold(ctx, row, true);
     if (hold) {
       outcome.approval = 'failed';
       outcome.approvalError = hold;
+    } else if (relay) {
+      relayToken = row.relay_url === relay && row.relay_token ? row.relay_token : randomBytes(32).toString('base64url');
+      relayed = await relayRequest(relay, relayToken, row, company, contact, intake, documents);
     } else {
       approvalToken = randomBytes(32).toString('base64url');
       approvalNotice = composeApprovalEmail({ companyName: company, to: approvalAddress(), requestedBy: row.requested_by,
@@ -1623,6 +1694,14 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
     }
     await audit(ctx, approvalOutcome.delivered ? 'NOTIFY_APPROVAL' : 'NOTIFY_APPROVAL_FAILED', 'valuation_requests', row.id,
       approvalOutcome.delivered ? '409A request sent for internal approval' : '409A internal approval email was not sent');
+  } else if (relayed) {
+    const host = new URL(relay!).host;
+    outcome.approval = 'error' in relayed ? 'failed' : 'sent';
+    outcome.approvalError = 'error' in relayed ? relayed.error : null;
+    Object.assign(values, { relayToken, relayUrl: relay });
+    if (!('error' in relayed)) Object.assign(values, { approvalNotifiedAt: now, relayId: relayed.id, relayStatus: 'UNCONFIRMED', relayCheckedAt: null });
+    await audit(ctx, 'error' in relayed ? 'NOTIFY_APPROVAL_FAILED' : 'NOTIFY_APPROVAL', 'valuation_requests', row.id,
+      'error' in relayed ? `409A request did not reach ${host}` : `409A request sent to ${host} for approval`);
   } else if (wantApproval && outcome.approvalError) {
     await audit(ctx, 'NOTIFY_APPROVAL_SKIPPED', 'valuation_requests', row.id, '409A internal approval email was not sent');
   }
@@ -1652,6 +1731,96 @@ async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<S
   }
   if (Object.keys(values).length) await update('valuation_requests', row.id, { ...values, updatedAt: now });
   return outcome;
+}
+
+// --- Sending to another server ---------------------------------------------------
+//
+// With valuationDesk.relayUrl set, a request goes to that Kosmitor server instead
+// of to a team by email (routes/desk-relay.ts there). It carries what the approval
+// email would: the answers, the contact, the notes and the names of the documents,
+// never the cap table or a file. That server emails the contact to confirm the
+// address, then asks its own team to approve; this one reads the outcome back.
+
+type Relayed = { id: string } | { error: string };
+
+/**
+ * `token` is made here, once per request and relay, and kept whatever the answer:
+ * sent again on a retry, it finds the request the relay already made, so a lost
+ * answer never leaves an orphan there or emails the contact twice.
+ */
+async function relayRequest(relay: string, token: string, row: RequestRow, companyName: string, contact: Contact, intake: Intake, documents: ListedDocument[]): Promise<Relayed> {
+  const host = new URL(relay).host;
+  try {
+    const res = await fetch(`${relay}/api/409a-relay`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({
+        token, companyName, answers: intake, contactName: contact.name, contactEmail: contact.email, contactPhone: contact.phone,
+        notes: row.notes, reasons: row.reasons ? JSON.parse(row.reasons) : [], documents, requestedBy: row.requested_by, instanceUrl: config().app.url,
+      }),
+    });
+    const body = await res.json().catch(() => ({})) as { id?: string; error?: string };
+    if (res.ok && body.id) return { id: body.id };
+    // Its refusals are written for the person asking (an answer it does not take, too many today), so they are passed on.
+    log('warn', '409A relay refused the request', { requestId: row.id, relay, status: res.status, error: body.error ?? null });
+    return { error: res.status < 500 && body.error ? `${host}: ${body.error}` : `${host} could not take the request. Try again later.` };
+  } catch (err) {
+    log('warn', '409A relay unreachable', { requestId: row.id, relay, error: (err as Error).message });
+    return { error: `${host} could not be reached. Try again later.` };
+  }
+}
+
+/**
+ * Asks each request's relay what became of it, at most once a minute each, all
+ * at once, and keeps the answer: confirmed by its contact, so the page can say
+ * the team has it; approved, so the team contacts the company to collect the data
+ * and deliver the report, by hand for now; declined, so it closes. Each asks the
+ * server it was sent to, whatever relayUrl says now, so its token goes nowhere
+ * else. An unreachable relay changes nothing; a cancel meanwhile wins.
+ */
+async function syncRelay(companyId: string): Promise<void> {
+  const rows = await all<RequestRow>(
+    `SELECT * FROM valuation_requests WHERE company_id = ? AND relay_id IS NOT NULL AND relay_url IS NOT NULL AND approved_at IS NULL
+       AND status IN (${OPEN_SQL}) AND (relay_checked_at IS NULL OR relay_checked_at < ?)`, companyId, since(60_000));
+  await Promise.all(rows.map(async (row) => {
+    const relay = row.relay_url!;
+    let status: string | null = null;
+    try {
+      const res = await fetch(`${relay}/api/409a-relay/${encodeURIComponent(row.relay_id!)}`, {
+        headers: { Authorization: `Bearer ${row.relay_token}` }, signal: AbortSignal.timeout(2_000),
+      });
+      if (res.ok) status = ((await res.json()) as { status?: string }).status ?? null;
+      else log('warn', '409A relay status refused', { requestId: row.id, relay, status: res.status });
+    } catch (err) {
+      log('warn', '409A relay unreachable', { requestId: row.id, relay, error: (err as Error).message });
+    }
+    const now = nowISO();
+    await transaction(async () => {
+      await run('UPDATE valuation_requests SET relay_checked_at = ?, relay_status = COALESCE(?, relay_status) WHERE id = ?', now, status, row.id);
+      if (status === 'APPROVED' && await run(
+        `UPDATE valuation_requests SET approved_at = ?, approved_by = ?, updated_at = ?
+         WHERE id = ? AND approved_at IS NULL AND status IN (${OPEN_SQL})`, now, new URL(relay).host, now, row.id)) {
+        await addEvent(row, 'APPROVED', null, 'approval', deskName());
+      }
+      if (status === 'DECLINED' && await run(
+        `UPDATE valuation_requests SET status = 'CANCELLED', closed_at = ?, updated_at = ? WHERE id = ? AND approved_at IS NULL AND status IN (${OPEN_SQL})`,
+        now, now, row.id)) {
+        await addEvent(row, 'CANCELLED', `The ${deskName()} declined this request.`, 'desk', deskName());
+      }
+    });
+  }));
+}
+
+/** Tells the relay the company no longer wants this request. Best effort: an unreachable relay is logged. */
+async function withdrawRelay(row: RequestRow): Promise<void> {
+  if (!row.relay_id || !row.relay_url) return;
+  try {
+    const res = await fetch(`${row.relay_url}/api/409a-relay/${encodeURIComponent(row.relay_id)}/withdraw`, {
+      method: 'POST', headers: { Authorization: `Bearer ${row.relay_token}` }, signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) log('warn', '409A relay refused the withdrawal', { requestId: row.id, relay: row.relay_url, status: res.status });
+  } catch (err) {
+    log('warn', '409A relay unreachable to withdraw', { requestId: row.id, relay: row.relay_url, error: (err as Error).message });
+  }
 }
 
 /**
@@ -1787,6 +1956,7 @@ route.get('/api/c/:cid/valuation-refresh', 'read', async (ctx) => {
 
 route.get('/api/c/:cid/valuation-requests', 'read', async (ctx) => {
   assertFullView(ctx, REQUEST_NEEDS_FULL_VIEW);
+  await syncRelay(ctx.companyId!);
   const rows = await all<RequestRow>('SELECT * FROM valuation_requests WHERE company_id = ? ORDER BY created_at DESC', ctx.companyId);
   const events = await all<EventRow>('SELECT * FROM valuation_request_events WHERE company_id = ? ORDER BY created_at, id', ctx.companyId);
   const byRequest = new Map<string, EventRow[]>();
@@ -2030,6 +2200,8 @@ route.patch('/api/c/:cid/valuation-requests/:id', 'write', async (ctx) => {
     // holds the company's lock, and nobody hears of a close that was rolled back.
     // A request the team delivered is finished from its side; one closed before that is news to it.
     if (next === 'CANCELLED' || row.status !== 'DELIVERED') afterCommit(() => tellDeskClosed(ctx, row, next as 'CANCELLED' | 'COMPLETED'));
+    // A relayed request closed before its team approved it, or cancelled after, is withdrawn there too.
+    if (row.relay_id && (next === 'CANCELLED' || !row.approved_at)) afterCommit(() => withdrawRelay(row));
     // And the person who asked is told who closed it, unless they are the one who did.
     // The attempt is counted against the limit now, under the lock.
     afterCommit(await tellRequester(ctx, row, change, null));
@@ -2057,6 +2229,13 @@ route.patch('/api/c/:cid/valuation-requests/:id', 'write', async (ctx) => {
   await update('valuation_requests', row.id, { ...values, updatedAt: nowISO() });
   await addEvent(row, 'CONTACT_CHANGED', null, 'company', ctx.user!.name);
   await audit(ctx, 'UPDATE', 'valuation_requests', row.id, '409A request contact details changed');
+  // A request still waiting at its relay was confirmed, or is to be, at the old
+  // address: it is withdrawn there and sent again, so the new contact is asked.
+  if (row.relay_id && !row.approved_at && ['contactName', 'contactEmail', 'contactPhone'].some((k) => k in values)) {
+    await withdrawRelay(row);
+    await update('valuation_requests', row.id, { relayId: null, relayToken: null, relayUrl: null, relayStatus: null, approvalNotifiedAt: null });
+    if (relayUrl()) await sendPending(ctx, await ownRequest(ctx), false);
+  }
   return presentById(ctx, row.id);
 });
 

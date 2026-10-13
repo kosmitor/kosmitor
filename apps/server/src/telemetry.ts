@@ -23,7 +23,13 @@ function posthog(): PostHog | null {
   if (!key) return null;
   if (!client || clientKey !== key) {
     void client?.shutdown();
-    client = new PostHog(key, { host, flushAt: 20, flushInterval: 2000, fetch: (url, options) => globalThis.fetch(url, options) });
+    client = new PostHog(key, {
+      host,
+      enableExceptionAutocapture: true,
+      flushAt: 20,
+      flushInterval: 2000,
+      fetch: (url, options) => globalThis.fetch(url, options),
+    });
     client.on('error', (err: Error) => console.error(`[telemetry] ${err.message}`));
     clientKey = key;
   }
