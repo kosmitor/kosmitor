@@ -74,6 +74,20 @@ resource "azurerm_key_vault_secret" "database_url" {
   depends_on   = [time_sleep.rbac]
 }
 
+locals {
+  stripe_secrets = { "stripe-secret-key" = var.stripe_secret_key, "stripe-webhook-secret" = var.stripe_webhook_secret }
+}
+
+resource "azurerm_key_vault_secret" "stripe" {
+  # Whether a key is set is not secret, only its value; for_each refuses a sensitive set.
+  for_each     = toset([for k, v in local.stripe_secrets : k if nonsensitive(v != "")])
+  name         = each.key
+  value        = local.stripe_secrets[each.key]
+  key_vault_id = azurerm_key_vault.main.id
+  content_type = "Stripe secret"
+  depends_on   = [time_sleep.rbac]
+}
+
 resource "azurerm_key_vault_secret" "smtp_url" {
   count        = var.smtp_url != "" ? 1 : 0
   name         = "smtp-url"

@@ -107,6 +107,8 @@ export interface ValuationRequest {
   approvalRequired: boolean;
   approvedAt: string | null;
   approvalNotifiedAt: string | null;
+  /** Where a request sent on to another server stands there: UNCONFIRMED until its contact confirms, then CONFIRMED. */
+  relayStatus?: string | null;
   /** Set by the team when it delivers the report. */
   appraiser: string | null;
   reportDate: string | null;
@@ -144,6 +146,8 @@ const DESK = config.valuationDesk.name;
 
 /** Whether this server offers the team at all (valuationDesk.enabled). */
 const DESK_ON = config.valuationDesk.enabled;
+/** The server requests go to instead of a team of this one's (valuationDesk.relayUrl), by its host name, or null. */
+const RELAY = config.valuationDesk.relay ? new URL(config.valuationDesk.relay).host : null;
 
 /** Whether the person who asked is emailed at each step (valuationDesk.statusEmailsPerRequestPerDay above 0). */
 const STATUS_EMAILS = config.valuationDesk.statusEmails;
@@ -503,8 +507,9 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
     const recapTo = res.recapTo && res.recapTo !== user?.name ? res.recapTo : 'you';
     if (res.approval === 'sent' || res.approval === 'failed') {
       const notice = res.approval === 'sent'
-        ? `Request sent for internal approval${again ? ' with a new review link' : ''}. It will reach the evaluator after approval.`
-        : 'Request saved, but the approval email did not go out. Send it again from this request.';
+        ? RELAY ? `Request sent to ${RELAY}. Confirm it from the email sent to its contact.`
+          : `Request sent for internal approval${again ? ' with a new review link' : ''}. It will reach the evaluator after approval.`
+        : `Request saved, but it did not go out. ${res.approvalError ?? ''} Send it again from this request.`;
       const recap = res.recap === 'sent' ? ` A recap is on its way to ${recapTo}.`
         : res.recap === 'failed' ? ' The recap email did not go out.' : '';
       toast(`${notice}${recap}`, res.approval === 'failed' || res.recap === 'failed' ? 'error' : 'success');
@@ -644,8 +649,13 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   const toldYouClosed = (what: string) => (open && !open.mine && open.emailsRequester ? ` ${open.requestedBy} is emailed that you ${what} it.` : '');
   const next = !open || legacy ? null
     : answer ? null
-      : awaitingApproval ? 'our team reviews your request. It will be sent to the evaluator once approved.'
+      : awaitingApproval ? (RELAY && open.approvalNotifiedAt
+        ? open.relayStatus === 'CONFIRMED'
+          ? `the ${DESK} reviews your request and writes to ${open.contactName ?? 'the contact'} with the price. It is approved once paid.`
+          : `confirm the request from the email ${RELAY} sent to ${open.contactName ?? 'the contact'}. Its team then writes with the price and approves the request once paid.`
+        : 'our team reviews your request. It will be sent to the evaluator once approved.')
         : delivered ? 'check the values against the report and record the 409A. This request closes against it.'
+        : RELAY ? `the ${DESK} contacts you to collect the data and deliver the report.`
         : !reached ? null
           : open.status === 'IN_PROGRESS' ? `the ${open.provider} delivers the report. Nothing to do on your side meanwhile.${emailedAtEachStep}`
             : `the ${open.provider} starts on it and contacts you. Nothing to do on your side meanwhile.${emailedAtEachStep}`;
@@ -653,8 +663,8 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
     ...(!legacy && !delivered ? [{ label: 'Edit contact details', icon: 'edit' as const, onClick: () => startEdit(open), disabled: busy }] : []),
     // A fresh notice mints a new link and retires the old one, for an email the team lost.
     // With the service turned off, the team is sent nothing.
-    ...(DESK_ON && !legacy && reached ? [{ label: 'Send to the team again, with a new link', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
-    ...(DESK_ON && !legacy && awaitingApproval && open.approvalNotifiedAt ? [{ label: 'Resend the approval request', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
+    ...(DESK_ON && !RELAY && !legacy && reached ? [{ label: 'Send to the team again, with a new link', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
+    ...(DESK_ON && !RELAY && !legacy && awaitingApproval && open.approvalNotifiedAt ? [{ label: 'Resend the approval request', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
     ...(main?.label !== 'Record the result' && !reviewInBanner
       ? [{ label: answer ? 'Record a different 409A' : 'Record a 409A from another appraiser', icon: 'document' as const, onClick: () => onRecordResult(open), disabled: busy }]
       : []),
@@ -721,7 +731,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
                   </Banner>
                 </div>
               )}
-              {canEdit && !awaitingApproval && !open.deskNotifiedAt && !open.events.some((e) => e.author === 'desk') && (
+              {canEdit && !RELAY && !awaitingApproval && !open.deskNotifiedAt && !open.events.some((e) => e.author === 'desk') && (
                 <div className="mt-4">
                   <Banner tone="warning" title={`The ${open.provider} has not been told about this request yet`}>
                     <p>{open.approvedAt ? 'Your request is approved, but the notice to the evaluator did not go out.' : 'The notice with your answers did not go out, so nobody has started on it.'}{!open.recapSentAt && ' Your recap email did not go out either.'}</p>
@@ -735,7 +745,8 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
                   </Banner>
                 </div>
               )}
-              {DESK_ON && canEdit && (open.approvalNotifiedAt || reached) && !open.recapSentAt && (
+              {/* Sent on to another server, the contact hears from it instead, and this one may have no mail. */}
+              {DESK_ON && !RELAY && canEdit && (open.approvalNotifiedAt || reached) && !open.recapSentAt && (
                 <p className="mt-3 text-[12px] text-ink-600">
                   Your recap email did not go out.{' '}
                   <button type="button" className="font-medium text-brand-600 hover:text-brand-700" onClick={() => resend(open, false)}>Send it again</button>

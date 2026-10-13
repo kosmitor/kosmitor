@@ -2,7 +2,8 @@
 # fill in the first block; everything below it is optional and shows the
 # default. variables.tf describes each one in full.
 #
-# Secrets do not belong here: pass smtp_url as TF_VAR_smtp_url in the shell
+# Secrets do not belong here: pass smtp_url as TF_VAR_smtp_url (and the Stripe
+# keys as TF_VAR_stripe_secret_key, TF_VAR_stripe_webhook_secret) in the shell
 # that runs terraform. The application's own settings (branding, sign-in,
 # limits, the valuation desk and the rest) are in kosmitor.config.json and
 # kosmitor.config.local.json at the repository root, not here.

@@ -44,6 +44,7 @@ Each of these sets one entry and wins over both files. An empty variable counts 
 | `VALUATION_APPROVAL_EMAIL` | `valuationDesk.approvalEmail` |
 | `POSTHOG_KEY` | `analytics.posthog.key` |
 | `POSTHOG_HOST` | `analytics.posthog.host` |
+| `STRIPE_PRICE_ID` | `billing.priceId` |
 | `BACKUP_CONTAINER` | `backup.container` |
 | `BACKUP_PREFIX` | `backup.prefix` |
 | `DRILL_DATABASE` | `backup.drillDatabase` |
@@ -64,7 +65,7 @@ Secrets and wiring stay in the environment and never go in a param file:
 
 ## Settings
 
-[brand](#brand) · [app](#app) · [server](#server) · [database](#database) · [mail](#mail) · [auth](#auth) · [demo](#demo) · [valuationDesk](#valuationdesk) · [limits](#limits) · [compliance](#compliance) · [alerts](#alerts) · [company](#company) · [equity](#equity) · [modeling](#modeling) · [tax](#tax) · [stockComp](#stockcomp) · [locale](#locale) · [legal](#legal) · [ai](#ai) · [analytics](#analytics) · [backup](#backup)
+[brand](#brand) · [app](#app) · [server](#server) · [database](#database) · [mail](#mail) · [auth](#auth) · [demo](#demo) · [valuationDesk](#valuationdesk) · [limits](#limits) · [compliance](#compliance) · [alerts](#alerts) · [company](#company) · [equity](#equity) · [modeling](#modeling) · [tax](#tax) · [stockComp](#stockcomp) · [locale](#locale) · [legal](#legal) · [ai](#ai) · [analytics](#analytics) · [billing](#billing) · [backup](#backup)
 
 ### brand
 
@@ -206,6 +207,8 @@ An optional service: companies ask for a new 409A, your internal team approves t
 | `valuationDesk.name` | `null` | What the team is called, as it reads after "the" (for example "Acme valuation team"). null uses "<productName> valuation team". |
 | `valuationDesk.email` | `null` | Where an approved request is sent: one address, or a list of up to 10, one per evaluator. Each address gets an email of its own with the same private link, so no evaluator sees another's address. Replies to the recap and the status emails reach the first. A notice counts once against the per-request, per-company and per-person notices limits, however many addresses it goes to, and once per address against noticesPerHour. Removing an address does not take back a link already sent: it works until a new notice for that request replaces it, or until it expires. null saves approved requests without notifying an evaluator; internal approval is still required. Environment variable VALUATION_DESK_EMAIL, comma separated, wins over it. |
 | `valuationDesk.approvalEmail` | `""` | Private internal inbox that approves each new 409A request before any evaluator receives it. Configure one email address through VALUATION_APPROVAL_EMAIL or your private local configuration before enabling the valuation desk. The shipped empty value is allowed only while the desk is disabled; enabling it without an inbox stops startup. The address is not exposed in the public browser configuration. The environment variable wins over the file; an empty variable leaves the file setting in effect. |
+| `valuationDesk.relayUrl` | `""` | The Kosmitor server that takes 409A requests on this server's behalf (apps/server/src/routes/desk-relay.ts). Set, the request goes there over HTTPS instead of by email: that server confirms the contact's email address and its own team approves the request, so this server needs no approvalEmail, valuation team or mail. Set it to https://app.kosmitor.com to order 409As from Kosmitor. HTTPS only, but for localhost. Empty, or the same as app.url, keeps requests on this server. |
+| `valuationDesk.relayRequestsPerServerPerDay` | `50` | On the server that takes relayed requests: how many one sending server (one address) may send in a day. Each address it names is also held to requestsPerPersonPerDay. At least 1. |
 | `valuationDesk.linkOpenDays` | `180` | How long the team's status link works while a request is open. At least 1. |
 | `valuationDesk.linkClosedDays` | `30` | How long it keeps working after the request closes. At least 1. |
 | `valuationDesk.requestsPerCompanyPerDay` | `5` | New requests one company can make per day. At least 1. |
@@ -466,6 +469,14 @@ Product analytics, error tracking and logs in PostHog (apps/server/src/telemetry
 | `analytics.posthog` |  | The PostHog project to send to. |
 | `analytics.posthog.key` | `""` | Project token (starts with phc_). Empty turns PostHog off. Environment variable POSTHOG_KEY wins over it. |
 | `analytics.posthog.host` | `"https://eu.i.posthog.com"` | Ingestion host: https://eu.i.posthog.com, https://us.i.posthog.com or a self-hosted instance. Environment variable POSTHOG_HOST wins over it. |
+
+### billing
+
+Subscriptions through Stripe (apps/server/src/routes/billing.ts). Off until a price is set. The secrets stay in the environment: STRIPE_SECRET_KEY (sk_test_ or sk_live_) and STRIPE_WEBHOOK_SECRET (whsec_), for the endpoint /api/billing/webhook.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `billing.priceId` | `""` | The Stripe price a company subscribes to (price_...). Empty hides billing. Environment variable STRIPE_PRICE_ID wins over it. |
 
 ### backup
 

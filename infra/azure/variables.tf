@@ -298,6 +298,26 @@ variable "posthog_host" {
   default     = "https://eu.i.posthog.com"
 }
 
+variable "stripe_secret_key" {
+  description = "Stripe secret key (sk_test_ or sk_live_). Empty leaves billing off; pass it with TF_VAR_stripe_secret_key rather than a file."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stripe_webhook_secret" {
+  description = "Signing secret (whsec_) of the Stripe webhook endpoint https://<app>/api/billing/webhook; pass it with TF_VAR_stripe_webhook_secret."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "stripe_price_id" {
+  description = "The Stripe price a company subscribes to (price_...); empty hides billing."
+  type        = string
+  default     = ""
+}
+
 variable "google_client_id" {
   description = "Google OAuth client ID for \"Sign in with Google\"; empty disables it."
   type        = string

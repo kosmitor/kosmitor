@@ -93,6 +93,9 @@ export interface KosmitorConfig {
     email: string | string[] | null;
     /** Internal inbox for mandatory approval before evaluator delivery. Empty only while the desk is disabled. */
     approvalEmail: string;
+    /** Another Kosmitor server that takes this server's requests; empty, or app.url itself, for none. */
+    relayUrl: string;
+    relayRequestsPerServerPerDay: number;
     linkOpenDays: number;
     linkClosedDays: number;
     requestsPerCompanyPerDay: number;
@@ -215,6 +218,7 @@ export interface KosmitorConfig {
     examplePrompts: string[];
   };
   analytics: { posthog: { key: string; host: string } };
+  billing: { priceId: string };
   backup: { container: string; prefix: string; drillDatabase: string; maxRowDrift: number };
 }
 
@@ -231,7 +235,8 @@ export interface PublicConfig {
    * statusEmails: whether valuationDesk.statusEmailsPerRequestPerDay lets any status email go out.
    * reportUploads: whether valuationDesk.reportUploadsPerRequestPerDay lets the team upload the report at all.
    */
-  valuationDesk: { enabled: boolean; name: string; intake: KosmitorConfig['valuationDesk']['intake']; statusEmails: boolean; reportUploads: boolean };
+  /** relay: the server requests go to instead of this one's team (valuationDesk.relayUrl), or null. */
+  valuationDesk: { enabled: boolean; name: string; intake: KosmitorConfig['valuationDesk']['intake']; statusEmails: boolean; reportUploads: boolean; relay: string | null };
   limits: Pick<KosmitorConfig['limits'], 'uploadMb' | 'importUploadMb' | 'ledgerMaxPageSize' | 'reportPreviewRows'>;
   compliance: Pick<KosmitorConfig['compliance'], 'valuationExpiryWarningDays' | 'scoring'>;
   alerts: KosmitorConfig['alerts'];
@@ -244,4 +249,6 @@ export interface PublicConfig {
   ai: Pick<KosmitorConfig['ai'], 'enabled' | 'examplePrompts'>;
   /** PostHog in the browser; null until analytics.posthog.key is set. */
   analytics: { posthog: { key: string; host: string } | null };
+  /** Whether a company can subscribe: billing.priceId is set. */
+  billing: { enabled: boolean };
 }

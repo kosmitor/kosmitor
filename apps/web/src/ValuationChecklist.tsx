@@ -1535,10 +1535,17 @@ export function ContactStep({ form, update, problems, shown }: StepProps) {
 
       <p className="rise flex items-start gap-2 px-1 text-[12px] leading-relaxed text-ink-500" style={{ animationDelay: '180ms' }}>
         <Icon name="lock" className="mt-0.5 size-3.5 shrink-0" />
-        <span>
-          Our team reviews your request first. After approval, the evaluator gets your answers, the cap table with no holder names,
-          and the documents you attached, as they are: a SAFE, for one, names its investor. A recap goes to {user?.email ?? 'your account address'}.
-        </span>
+        {config.valuationDesk.relay ? (
+          <span>
+            Your answers, contact details, notes and the names of the documents (not the files, and not the cap table) go
+            to {new URL(config.valuationDesk.relay).host}. It emails the contact to confirm the request, then its team writes with the price.
+          </span>
+        ) : (
+          <span>
+            Our team reviews your request first. After approval, the evaluator gets your answers, the cap table with no holder names,
+            and the documents you attached, as they are: a SAFE, for one, names its investor. A recap goes to {user?.email ?? 'your account address'}.
+          </span>
+        )}
       </p>
     </>
   );

@@ -251,6 +251,8 @@ export default function Company() {
 
         <div className="space-y-5">
 
+          {config.billing.enabled && <BillingCard companyId={companyId!} status={data.billingStatus} periodEnd={data.billingPeriodEnd} />}
+
           <Card>
             <CardHeader title="Summary" />
             <KeyValue columns={1} items={[
@@ -287,5 +289,40 @@ export default function Company() {
         </div>
       </div>
     </>
+  );
+}
+
+const BILLING_STATUS: Record<string, string> = {
+  active: 'Active', trialing: 'Trial', past_due: 'Payment overdue', unpaid: 'Unpaid', incomplete: 'Awaiting payment',
+  incomplete_expired: 'Checkout expired', canceled: 'Canceled', paused: 'Paused',
+};
+/** Statuses in which the company has a subscription to manage rather than start (LIVE in routes/billing.ts). */
+const LIVE = ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'];
+
+/** The company's subscription: start it in Stripe Checkout, or manage it in Stripe's portal. */
+function BillingCard({ companyId, status, periodEnd }: { companyId: string; status: string | null; periodEnd: string | null }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const live = !!status && LIVE.includes(status);
+  const justPaid = new URLSearchParams(window.location.search).get('billing') === 'done';
+  const go = async () => {
+    setBusy(true);
+    try {
+      const { url } = await api<{ url: string }>(`/c/${companyId}/billing/${live ? 'portal' : 'checkout'}`, { method: 'POST' });
+      window.location.assign(url);
+    } catch (err) { toast((err as Error).message, 'error'); setBusy(false); }
+  };
+  return (
+    <Card id="billing">
+      <CardHeader title="Billing" subtitle="Your subscription, invoices and payment method" />
+      {justPaid && !live && <div className="mb-3"><Banner tone="success">Thanks! Your payment is being confirmed; this updates in a moment.</Banner></div>}
+      <KeyValue columns={1} items={[
+        { label: 'Status', value: status ? BILLING_STATUS[status] ?? status : 'No subscription' },
+        ...(live && periodEnd ? [{ label: status === 'trialing' ? 'Trial ends' : 'Renews', value: date(periodEnd) }] : []),
+      ]} />
+      <Button className="mt-3" variant={live ? 'secondary' : 'primary'} loading={busy} onClick={go}>
+        {live ? 'Manage billing' : 'Subscribe'}
+      </Button>
+    </Card>
   );
 }
