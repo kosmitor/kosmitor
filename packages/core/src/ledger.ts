@@ -23,8 +23,12 @@ import { roundShares } from './util.ts';
  * own date, it says the record was wrong all along and holds for every date.
  */
 
-/** Statuses the transfer, repurchase and cancel routes close a certificate with, by entry type. */
-const CLOSES: Partial<Record<LedgerEntry['type'], Issuance['status']>> = { TRANSFER: 'TRANSFERRED', REPURCHASE: 'REPURCHASED', CANCELLATION: 'CANCELLED' };
+/**
+ * Statuses a certificate is closed with, by entry type: the transfer, repurchase and
+ * cancel routes', and a conversion into another class, which only an OCF import
+ * records (TX_STOCK_CONVERSION). A partial one of any of them lowered the quantity.
+ */
+const CLOSES: Partial<Record<LedgerEntry['type'], Issuance['status']>> = { TRANSFER: 'TRANSFERRED', REPURCHASE: 'REPURCHASED', CANCELLATION: 'CANCELLED', CONVERSION: 'CONVERTED' };
 /** Statuses the cancel route closes a warrant with, by entry type. */
 const ENDS_WARRANT: Partial<Record<LedgerEntry['type'], Warrant['status']>> = { CANCELLATION: 'CANCELLED', EXPIRATION: 'EXPIRED' };
 /** Statuses the convert, repay and cancel routes settle a convertible with, by entry type. */
@@ -85,10 +89,11 @@ export function rewindToDate(data: CompanyData, asOf: ISODate): CompanyData {
 }
 
 /**
- * A certificate before the transfers and repurchases dated after `asOf`. A partial
- * one lowered the quantity; one for everything left closed the certificate and kept
- * the quantity it held. So what the holder had on `asOf` is what they hold today, or
- * nothing once closed, plus every later entry restated in the certificate's units.
+ * A certificate before the transfers, repurchases, cancellations and conversions dated
+ * after `asOf`. A partial one lowered the quantity; one for everything left closed the
+ * certificate and kept the quantity it held. So what the holder had on `asOf` is what
+ * they hold today, or nothing once closed, plus every later entry restated in the
+ * certificate's units.
  */
 function rewindCertificate(data: CompanyData, i: Issuance, entries: LedgerEntry[], asOf: ISODate): Issuance {
   const moves = entries.filter((e) => CLOSES[e.type] != null);
@@ -103,8 +108,7 @@ function rewindCertificate(data: CompanyData, i: Issuance, entries: LedgerEntry[
   let held: number;
   if (i.status === 'OUTSTANDING') held = i.quantity;
   else if (undone.length > 0 && Object.values(CLOSES).includes(i.status) && moves.some((e) => CLOSES[e.type] === i.status && near(units(e), i.quantity))) held = 0;
-  // Closed with no entry for what it last held (an edit, a row older than the ledger), or
-  // converted, which the ledger does not date on the certificate: today's state.
+  // Closed with no entry for what it last held (an edit, a row older than the ledger): today's state.
   else return i;
 
   held = roundShares(held + undone.reduce((s, e) => s + units(e), 0) - uncorrected.reduce((s, e) => s + units(e), 0));

@@ -269,7 +269,7 @@ function ReadingNote({ files, tabs, review, onSettings }: { files: ImportFile[];
 }
 
 /** One sentence of what the import adds, from the dry run's counts. A class raised on the person's word can be undone. */
-function WhatThisAdds({ review, answers, pending, heading, onUndoRaise }: {
+export function WhatThisAdds({ review, answers, pending, heading, onUndoRaise }: {
   review: Review; answers: Answers; pending: number; heading: RefObject<HTMLHeadingElement | null>; onUndoRaise: (value: string) => void;
 }) {
   const i = review.imported;
@@ -278,11 +278,16 @@ function WhatThisAdds({ review, answers, pending, heading, onUndoRaise }: {
     i.issuances ? plural(i.issuances, 'certificate') : '',
     i.awards ? plural(i.awards, 'grant') : '',
     i.convertibles ? plural(i.convertibles, 'SAFE or note', 'SAFEs & notes') : '',
+    i.warrants ? plural(i.warrants, 'warrant') : '',
     i.stakeholders ? plural(i.stakeholders, 'new stakeholder') : '',
     i.updated.stakeholders ? plural(i.updated.stakeholders, 'stakeholder updated', 'stakeholders updated') : '',
     i.shareClasses ? `${plural(i.shareClasses, 'new share class', 'new share classes')} (${c.shareClasses.join(', ')})` : '',
     i.pools ? `${plural(i.pools, 'new equity plan')} (${c.pools.join(', ')})` : '',
-    i.vestingSchedules ? `${plural(i.vestingSchedules, 'new vesting schedule')} (${c.vestingSchedules.join(', ')})` : '',
+    i.vestingSchedules ? `${plural(i.vestingSchedules, 'new vesting schedule')} (${c.vestingSchedules.length > 4 ? `${c.vestingSchedules.slice(0, 3).join(', ')} and ${c.vestingSchedules.length - 3} more` : c.vestingSchedules.join(', ')})` : '',
+    i.valuations ? plural(i.valuations, 'valuation') : '',
+    i.stockSplits ? plural(i.stockSplits, 'stock split') : '',
+    i.poolAdjustments ? plural(i.poolAdjustments, 'plan change') : '',
+    i.events ? plural(i.events, 'history entry', 'history entries') : '',
   ].filter(Boolean);
   // Each raise with the answer that asked for it, so it can be taken back.
   const raised = review.raised.map((r) => ({
@@ -327,20 +332,22 @@ const SHOWN_PEOPLE = 6;
  * column for it), each with a select; and namesakes with two emails. The list
  * stays put while it is answered, so a person does not vanish under the pointer.
  */
-function NewPeople({ review, answers, dismissed, asked, on, onAddFile }: {
-  review: Review; answers: Answers; dismissed: string[]; asked: string[]; on: CheckHandlers; onAddFile: () => void;
+export function NewPeople({ review, answers, dismissed, asked, on, onAddFile }: {
+  review: Review; answers: Answers; dismissed: string[]; asked: string[]; on: Pick<CheckHandlers, 'samePerson' | 'dismiss' | 'setRelationship'>;
+  /** Without it (an OCF package, imported on its own) there is no "Add a file". */
+  onAddFile?: () => void;
 }) {
   const [all, setAll] = useState(false);
   // Everyone asked about stays while answered; someone a later file says the relationship of goes.
   const people = review.newPeople.filter((x) => asked.includes(x.key) && (x.guessed || x.key in answers.relationships));
   // Namesakes with different emails, once per name: the first one met keeps its email if they are one person.
-  const twins: { name: string; keep: NewPerson; others: NewPerson[]; emails: string[]; onRecord: boolean }[] = [];
+  const twins: { name: string; keep: NewPerson; others: NewPerson[]; emails: string[]; onRecord: number }[] = [];
   for (const x of review.newPeople) {
     if (x.sameName.length === 0 || dismissed.includes(`same:${x.name.toLowerCase()}`)) continue;
     const group = twins.find((t) => t.name.toLowerCase() === x.name.toLowerCase());
     if (group) { group.others.push(x); continue; }
     const emails = [x.email, ...x.sameName.map((s) => s.email)].filter((e): e is string => !!e);
-    twins.push({ name: x.name, keep: x, others: [], emails: [...new Set(emails)], onRecord: x.sameName.some((s) => s.onRecord) });
+    twins.push({ name: x.name, keep: x, others: [], emails: [...new Set(emails)], onRecord: x.sameName.filter((s) => s.onRecord).length });
   }
   if (people.length === 0 && twins.length === 0) return null;
   const visible = all ? people : people.slice(0, SHOWN_PEOPLE);
@@ -349,7 +356,7 @@ function NewPeople({ review, answers, dismissed, asked, on, onAddFile }: {
       {people.length > 0 && (
         <>
           <h2 className="text-[15px] font-semibold text-ink-900">New stakeholders ({people.length})</h2>
-          <p className="mt-0.5 text-[13px] text-ink-500">Your file doesn't say how these people relate to the company, so we guessed. Check before importing.</p>
+          <p className="mt-0.5 text-[13px] text-ink-500">{onAddFile ? 'Your file doesn\'t say' : 'The package doesn\'t say'} how these people relate to the company, so we guessed. Check before importing.</p>
           <ul className="mt-4 grid gap-x-8 gap-y-3 md:grid-cols-2">
             {visible.map((x) => <PersonRow key={x.key} person={x} value={answers.relationships[x.key] ?? x.relation} on={on} />)}
           </ul>
@@ -358,10 +365,12 @@ function NewPeople({ review, answers, dismissed, asked, on, onAddFile }: {
               {all ? 'Show fewer' : `Show all ${people.length}`}
             </button>
           )}
-          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-ink-100 pt-3 text-[13px] text-ink-600">
-            <span className="min-w-0 flex-1">Have a stakeholder report? Add it and we'll use its relationships and dates.</span>
-            <Button size="sm" icon={<Icon name="plus" />} onClick={onAddFile}>Add a file</Button>
-          </div>
+          {onAddFile && (
+            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-ink-100 pt-3 text-[13px] text-ink-600">
+              <span className="min-w-0 flex-1">Have a stakeholder report? Add it and we'll use its relationships and dates.</span>
+              <Button size="sm" icon={<Icon name="plus" />} onClick={onAddFile}>Add a file</Button>
+            </div>
+          )}
         </>
       )}
       {twins.length > 0 && (
@@ -372,7 +381,7 @@ function NewPeople({ review, answers, dismissed, asked, on, onAddFile }: {
               <li key={x.name} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <span className="min-w-0 break-words text-[13px] text-ink-700">
                   <span className="font-medium text-ink-900">{x.name}</span> appears with {x.emails.length} emails: {x.emails.join(', ')}
-                  {x.onRecord && ' (one is already on the cap table)'}
+                  {x.onRecord > 0 && (x.onRecord === 1 ? ' (one is already on the cap table)' : ` (${x.onRecord} are already on the cap table)`)}
                 </span>
                 <span className="flex shrink-0 gap-2">
                   <Button size="sm" onClick={() => on.samePerson(x.keep, x.others)}>Same person</Button>
@@ -387,7 +396,7 @@ function NewPeople({ review, answers, dismissed, asked, on, onAddFile }: {
   );
 }
 
-function PersonRow({ person, value, on }: { person: NewPerson; value: string; on: CheckHandlers }) {
+function PersonRow({ person, value, on }: { person: NewPerson; value: string; on: Pick<CheckHandlers, 'setRelationship'> }) {
   const id = useId();
   return (
     <li className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -406,7 +415,7 @@ function PersonRow({ person, value, on }: { person: NewPerson; value: string; on
 }
 
 /** "We filled in N things your file doesn't say": the assumptions, grouped, each with the rows it touched. */
-function FilledIn({ review, only, setOnly }: { review: Review; only: string | null; setOnly: (code: string | null) => void }) {
+export function FilledIn({ review, only, setOnly }: { review: Review; only: string | null; setOnly: (code: string | null) => void }) {
   const groups = new Map<string, { rows: number; texts: Set<string> }>();
   for (const s of review.sheets) for (const r of s.preview.rows) {
     for (const m of r.messages) {
@@ -445,9 +454,10 @@ function FilledIn({ review, only, setOnly }: { review: Review; only: string | nu
  * page keeps that much room at the bottom when it scrolls a control into view
  * (scroll-padding), so a focused row button is never behind it.
  */
-function BottomBar({ review, checking, failed, committing, blocking, toFix, leftOutByBar, errors, pending, nothingReady, kind, assistant, on }: {
+export function BottomBar({ review, checking, failed, committing, blocking, toFix, leftOutByBar, errors, pending, nothingReady, kind, assistant, on }: {
   review: Review | null; checking: boolean; failed: boolean; committing: boolean; blocking: number; toFix: LeftOutRow[];
-  leftOutByBar: number; errors: number; pending: number; nothingReady: boolean; kind: Kind | null; assistant: boolean; on: CheckHandlers;
+  leftOutByBar: number; errors: number; pending: number; nothingReady: boolean; kind: Kind | null; assistant: boolean;
+  on: Pick<CheckHandlers, 'leaveOutRows' | 'putBackLeftOut' | 'commit'>;
 }) {
   const reasonId = useId();
   const navigate = useNavigate();

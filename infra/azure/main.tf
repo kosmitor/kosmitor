@@ -18,6 +18,8 @@ locals {
   app_fqdn = "${local.prefix}.${azurerm_container_app_environment.main.default_domain}"
   app_url  = var.custom_domain != "" ? "https://${var.custom_domain}" : "https://${local.app_fqdn}"
   image    = "${azurerm_container_registry.main.login_server}/${var.name}:${var.image_tag}"
+  # Empty deployer_object_ids keeps the old behaviour: whoever runs apply.
+  deployer_object_ids = toset(length(var.deployer_object_ids) > 0 ? [for id in var.deployer_object_ids : lower(id)] : [data.azurerm_client_config.current.object_id])
   tags = merge({
     application = var.name
     environment = var.environment

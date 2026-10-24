@@ -53,6 +53,7 @@ export const NAV: NavGroup[] = [
   ] },
   { label: 'Workspace', items: [
     { to: '/company', label: 'Company', icon: 'settings', requires: 'admin' },
+    { to: '/billing', label: 'Billing', icon: 'wallet', requires: 'admin' },
     { to: '/import', label: 'Import data', icon: 'inbox', requires: 'edit' },
     { to: '/team', label: 'Team & access', icon: 'badge', requires: 'admin' },
   ] },

@@ -1195,6 +1195,7 @@ interface RequestRow {
   report_document_id: string | null; report_detected: string | null; report_fmv: number | null; report_method: string | null;
   approval_required: boolean; approval_email: string | null; approval_token_hash: string | null;
   approval_token_at: string | null; approval_notified_at: string | null; approved_at: string | null; approved_by: string | null;
+  payment_required: boolean; payment_status: string; payment_price_id: string | null; paid_at: string | null;
 }
 
 interface EventRow { id: string; request_id: string; kind: string; message: string | null; author: string; author_name: string; created_at: string }
@@ -1355,6 +1356,7 @@ function present(
     contactPhone: editor ? row.contact_phone : null,
     recapSentAt: row.recap_sent_at, deskNotifiedAt: row.desk_notified_at,
     approvalRequired: row.approval_required, approvalNotifiedAt: row.approval_notified_at, approvedAt: row.approved_at,
+    paymentRequired: row.payment_required, paymentStatus: row.payment_status, paidAt: row.paid_at,
     appraiser: row.appraiser, reportDate: row.report_date,
     /** The report the team uploaded, what was read from it, and the figures the team gave with it. */
     report,
@@ -1529,6 +1531,7 @@ async function deskHold(ctx: Ctx, row: RequestRow, approval = false): Promise<st
  * this runs, and an error here would show a failure for something half done.
  */
 async function sendPending(ctx: Ctx, row: RequestRow, again: boolean): Promise<SendOutcome> {
+  if (row.payment_required && row.payment_status !== 'paid') throw badRequest('Complete payment before submitting this request for internal approval.');
   const intake = intakeOf(row)!;
   const pending = awaitingApproval(row);
   const wantRecap = !row.recap_sent_at;
@@ -1807,6 +1810,7 @@ route.get('/api/c/:cid/valuation-requests', 'read', async (ctx) => {
  */
 route.post('/api/c/:cid/valuation-requests', 'write', async (ctx) => {
   if (!deskOn()) throw forbidden('New 409A requests are turned off on this server. Requests made earlier can still be followed and closed.');
+  if (config().billing.enabled && !config().billing.valuationPriceId) throw new HttpError(503, '409A payment pricing is not configured yet. Please try again later.');
   // One open request at a time, checked first so a second attempt says so.
   const open = await one<{ id: string }>(
     `SELECT id FROM valuation_requests WHERE company_id = ? AND status IN (${OPEN_SQL}) LIMIT 1`, ctx.companyId);
@@ -1849,6 +1853,8 @@ route.post('/api/c/:cid/valuation-requests', 'write', async (ctx) => {
   await transaction(async () => {
     await insert('valuation_requests', {
       id, companyId: ctx.companyId, status: 'REQUESTED', approvalRequired: true, reasons: JSON.stringify(reasons),
+      paymentRequired: config().billing.enabled,
+      paymentPriceId: config().billing.enabled ? config().billing.valuationPriceId : null,
       provider: deskName(), answers: JSON.stringify(intake), contactName, contactEmail, contactPhone, notes,
       requestedBy: ctx.user!.name, requestedById: ctx.user!.id, createdAt: now, updatedAt: now,
     });
@@ -2021,6 +2027,10 @@ route.patch('/api/c/:cid/valuation-requests/:id', 'write', async (ctx) => {
     } else if (next !== 'CANCELLED') {
       // Started and delivered are the valuation team's to say, from its own page.
       throw badRequest('The valuation team moves a request along. From here it can be completed with the valuation it produced, or cancelled.');
+    }
+    if (row.payment_required) {
+      const { closeValuationCheckout } = await import('./billing.ts');
+      await closeValuationCheckout(row.company_id, row.id);
     }
     const now = nowISO();
     await update('valuation_requests', row.id, { ...values, status: next, closedAt: now, updatedAt: now });
@@ -2199,6 +2209,17 @@ route.get('/api/c/:cid/valuation-requests/package.xlsx', 'read', async (ctx) => 
 
 // --- Internal review ----------------------------------------------------------
 
+/** Billing commits first. Mail failures leave the saved paid request retryable. */
+export async function sendPaidValuation(ctx: Ctx, companyId: string, requestId: string): Promise<void> {
+  await transaction(async () => {
+    await one('SELECT id FROM companies WHERE id = ? FOR UPDATE', companyId);
+    const row = await one<RequestRow>('SELECT * FROM valuation_requests WHERE id = ? AND company_id = ?', requestId, companyId);
+    if (!row || !deskOn() || !isOpen(row.status) || !row.answers || row.payment_status !== 'paid') return;
+    const paymentCtx: Ctx = { ...ctx, companyId, user: null, membership: null };
+    await sendPending(paymentCtx, row, false);
+  });
+}
+
 /** Separate authority from an evaluator token and from a company's membership. */
 async function approvalRequest(ctx: Ctx): Promise<RequestRow> {
   ctx.res.setHeader('Cache-Control', 'no-store');
@@ -2206,7 +2227,8 @@ async function approvalRequest(ctx: Ctx): Promise<RequestRow> {
   const invalid = () => notFound('This approval link is not valid. It may have expired or been replaced.');
   if (!TOKEN_SHAPE.test(token)) throw invalid();
   const row = await one<RequestRow>('SELECT * FROM valuation_requests WHERE approval_token_hash = ?', hashToken(token));
-  if (!row || !row.approval_required || row.approval_email !== approvalAddress()) throw invalid();
+  if (!row || !row.approval_required || row.approval_email !== approvalAddress()
+    || (row.payment_required && row.payment_status !== 'paid')) throw invalid();
   const { linkOpenDays, linkClosedDays } = config().valuationDesk;
   if (!row.approval_token_at || row.approval_token_at <= since(linkOpenDays * DAY)
     || (!isOpen(row.status) && (row.closed_at ?? row.updated_at ?? row.created_at) <= since(linkClosedDays * DAY))) throw invalid();
@@ -2271,7 +2293,7 @@ async function deskRequest(ctx: Ctx): Promise<RequestRow> {
   const invalid = () => notFound('This link is not valid. It may have been replaced by a newer one, or the request closed a while ago.');
   if (!TOKEN_SHAPE.test(token)) throw invalid();
   const row = await one<RequestRow>('SELECT * FROM valuation_requests WHERE desk_token_hash = ?', hashToken(token));
-  if (!row || awaitingApproval(row)) throw invalid();
+  if (!row || awaitingApproval(row) || (row.payment_required && row.payment_status !== 'paid')) throw invalid();
   // A link lasts valuationDesk.linkOpenDays from when it was sent, and a closed
   // request's no more than linkClosedDays past its close, whichever ends first:
   // closing never revives one.
@@ -2293,6 +2315,7 @@ async function deskView(row: RequestRow) {
     id: row.id, status: row.status, open, deskName: deskName(),
     approvalRequired: row.approval_required, approvedAt: row.approved_at,
     approvalNotifiedAt: row.approval_notified_at, deskNotifiedAt: row.desk_notified_at,
+    paymentRequired: row.payment_required, paymentStatus: row.payment_status, paidAt: row.paid_at,
     companyName: await companyName(row.company_id),
     createdAt: row.created_at, closedAt: row.closed_at,
     appraiser: row.appraiser, reportDate: row.report_date,

@@ -131,3 +131,17 @@ test('an immediate portion vests on the start date ahead of the cliff', () => {
   assert.equal(vestedQuantity({ ...base, schedule }, '2025-01-01'), 21_000);   // 12,000 + 12/48 of 36,000
   assert.equal(vestedQuantity({ ...base, schedule }, '2028-01-01'), 48_000);
 });
+
+test('a daily schedule over decades is worked out in a moment, and vests exactly the grant (each date weighs only its own months)', async () => {
+  const { MAX_VESTING_MONTHS } = await import('../src/vesting.ts');
+  const daily = { ...sched4yr, id: 'vs_daily', durationMonths: MAX_VESTING_MONTHS, cliffMonths: 12, frequency: 'DAILY' as const, yearWeights: [0.1, 0.2, 0.3, 0.4] };
+  const t0 = performance.now();
+  const events = buildVestingSchedule({ schedule: daily, totalQuantity: 1_000_000, vestingStartDate: '2020-01-31' });
+  assert.ok(performance.now() - t0 < 2_000, `${Math.round(performance.now() - t0)} ms`);
+  assert.ok(events.length > 17_000);
+  assert.equal(events.at(-1)!.cumulative, 1_000_000);
+  assert.equal(events.at(-1)!.date, '2070-01-31');
+  // The same as a four-year daily schedule worked out month by month always was: 25% at the cliff of a 4-year grant.
+  const four = buildVestingSchedule({ schedule: { ...daily, durationMonths: 48, yearWeights: null }, totalQuantity: 48_000, vestingStartDate: '2024-01-01' });
+  assert.deepEqual([four[0].date, four[0].quantity, four.at(-1)!.cumulative], ['2025-01-01', 12_000, 48_000]);
+});

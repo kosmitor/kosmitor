@@ -6,6 +6,7 @@ import {
   BACK_TO, cellText, changedFields, csvCell, dataRowsOf, headersOf, indexOfRow, isKind, plural, tabOf,
   type PreviewRow, type Review, type Tab,
 } from './model.ts';
+import { fieldList, ocfLeftOutCsv } from './ocf.ts';
 
 /** A row that did not go in: left out by the person, or, with "Leave out N rows", for its errors. */
 const leftOut = (r: PreviewRow): boolean => r.outcome === 'excluded' || r.status === 'error';
@@ -46,8 +47,10 @@ function download(name: string, text: string) {
 }
 
 /** Done: what was added, what was updated, what was already there and what was left out, and where to check it. */
-export function DoneScreen({ result, files, tabs, why, kind, heading, onMore }: {
+export function DoneScreen({ result, files, tabs, why, kind, ocf = false, heading, onMore }: {
   result: Review; files: string[]; tabs: Tab[]; why: Record<string, Record<number, string>>; kind: string | null;
+  /** An Open Cap Format package was imported: its sections are the tabs. */
+  ocf?: boolean;
   heading: RefObject<HTMLHeadingElement | null>; onMore: () => void;
 }) {
   const navigate = useNavigate();
@@ -60,6 +63,11 @@ export function DoneScreen({ result, files, tabs, why, kind, heading, onMore }: 
     i.issuances ? plural(i.issuances, 'certificate') : '',
     i.awards ? plural(i.awards, 'grant') : '',
     i.convertibles ? plural(i.convertibles, 'SAFE or note', 'SAFEs & notes') : '',
+    i.warrants ? plural(i.warrants, 'warrant') : '',
+    i.valuations ? plural(i.valuations, 'valuation') : '',
+    i.stockSplits ? plural(i.stockSplits, 'stock split') : '',
+    i.poolAdjustments ? plural(i.poolAdjustments, 'plan change') : '',
+    i.events ? plural(i.events, 'history entry', 'history entries') : '',
   ].filter(Boolean);
   const changed = changedFields(result);
   const guessed = result.newPeople.filter((p) => p.guessed).length;
@@ -68,15 +76,18 @@ export function DoneScreen({ result, files, tabs, why, kind, heading, onMore }: 
   const lines: { label: string; value: ReactNode }[] = [
     { label: 'Added', value: added.length ? added.join(', ') : 'Nothing new' },
     ...(i.updated.stakeholders ? [{ label: 'Updated', value: `${plural(i.updated.stakeholders, 'stakeholder')}${changed.length ? ` (${changed.join(', ')})` : ''}` }] : []),
+    // What a package changed of the company's own record and of classes already on file.
+    ...(result.ocf?.companyFillApplied && result.ocf.companyFill.length ? [{ label: 'Company', value: `${fieldList(result.ocf.companyFill)} filled in from the package` }] : []),
+    ...(result.ocf?.classUpdates.length ? [{ label: 'Share classes', value: `${result.ocf.classUpdates.join(', ')} took the package's terms` }] : []),
     ...(result.raised.length ? [{ label: 'Raised', value: result.raised.map((r) => `${r.name}: ${r.from.toLocaleString()} → ${r.to.toLocaleString()} authorized shares`).join('; ') }] : []),
-    ...(result.counts.existing ? [{ label: 'Already there', value: `${plural(result.counts.existing, 'row was', 'rows were')} on the cap table and ${result.counts.existing === 1 ? 'was' : 'were'} skipped` }] : []),
+    ...(result.counts.existing ? [{ label: 'Already there', value: `${plural(result.counts.existing, ocf ? 'item was' : 'row was', ocf ? 'items were' : 'rows were')} on the cap table and ${result.counts.existing === 1 ? 'was' : 'were'} skipped` }] : []),
     ...(out ? [{
       label: 'Left out',
       value: (
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {plural(out, 'row')}
+          {plural(out, ocf ? 'item' : 'row')}
           <button type="button" className="inline-flex items-center gap-1 font-medium text-brand-600 hover:text-brand-700"
-            onClick={() => download('left-out-rows.csv', leftOutCsv(result, tabs, why))}>
+            onClick={() => download(ocf ? 'left-out-items.csv' : 'left-out-rows.csv', ocf ? ocfLeftOutCsv(result, why) : leftOutCsv(result, tabs, why))}>
             <Icon name="download" className="size-3.5" />Download them (.csv)
           </button>
         </span>
@@ -87,9 +98,10 @@ export function DoneScreen({ result, files, tabs, why, kind, heading, onMore }: 
   const worth = [
     ...(result.creates.shareClasses.length ? [{
       what: result.creates.shareClasses.join(', '),
-      why: result.creates.shareClasses.length === 1
-        ? 'its authorized shares were set to the shares issued; check them and its terms'
-        : 'their authorized shares were set to the shares issued; check them and their terms',
+      why: ocf ? 'created with the package\'s terms; check them'
+        : result.creates.shareClasses.length === 1
+          ? 'its authorized shares were set to the shares issued; check them and its terms'
+          : 'their authorized shares were set to the shares issued; check them and their terms',
       to: '/share-classes', link: 'Share classes',
     }] : []),
     ...(result.creates.pools.length ? [{ what: result.creates.pools.join(', '), why: 'check its size against your plan documents', to: '/plans', link: 'Plans & vesting' }] : []),

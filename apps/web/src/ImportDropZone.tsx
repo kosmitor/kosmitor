@@ -87,7 +87,7 @@ export function ImportDropZone({ onFiles, kind = null, compact = false, busy = n
           </span>
           {!busy && (
             <span className="max-w-md text-[12px] leading-relaxed text-ink-500">
-              Excel (.xlsx) or CSV. Pulley and Carta exports work as they are — {touch ? 'choose' : 'drop'} all their files together.
+              Excel (.xlsx), CSV, XML or an Open Cap Format package (.ocf.zip). Pulley and Carta exports work as they are — {touch ? 'choose' : 'drop'} all their files together.
             </span>
           )}
           <input ref={input} type="file" multiple className="sr-only" accept={IMPORT_ACCEPT} disabled={!!busy}

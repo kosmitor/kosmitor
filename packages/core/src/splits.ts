@@ -1,4 +1,4 @@
-import type { CompanyData, ISODate } from './types.ts';
+import type { CompanyData, ISODate, VestingSchedule } from './types.ts';
 import { roundShares } from './util.ts';
 import { rewindToDate } from './ledger.ts';
 
@@ -45,8 +45,40 @@ export function normalizeSplits(input: CompanyData, asOf: ISODate): CompanyData 
   const qty = (n: number, k: number): number => (k === 1 ? n : roundShares(n * k));
   const price = (p: number, k: number): number => (k === 1 ? p : p / k);
 
+  // A custom schedule's tranches given as share counts are in the shares of the
+  // security's own date, like its quantity: a security split since vests the same
+  // part of itself on each date, so it gets a copy of its schedule with those counts
+  // restated (`<id>@<factor>`). Portions need nothing.
+  const scheduleById = new Map(data.vestingSchedules.map((s) => [s.id, s]));
+  const restated = new Map<string, VestingSchedule>();
+  const scheduleFor = (id: string | null, k: number): string | null => {
+    if (id == null || k === 1) return id;
+    const s = scheduleById.get(id);
+    if (!s || s.kind !== 'CUSTOM' || !s.customTranches?.some((t) => t.quantity != null)) return id;
+    const key = `${id}@${k}`;
+    if (!restated.has(key)) {
+      restated.set(key, { ...s, id: key, customTranches: s.customTranches.map((t) => (t.quantity != null ? { ...t, quantity: qty(t.quantity, k) } : t)) });
+    }
+    return key;
+  };
+
+  const issuances = data.issuances.map((i) => {
+    const k = f(i.issueDate);
+    return k === 1 ? i : { ...i, quantity: qty(i.quantity, k), pricePerShare: price(i.pricePerShare, k), vestingScheduleId: scheduleFor(i.vestingScheduleId, k) };
+  });
+  const awards = data.awards.map((a) => {
+    const k = f(a.grantDate);
+    return k === 1 ? a : {
+      ...a, quantity: qty(a.quantity, k), exercisedQuantity: qty(a.exercisedQuantity, k),
+      cancelledQuantity: qty(a.cancelledQuantity, k),
+      strikePrice: price(a.strikePrice, k), fmvAtGrant: price(a.fmvAtGrant, k),
+      vestingScheduleId: scheduleFor(a.vestingScheduleId, k) as string,
+    };
+  });
+
   return {
     ...data,
+    ...(restated.size ? { vestingSchedules: [...data.vestingSchedules, ...restated.values()] } : {}),
     shareClasses: data.shareClasses.map((c) => {
       const k = f(c.issueDate);
       return k === 1 ? c : {
@@ -54,18 +86,8 @@ export function normalizeSplits(input: CompanyData, asOf: ISODate): CompanyData 
         originalIssuePrice: price(c.originalIssuePrice, k), parValue: price(c.parValue, k),
       };
     }),
-    issuances: data.issuances.map((i) => {
-      const k = f(i.issueDate);
-      return k === 1 ? i : { ...i, quantity: qty(i.quantity, k), pricePerShare: price(i.pricePerShare, k) };
-    }),
-    awards: data.awards.map((a) => {
-      const k = f(a.grantDate);
-      return k === 1 ? a : {
-        ...a, quantity: qty(a.quantity, k), exercisedQuantity: qty(a.exercisedQuantity, k),
-        cancelledQuantity: qty(a.cancelledQuantity, k),
-        strikePrice: price(a.strikePrice, k), fmvAtGrant: price(a.fmvAtGrant, k),
-      };
-    }),
+    issuances,
+    awards,
     warrants: data.warrants.map((w) => {
       const k = f(w.issueDate);
       return k === 1 ? w : {

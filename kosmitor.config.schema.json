@@ -502,6 +502,52 @@
         }
       }
     },
+    "billing": {
+      "description": "Stripe-hosted subscription and 409A payments. Off by default. Prices are read from Stripe, never set by the browser. Credentials are environment variables only: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET. See docs/billing.md for setup.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Offer new Stripe Checkouts. When enabled, new 409A requests must be paid before internal approval; a missing valuationPriceId leaves new requests unavailable rather than bypassing payment. Existing requests keep their earlier workflow; customer portal access and webhooks keep working while credentials remain configured. BILLING_ENABLED overrides this setting. Configure credentials and prices before enabling it.",
+          "type": "boolean"
+        },
+        "subscriptionPlans": {
+          "description": "The subscription choices the server offers, up to 10. Each has a stable unique key, a display name and a distinct recurring Stripe Price ID. Amounts, currencies and recurring intervals come from Stripe. STRIPE_SUBSCRIPTION_PLANS overrides the whole list as a JSON array; [] clears it.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "description": "Stable plan identifier. Start with a lowercase letter; use lowercase letters, digits, underscores or hyphens, up to 64 characters.",
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+              },
+              "name": {
+                "description": "The plan's display name, up to 80 characters.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "\\S"
+              },
+              "priceId": {
+                "description": "A recurring Price ID from the same Stripe account and test or live mode as the secret key.",
+                "type": "string",
+                "pattern": "^price_[A-Za-z0-9]+$",
+                "maxLength": 255
+              }
+            }
+          }
+        },
+        "valuationPriceId": {
+          "description": "One-time Stripe Price ID for a 409A request, distinct from subscription prices. null leaves valuation checkout unconfigured and blocks new 409A requests while billing is enabled. STRIPE_VALUATION_PRICE_ID overrides it; an empty environment value leaves the file setting in effect.",
+          "type": ["string", "null"],
+          "pattern": "^price_[A-Za-z0-9]+$",
+          "maxLength": 255
+        }
+      }
+    },
     "valuationDesk": {
       "description": "An optional service: companies ask for a new 409A, your internal team approves the request by email before it reaches the evaluators, and the company follows the request in the app. Off by default.",
       "type": "object",

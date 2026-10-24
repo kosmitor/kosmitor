@@ -267,7 +267,8 @@ test('who may import: signed out and read-only members are answered before their
     assert.equal((await refusedUnread(() => call('POST', `/api/c/${cid}/imports/workbook/preview`, big, null))).status, 401);
     assert.equal((await refusedUnread(() => call('POST', `/api/c/${cid}/imports/workbook/preview`, big, viewer))).status, 403);
     assert.equal((await refusedUnread(() => parse('big.csv', Buffer.alloc(megabytes(2), 'a'), null))).status, 401);
-    assert.equal((await call('POST', `/api/c/${cid}/imports/workbook/preview`, big)).json.detail.code, 'body-too-large');
+    // Refused partway through the body, which closes the connection while the rest is still going out.
+    assert.equal((await refusedUnread(() => call('POST', `/api/c/${cid}/imports/workbook/preview`, big))).json.detail.code, 'body-too-large');
   } finally {
     resetConfig();
   }

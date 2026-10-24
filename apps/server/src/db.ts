@@ -721,6 +721,56 @@ ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approved_at TEXT;
 ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS approved_by TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_valreq_approval_token ON valuation_requests(approval_token_hash) WHERE approval_token_hash IS NOT NULL;
 
+-- Payment applies only to requests created after billing is enabled. Price IDs
+-- are captured with each request so changing the catalog cannot change its quote.
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS payment_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid';
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS payment_price_id TEXT;
+ALTER TABLE valuation_requests ADD COLUMN IF NOT EXISTS paid_at TEXT;
+
+CREATE TABLE IF NOT EXISTS billing_accounts (
+  company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+  stripe_customer_id TEXT UNIQUE,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS billing_checkouts (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('subscription', 'valuation')),
+  request_id TEXT REFERENCES valuation_requests(id) ON DELETE CASCADE,
+  price_id TEXT NOT NULL,
+  plan_name TEXT NOT NULL,
+  stripe_session_id TEXT UNIQUE,
+  stripe_payment_intent_id TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending',
+  amount BIGINT NOT NULL,
+  currency TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  paid_at TEXT,
+  refunded_amount BIGINT NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_subscription_pending ON billing_checkouts(company_id)
+  WHERE kind = 'subscription' AND status IN ('pending', 'processing');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_valuation_pending ON billing_checkouts(request_id)
+  WHERE kind = 'valuation' AND status IN ('pending', 'processing');
+CREATE TABLE IF NOT EXISTS billing_subscriptions (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  price_id TEXT NOT NULL,
+  plan_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_period_end BIGINT,
+  cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_billing_subscription_company ON billing_subscriptions(company_id);
+CREATE TABLE IF NOT EXISTS billing_events (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  processed_at TEXT NOT NULL
+);
+
 -- What happened to a request after it was sent, in order: the team starting it,
 -- delivering the report, a note from the team, a change of contact details, and
 -- how it closed. The company's page reads its status history from here.
@@ -763,6 +813,9 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 -- MFN_ELECTION: the later convertible whose terms the MFN instrument (security_id) adopts.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS adopted_security_id TEXT;
+-- The certificate a TRANSFER, EXERCISE or CONVERSION entry created (OCF resulting_security_ids).
+-- Entries written before the column have none; the OCF export then infers it.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS resulting_security_id TEXT;
 
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY,

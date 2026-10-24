@@ -33,6 +33,7 @@ import { config } from '../config.ts';
 import { loadCompanyData } from '../store.ts';
 import { usd, perShare } from '../templates.ts';
 import { roundShares, today, addMonths, computeCapTable, INSTRUMENT_NAMES } from '@kosmitor/core';
+import type { OcfSection, OcfSummary, OcfRun } from '../ocf/read.ts';
 
 /** The relationships a stakeholder can have, as options.relationships takes them. */
 export const RELATIONS = ['FOUNDER', 'EMPLOYEE', 'FORMER_EMPLOYEE', 'ADVISOR', 'CONTRACTOR', 'INVESTOR', 'BOARD_MEMBER', 'OTHER'] as const;
@@ -89,7 +90,14 @@ export type MessageCode =
   | 'class-created' | 'schedule-created' | 'plan-created' | 'plan-size-smaller'
   | 'no-price' | 'no-83b' | 'expiration-assumed' | 'exercise-date-assumed' | 'exercise-before-grant'
   | 'cancellation-dated-to-termination' | 'cancellation-date-missing' | 'unused-value'
-  | 'interest-ignored' | 'no-cap-or-discount' | 'not-outstanding' | 'instrument-assumed' | 'settled-before-issue' | 'settled-date-missing';
+  | 'interest-ignored' | 'no-cap-or-discount' | 'not-outstanding' | 'instrument-assumed' | 'settled-before-issue' | 'settled-date-missing'
+  // Open Cap Format packages (src/ocf/plan.ts; docs/importing.md, "OCF packages").
+  | 'ocf-bad-object' | 'ocf-unknown-reference' | 'ocf-duplicate-id' | 'ocf-currency' | 'ocf-event-order' | 'ocf-balance-mismatch'
+  | 'ocf-unsupported' | 'ocf-split-existing' | 'ocf-depends'
+  | 'ocf-no-balance' | 'ocf-acceleration-not-applied' | 'ocf-future-date' | 'ocf-result-date' | 'ocf-option-type-assumed'
+  | 'ocf-terms-approximate' | 'ocf-planless-grant' | 'ocf-vesting-ignored'
+  | 'ocf-folded' | 'ocf-not-imported' | 'ocf-history-current-only' | 'ocf-vesting-per-security' | 'ocf-vesting-rounding'
+  | 'ocf-transfer-as-cancellation' | 'ocf-rounded' | 'ocf-excluded-with' | 'ptep-assumed' | 'class-updated';
 
 export interface RowMessage {
   level: 'error' | 'warning' | 'info';
@@ -101,6 +109,8 @@ export interface RowMessage {
   value?: Cell;
   /** For 'ambiguous-person': the emails of the people the row may mean, one of which is the answer. */
   choices?: string[];
+  /** For 'ambiguous-person' in an OCF package: the people on file the row may mean (options.ocfPeople takes the answer). */
+  people?: { id: string; name: string; email: string | null }[];
 }
 /** What becomes of a row: added, an update, already on the cap table, left out by the person, nothing to import, or not imported for an error. */
 export type RowOutcome = 'add' | 'update' | 'existing' | 'excluded' | 'skip' | 'error';
@@ -111,10 +121,15 @@ export interface PreviewRow {
   outcome: RowOutcome;
   summary: Record<string, string | number | null>;
   messages: RowMessage[];
+  /** An OCF package's row: the object's id in the package and its object_type. */
+  ocfId?: string;
+  object?: string;
 }
 /** Something about a sheet, or the whole import, rather than one row. */
 export interface Notice {
-  code: 'truncated' | 'too-wide' | 'mixed-encoding' | 'over-authorized' | 'pool-over-allocated' | 'cap-table';
+  code: 'truncated' | 'too-wide' | 'mixed-encoding' | 'over-authorized' | 'pool-over-allocated' | 'cap-table'
+    // About an OCF package as a whole (src/ocf/read.ts and plan.ts).
+    | 'ocf-checksum' | 'ocf-path-resolved' | 'ocf-unlisted-file' | 'ocf-version-older' | 'ocf-other-issuer' | 'ocf-not-imported-file' | 'ocf-legends';
   level: 'warning' | 'info';
   text: string;
   /** One click that settles it: push `value` into options.raiseAuthorized. */
@@ -134,7 +149,11 @@ export interface ImportPreview {
   creates: { stakeholders: string[]; shareClasses: string[]; vestingSchedules: string[]; pools: string[] };
   notices: Notice[];
 }
-export interface ImportedCounts { stakeholders: number; shareClasses: number; issuances: number; awards: number; convertibles: number; vestingSchedules: number; pools: number }
+export interface ImportedCounts {
+  stakeholders: number; shareClasses: number; issuances: number; awards: number; convertibles: number; vestingSchedules: number; pools: number;
+  /** Only an OCF package brings these: 0 for spreadsheets. `events` counts the ledger entries written for events, not the entries securities are created with. */
+  warrants: number; valuations: number; stockSplits: number; poolAdjustments: number; events: number;
+}
 export interface ImportResult extends ImportPreview {
   importId: string;
   imported: ImportedCounts & { updated: { stakeholders: number } };
@@ -150,6 +169,8 @@ const inWords = (n: number): string => WORDS[n] ?? String(n);
 const id = (p: string): string => `${p}_${randomUUID().slice(0, 12)}`;
 const now = (): string => new Date().toISOString();
 const key = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
+/** A name or email as people and classes are matched by: lower case, spaces collapsed. */
+export const nameKey = key;
 /** How options.relationships and NewPerson name a person: their email, or their name in lower case. */
 export const personKey = (name: string, email: string | null): string => email ?? key(name);
 
@@ -352,30 +373,35 @@ function planEmail(ctx: RowContext, plan: Plan, record: Record<string, unknown>,
 }
 
 /** The stakeholder fields an import writes, as they are on record, to say what an update changes. */
-const PERSON_FIELDS = ['email', 'type', 'relation', 'title', 'startDate', 'terminationDate', 'taxCountry', 'taxState', 'address', 'phone', 'notes', 'department'] as const;
+export const PERSON_FIELDS = ['email', 'type', 'relation', 'title', 'startDate', 'terminationDate', 'taxCountry', 'taxState', 'address', 'phone', 'notes', 'department'] as const;
 
 /** A stakeholder on record, as the resolver matches rows to them. */
-interface Known {
+export interface Known {
   id: string; name: string; email: string | null;
   relation?: string | null; seated?: boolean; startDate?: string | null;
   fields: Record<string, unknown>;
 }
 
-const issuanceFingerprint = (stakeholderId: string, shareClassId: string, quantity: number, issueDate: string): string =>
+export const issuanceFingerprint = (stakeholderId: string, shareClassId: string, quantity: number, issueDate: string): string =>
   `${stakeholderId}|${shareClassId}|${Number(quantity)}|${issueDate}`;
-const awardFingerprint = (stakeholderId: string, type: string, quantity: number, grantDate: string): string =>
+export const awardFingerprint = (stakeholderId: string, type: string, quantity: number, grantDate: string): string =>
   `${stakeholderId}|${type}|${Number(quantity)}|${grantDate}`;
-const convertibleFingerprint = (stakeholderId: string, instrument: string, principal: number, issueDate: string): string =>
+export const convertibleFingerprint = (stakeholderId: string, instrument: string, principal: number, issueDate: string): string =>
   `${stakeholderId}|${instrument}|${Number(principal)}|${issueDate}`;
+/** A warrant has no number: its holder, class, shares, issue date and strike say which it is. */
+export const warrantFingerprint = (stakeholderId: string, shareClassId: string, quantity: number, issueDate: string, strike: number): string =>
+  `${stakeholderId}|${shareClassId}|${Number(quantity)}|${issueDate}|${Number(strike)}`;
 /**
  * What a record and a row correcting it still share: the holder and the date. Not the
  * class, award type or instrument: a file imported again with another answer to "ISO
  * or NSO?" (or another class for every row) is that record again, not a new one.
  */
-const nearKey = (stakeholderId: string, date: string): string => `${stakeholderId}|${date}`;
+export const nearKey = (stakeholderId: string, date: string): string => `${stakeholderId}|${date}`;
 
 /** A certificate, grant or SAFE on record, as a row is compared with it. */
 export interface OnFile {
+  /** The row's id, when it was read from the database. */
+  id?: string;
   /** Its certificate, grant or instrument number, as written. */
   label: string | null;
   fingerprint: string;
@@ -389,7 +415,7 @@ export interface OnFile {
 }
 
 /** The records of one kind, by number, by contents and by holder, class and date. */
-class Recorded {
+export class Recorded {
   readonly byLabel = new Map<string, OnFile>();
   readonly byFingerprint = new Map<string, OnFile[]>();
   readonly byNear = new Map<string, OnFile[]>();
@@ -413,7 +439,7 @@ class Recorded {
  * same contents first, then a numbered one whose number no row of the sheet
  * names.
  */
-class Claims {
+export class Claims {
   private readonly claimed = new Set<OnFile>();
   private readonly recorded: Recorded;
   private readonly labelsInSheet: Set<string>;
@@ -457,6 +483,8 @@ export class Company {
   certificates = new Recorded();
   awards = new Recorded();
   convertibles = new Recorded();
+  /** Warrants on record, by their fingerprint (they have no number). */
+  warrants = new Recorded();
   /** When each stakeholder on record left, by id, to date the shares a leaver's grant lost. */
   terminationDates = new Map<string, string>();
   /** Stock splits on record, oldest first. */
@@ -471,7 +499,7 @@ export class Company {
 
   static async load(companyId: string): Promise<Company> {
     const c = new Company(companyId);
-    const [stakeholders, classes, schedules, pools, certificates, awards, convertibles, splits] = await concurrently([
+    const [stakeholders, classes, schedules, pools, certificates, awards, convertibles, splits, warrants] = await concurrently([
       () => all<Record<string, unknown> & { id: string; name: string; email: string | null; relation: string; board_seat: number; start_date: string | null; termination_date: string | null }>(
         `SELECT id, name, email, type, relation, board_seat, start_date, termination_date, title, tax_country, tax_state, address, phone, notes, department
          FROM stakeholders WHERE company_id = ? ORDER BY created_at, id`, companyId),
@@ -479,13 +507,15 @@ export class Company {
       () => all<{ id: string; name: string; kind: string; duration_months: number; cliff_months: number; frequency: string }>(
         'SELECT id, name, kind, duration_months, cliff_months, frequency FROM vesting_schedules WHERE company_id = ?', companyId),
       () => all<{ id: string; name: string }>('SELECT id, name FROM pools WHERE company_id = ?', companyId),
-      () => all<{ certificate_no: string | null; stakeholder_id: string; share_class_id: string; quantity: number; issue_date: string; price_per_share: number; vesting_schedule_id: string | null }>(
-        'SELECT certificate_no, stakeholder_id, share_class_id, quantity, issue_date, price_per_share, vesting_schedule_id FROM issuances WHERE company_id = ? ORDER BY created_at, id', companyId),
-      () => all<{ label: string | null; stakeholder_id: string; type: string; quantity: number; grant_date: string; strike_price: number; pool_id: string | null; expiration_date: string | null }>(
-        'SELECT label, stakeholder_id, type, quantity, grant_date, strike_price, pool_id, expiration_date FROM awards WHERE company_id = ? ORDER BY created_at, id', companyId),
-      () => all<{ label: string | null; stakeholder_id: string; instrument: string; principal: number; issue_date: string; valuation_cap: number | null; discount: number }>(
-        'SELECT label, stakeholder_id, instrument, principal, issue_date, valuation_cap, discount FROM convertibles WHERE company_id = ? ORDER BY created_at, id', companyId),
+      () => all<{ id: string; certificate_no: string | null; stakeholder_id: string; share_class_id: string; quantity: number; issue_date: string; price_per_share: number; vesting_schedule_id: string | null }>(
+        'SELECT id, certificate_no, stakeholder_id, share_class_id, quantity, issue_date, price_per_share, vesting_schedule_id FROM issuances WHERE company_id = ? ORDER BY created_at, id', companyId),
+      () => all<{ id: string; label: string | null; stakeholder_id: string; type: string; quantity: number; grant_date: string; strike_price: number; pool_id: string | null; expiration_date: string | null }>(
+        'SELECT id, label, stakeholder_id, type, quantity, grant_date, strike_price, pool_id, expiration_date FROM awards WHERE company_id = ? ORDER BY created_at, id', companyId),
+      () => all<{ id: string; label: string | null; stakeholder_id: string; instrument: string; principal: number; issue_date: string; valuation_cap: number | null; discount: number }>(
+        'SELECT id, label, stakeholder_id, instrument, principal, issue_date, valuation_cap, discount FROM convertibles WHERE company_id = ? ORDER BY created_at, id', companyId),
       () => all<{ date: string; ratio: number }>('SELECT date, ratio FROM stock_splits WHERE company_id = ? ORDER BY date', companyId),
+      () => all<{ id: string; stakeholder_id: string; share_class_id: string; quantity: number; issue_date: string; strike_price: number }>(
+        'SELECT id, stakeholder_id, share_class_id, quantity, issue_date, strike_price FROM warrants WHERE company_id = ? ORDER BY created_at, id', companyId),
     ]);
     for (const s of stakeholders) {
       const fields = {
@@ -508,9 +538,13 @@ export class Company {
     }
     c.pools = pools;
     for (const p of pools) c.poolsByName.set(key(p.name), p);
-    for (const r of certificates) c.recordIssuance(r.certificate_no, r.stakeholder_id, r.share_class_id, Number(r.quantity), r.issue_date, Number(r.price_per_share), r.vesting_schedule_id);
-    for (const r of awards) c.recordAward(r.label, r.stakeholder_id, r.type, Number(r.quantity), r.grant_date, Number(r.strike_price), r.pool_id, r.expiration_date);
-    for (const r of convertibles) c.recordConvertible(r.label, r.stakeholder_id, r.instrument, Number(r.principal), r.issue_date, r.valuation_cap == null ? null : Number(r.valuation_cap), Number(r.discount));
+    for (const r of certificates) c.recordIssuance(r.certificate_no, r.stakeholder_id, r.share_class_id, Number(r.quantity), r.issue_date, Number(r.price_per_share), r.vesting_schedule_id, r.id);
+    for (const r of awards) c.recordAward(r.label, r.stakeholder_id, r.type, Number(r.quantity), r.grant_date, Number(r.strike_price), r.pool_id, r.expiration_date, r.id);
+    for (const r of convertibles) c.recordConvertible(r.label, r.stakeholder_id, r.instrument, Number(r.principal), r.issue_date, r.valuation_cap == null ? null : Number(r.valuation_cap), Number(r.discount), r.id);
+    for (const r of warrants) {
+      c.warrants.add({ id: r.id, label: null, fingerprint: warrantFingerprint(r.stakeholder_id, r.share_class_id, Number(r.quantity), r.issue_date, Number(r.strike_price)),
+        near: nearKey(r.stakeholder_id, r.issue_date), what: r.share_class_id, amount: Number(r.quantity), details: { strikePrice: Number(r.strike_price) } });
+    }
     return c;
   }
 
@@ -523,16 +557,16 @@ export class Company {
     return new Company(companyId);
   }
 
-  private recordIssuance(label: string | null, holder: string, shareClassId: string, quantity: number, date: string, price: number, scheduleId: string | null): void {
-    this.certificates.add({ label, fingerprint: issuanceFingerprint(holder, shareClassId, quantity, date), near: nearKey(holder, date), what: shareClassId, amount: quantity,
+  private recordIssuance(label: string | null, holder: string, shareClassId: string, quantity: number, date: string, price: number, scheduleId: string | null, id?: string): void {
+    this.certificates.add({ id, label, fingerprint: issuanceFingerprint(holder, shareClassId, quantity, date), near: nearKey(holder, date), what: shareClassId, amount: quantity,
       details: { pricePerShare: price, vestingSchedule: scheduleId, certificateNo: label } });
   }
-  private recordAward(label: string | null, holder: string, type: string, quantity: number, date: string, strike: number, poolId: string | null, expiration: string | null): void {
-    this.awards.add({ label, fingerprint: awardFingerprint(holder, type, quantity, date), near: nearKey(holder, date), what: type, amount: quantity,
+  private recordAward(label: string | null, holder: string, type: string, quantity: number, date: string, strike: number, poolId: string | null, expiration: string | null, id?: string): void {
+    this.awards.add({ id, label, fingerprint: awardFingerprint(holder, type, quantity, date), near: nearKey(holder, date), what: type, amount: quantity,
       details: { strikePrice: strike, poolName: poolId, expirationDate: expiration, label } });
   }
-  private recordConvertible(label: string | null, holder: string, instrument: string, principal: number, date: string, cap: number | null, discount: number): void {
-    this.convertibles.add({ label, fingerprint: convertibleFingerprint(holder, instrument, principal, date), near: nearKey(holder, date), what: instrument, amount: principal,
+  private recordConvertible(label: string | null, holder: string, instrument: string, principal: number, date: string, cap: number | null, discount: number, id?: string): void {
+    this.convertibles.add({ id, label, fingerprint: convertibleFingerprint(holder, instrument, principal, date), near: nearKey(holder, date), what: instrument, amount: principal,
       details: { valuationCap: cap, discount, label } });
   }
 
@@ -631,7 +665,7 @@ function readTypeAndRelation(ctx: RowContext, name: string | null): { type: stri
   return { type, relation };
 }
 
-function defaultRelation(name: string, classKind: string | null): string {
+export function defaultRelation(name: string, classKind: string | null): string {
   if (guessStakeholderType(name) !== 'INDIVIDUAL') return 'INVESTOR';
   if (classKind === 'PREFERRED') return 'INVESTOR';
   return 'EMPLOYEE';
@@ -657,7 +691,7 @@ const RELATION_WORDS: Record<string, string> = {
  * dates the row gives, as the seats given when seats arrived do (ONCE in db.ts): one
  * who has left is a former director, and dates the wrong way round keep only the end.
  */
-function boardSeatOf(relation: string | null, startDate: string | null, terminationDate: string | null): Record<string, unknown> {
+export function boardSeatOf(relation: string | null, startDate: string | null, terminationDate: string | null): Record<string, unknown> {
   if (relation !== 'BOARD_MEMBER') return {};
   return { boardSeat: 1, boardSeatStart: terminationDate && startDate && terminationDate < startDate ? null : startDate, boardSeatEnd: terminationDate };
 }
@@ -667,7 +701,7 @@ function boardSeatOf(relation: string | null, startDate: string | null, terminat
  * yet — with any namesakes who have another email — or, when the row cannot say
  * which of several people of that name it means, all of them.
  */
-interface PersonMatch { existing?: Known; planned?: Record<string, unknown>; sameName: SameName[]; ambiguous?: SameName[] }
+export interface PersonMatch { existing?: Known; planned?: Record<string, unknown>; sameName: SameName[]; ambiguous?: SameName[] }
 
 /** Whether a person on record has an email, counting one a row of this sheet gives them. */
 const hasEmail = (plan: Plan, k: Known): boolean => !!k.email || plan.stakeholderUpdates.get(k.id)?.email != null;
@@ -680,7 +714,7 @@ const hasEmail = (plan: Plan, k: Known): boolean => !!k.email || plan.stakeholde
  * the caller says so, so it can be put right. Where several people could be
  * meant, the row is not given to any of them.
  */
-function findPerson(company: Company, plan: Plan, name: string, email: string | null): PersonMatch {
+export function findPerson(company: Company, plan: Plan, name: string, email: string | null): PersonMatch {
   if (email) {
     const byEmail = company.stakeholdersByEmail.get(email) ?? plan.emailsGiven.get(email);
     if (byEmail) return { existing: byEmail, sameName: [] };
@@ -1544,12 +1578,12 @@ export async function prepareImport(
 }
 
 /** How the update messages name a stakeholder's fields. */
-const FIELD_WORDS: Record<typeof PERSON_FIELDS[number], string> = {
+export const FIELD_WORDS: Record<typeof PERSON_FIELDS[number], string> = {
   email: 'email', type: 'type', relation: 'relationship', title: 'title', startDate: 'start date', terminationDate: 'termination date',
   taxCountry: 'tax country', taxState: 'tax state', address: 'address', phone: 'phone', notes: 'notes', department: 'department',
 };
 /** A field's value as an update message shows it: words for codes, a dash for nothing, long text cut short. */
-function shown(field: string, v: unknown): string {
+export function shown(field: string, v: unknown): string {
   if (v == null || v === '') return '—';
   const s = String(v);
   if (field === 'relation' || field === 'type') return RELATION_WORDS[s] ?? s;
@@ -1616,6 +1650,7 @@ async function writePlan(companyId: string, req: ImportRequest, prepared: Import
       stakeholders: plan.newStakeholders.size, shareClasses: plan.newShareClasses.size,
       issuances: plan.issuances.length, awards: plan.awards.length, convertibles: plan.convertibles.length,
       vestingSchedules: plan.newSchedules.size, pools: plan.newPools.size,
+      warrants: 0, valuations: 0, stockSplits: 0, poolAdjustments: 0, events: 0,
       updated: { stakeholders: updatedPeople(plan) },
     },
   };
@@ -1645,7 +1680,8 @@ export interface WorkbookSheet extends ImportRequest {
 export interface WorkbookSheetResult {
   sheetName: string;
   file: string | null;
-  kind: ImportKind;
+  /** What the sheet holds; for an OCF package, the section (src/ocf/read.ts, OCF_SECTIONS). */
+  kind: ImportKind | OcfSection;
   /** True when the sheet has errors the options do not allow skipping — nothing from it is applied. */
   blocked: boolean;
   /** How the sheet's dates and numbers were read. */
@@ -1653,7 +1689,7 @@ export interface WorkbookSheetResult {
   numberFormat: NumberFormat;
   /** Headers of the columns no field reads, so the page can say what is left behind. */
   columnsNotImported: string[];
-  preview: ImportPreview & { importId?: string; imported?: ImportResult['imported'] };
+  preview: Omit<ImportPreview, 'kind'> & { kind: ImportKind | OcfSection; importId?: string; imported?: ImportResult['imported'] };
 }
 /** A person the import creates, for the page to confirm how they relate to the company. */
 export interface NewPerson {
@@ -1666,9 +1702,12 @@ export interface NewPerson {
   /** No file said how they relate to the company: the relationship is a guess. */
   guessed: boolean;
   /** People with the same name and another email; the import keeps them apart. `onRecord` is false for one this import also creates. */
-  sameName: { name: string; email: string | null; onRecord: boolean }[];
+  /** `stakeholderId` names the one on record. */
+  sameName: { name: string; email: string | null; onRecord: boolean; stakeholderId?: string }[];
   /** Every row that names them. */
   rows: { file: string | null; sheet: string; row: number }[];
+  /** For an OCF package: the stakeholder's id in the package, the key options.ocfPeople takes. */
+  ocfId?: string;
 }
 /** How one file's dates and numbers were read, for the line that says so above the rows. */
 export interface ReadAs {
@@ -1707,6 +1746,8 @@ export interface WorkbookResult {
   raised: Raised[];
   /** Names this review: send it with the commit, which is refused unless it would write exactly what was reviewed. */
   reviewToken: string;
+  /** An OCF package's reading: what it is, what is not imported, what the company takes from it (docs/importing.md, "OCF packages"). */
+  ocf?: OcfSummary;
 }
 
 /** What the import as a whole asks for, beside the sheets. */
@@ -1717,15 +1758,20 @@ export interface WorkbookExtras {
   expectedCounts?: Partial<ImportCounts>;
   /** The reviewToken of the preview the person approved: stricter than expectedCounts, it covers every row's outcome. */
   reviewToken?: string;
+  /** An OCF package instead of sheets (src/ocf/plan.ts). */
+  ocf?: OcfRun;
 }
 
 const KIND_SEQUENCE: ImportKind[] = ['stakeholders', 'captable', 'grants', 'convertibles'];
-const IMPORTED_KEYS: (keyof ImportedCounts)[] = ['stakeholders', 'shareClasses', 'issuances', 'awards', 'convertibles', 'vestingSchedules', 'pools'];
-const EMPTY_IMPORTED = (): ImportResult['imported'] =>
-  ({ stakeholders: 0, shareClasses: 0, issuances: 0, awards: 0, convertibles: 0, vestingSchedules: 0, pools: 0, updated: { stakeholders: 0 } });
+const IMPORTED_KEYS: (keyof ImportedCounts)[] = ['stakeholders', 'shareClasses', 'issuances', 'awards', 'convertibles', 'vestingSchedules', 'pools',
+  'warrants', 'valuations', 'stockSplits', 'poolAdjustments', 'events'];
+export const EMPTY_IMPORTED = (): ImportResult['imported'] => ({
+  stakeholders: 0, shareClasses: 0, issuances: 0, awards: 0, convertibles: 0, vestingSchedules: 0, pools: 0,
+  warrants: 0, valuations: 0, stockSplits: 0, poolAdjustments: 0, events: 0, updated: { stakeholders: 0 },
+});
 
 /** A short fingerprint of what a review covered. */
-const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('base64url').slice(0, 22);
+export const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('base64url').slice(0, 22);
 
 class DryRunRollback extends Error {
   result: WorkbookResult;
@@ -1851,7 +1897,11 @@ export async function runWorkbook(
   const ordered = [...sheets].sort((a, b) => KIND_SEQUENCE.indexOf(a.kind) - KIND_SEQUENCE.indexOf(b.kind));
   const { readings, readAs } = decideReadings(sheets);
   // What was asked: every sheet as sent, with its options, and the raises accepted. A commit names the review it follows by this and by what the run came to.
-  const asked = digest([sheets.map((s) => [s.file ?? null, s.sheetName, s.kind, s.headers, s.rows, s.mapping, s.headerRowNumber ?? 1, s.options ?? {}]), extras.raiseAuthorized ?? []]);
+  const asked = extras.ocf
+    ? digest(['ocf', extras.ocf.file, createHash('sha256').update(JSON.stringify(extras.ocf.pkg)).digest('base64url'), extras.ocf.exclude,
+      extras.ocf.relationships ?? {}, [...(extras.ocf.ocfPeople ?? new Map()).entries()], !!extras.ocf.skipRowsWithErrors, extras.raiseAuthorized ?? [],
+      extras.ocf.companyFill ?? null])
+    : digest([sheets.map((s) => [s.file ?? null, s.sheetName, s.kind, s.headers, s.rows, s.mapping, s.headerRowNumber ?? 1, s.options ?? {}]), extras.raiseAuthorized ?? []]);
   const run = async (): Promise<WorkbookResult> => {
     const before = await capTableCheck(companyId);
     const results: WorkbookSheetResult[] = [];
@@ -1859,7 +1909,20 @@ export async function runWorkbook(
     const importIds: string[] = [];
     const people = new Map<string, NewPerson>();
     const createdClasses = new Set<string>();
-    for (const sheet of ordered) {
+    let ocf: OcfSummary | undefined;
+    if (extras.ocf) {
+      // An OCF package is imported on its own: its sections stand in for the sheets (src/ocf/plan.ts).
+      const { runOcf } = await import('../ocf/plan.ts');
+      const out = await runOcf(companyId, extras.ocf, createdBy);
+      results.push(...out.sections);
+      for (const k of IMPORTED_KEYS) imported[k] += out.imported[k];
+      imported.updated.stakeholders += out.imported.updated.stakeholders;
+      if (out.importId) importIds.push(out.importId);
+      for (const p of out.newPeople) people.set(p.ocfId ?? p.key, p);
+      for (const c of out.createdClasses) createdClasses.add(c);
+      ocf = out.summary;
+    }
+    for (const sheet of extras.ocf ? [] : ordered) {
       const reading = readings.get(sheet)!;
       const prepared = await prepareImport(companyId, sheet, undefined, reading);
       for (const s of prepared.plan.newStakeholders.values()) {
@@ -1867,7 +1930,8 @@ export async function runWorkbook(
         people.set(String(s.id), {
           key: note?.key ?? personKey(String(s.name), s.email ? String(s.email) : null), name: String(s.name), email: s.email ? String(s.email) : null,
           type: String(s.type), relation: String(s.relation), guessed: note?.guessed ?? false,
-          sameName: (note?.sameName ?? []).map((o) => ({ name: o.name, email: o.email, onRecord: !people.has(o.stakeholderId) })), rows: [],
+          sameName: (note?.sameName ?? []).map((o) => ({ name: o.name, email: o.email, onRecord: !people.has(o.stakeholderId),
+            ...(people.has(o.stakeholderId) ? {} : { stakeholderId: o.stakeholderId }) })), rows: [],
         });
       }
       for (const ref of prepared.refs) people.get(ref.stakeholderId)?.rows.push({ file: sheet.file ?? null, sheet: sheet.sheetName, row: ref.row });
@@ -1897,13 +1961,16 @@ export async function runWorkbook(
       for (const k of Object.keys(counts) as (keyof ImportCounts)[]) counts[k] += r.blocked && k === 'willImport' ? 0 : r.preview.counts[k];
       for (const k of Object.keys(creates) as (keyof typeof creates)[]) creates[k].push(...r.preview.creates[k]);
     }
+    // A package goes in whole or not at all: while any of it is blocked, none of it will be imported.
+    if (extras.ocf && results.some((r) => r.blocked)) counts.willImport = 0;
     const raised = extras.raiseAuthorized?.length ? await raiseAuthorized(companyId, extras.raiseAuthorized) : [];
     const notices = newNotices(before.warnings, await capTableCheck(companyId), createdClasses);
 
     // The same person reached by two sheets (one of them blocked, say) is one entry.
     const newPeople: NewPerson[] = [];
     for (const p of people.values()) {
-      const same = newPeople.find((q) => q.key === p.key);
+      // An OCF package's people are its own objects, each one person whatever their name.
+      const same = extras.ocf ? undefined : newPeople.find((q) => q.key === p.key);
       if (same) { same.rows.push(...p.rows); same.guessed &&= p.guessed; } else newPeople.push(p);
     }
     // A namesake the import also creates names this person back: the first of the two did not know of the second yet.
@@ -1925,13 +1992,13 @@ export async function runWorkbook(
       if (expected && (Object.keys(expected) as (keyof ImportCounts)[]).some((k) => k in counts && expected[k] !== counts[k])) throw new StaleReview(counts);
     }
     const summary: WorkbookResult = {
-      sheets: results, counts, creates, imported, importIds, files: [...new Set(sheets.map((s) => s.file ?? null))],
-      newPeople, readAs, notices, raised, reviewToken,
+      sheets: results, counts, creates, imported, importIds, files: extras.ocf ? [extras.ocf.file] : [...new Set(sheets.map((s) => s.file ?? null))],
+      newPeople, readAs, notices, raised, reviewToken, ...(ocf ? { ocf } : {}),
     };
     if (dryRun) throw new DryRunRollback(summary);
     const blockedSheets = results.filter((r) => r.blocked);
     if (blockedSheets.length > 0) {
-      throw new RowsNeedFixing(blockedSheets.map((r) => `"${r.sheetName}" has ${r.preview.counts.errors} row${r.preview.counts.errors === 1 ? '' : 's'} with errors`).join('; ')
+      throw new RowsNeedFixing(blockedSheets.map((r) => `"${r.sheetName}" has ${r.preview.counts.errors} ${extras.ocf ? 'item' : 'row'}${r.preview.counts.errors === 1 ? '' : 's'} with errors`).join('; ')
         + '. Fix them or choose to skip rows with errors — nothing was imported.');
     }
     return summary;

@@ -2,7 +2,7 @@
 # fill in the first block; everything below it is optional and shows the
 # default. variables.tf describes each one in full.
 #
-# Secrets do not belong here: pass smtp_url as TF_VAR_smtp_url in the shell
+# Secrets do not belong here: pass SMTP and Stripe credentials as TF_VAR_ variables in the shell
 # that runs terraform. The application's own settings (branding, sign-in,
 # limits, the valuation desk and the rest) are in kosmitor.config.json and
 # kosmitor.config.local.json at the repository root, not here.
@@ -12,6 +12,9 @@
 subscription_id          = "<your-subscription-id>"
 alert_email              = "ops@example.com"
 valuation_approval_email = "approvals@example.com"
+
+# Everyone who runs plan and apply; empty means whoever runs it, alone.
+# deployer_object_ids = ["<your-object-id>", "<a-colleague's-object-id>"]
 
 # --- Naming and regions ---------------------------------------------------------
 
@@ -104,6 +107,12 @@ valuation_approval_email = "approvals@example.com"
 # Comma separated; empty accepts any Google account.
 # google_allowed_domains = "example.com"
 
+# --- PostHog ----------------------------------------------------------------------
+
+# Project token; empty keeps analytics off. Wins over analytics.posthog in the param file.
+# posthog_key  = "phc_..."
+# posthog_host = "https://eu.i.posthog.com"
+
 # --- 409A valuation desk ----------------------------------------------------------
 
 # The internal inbox that approves new requests before they reach any evaluator.
@@ -116,6 +125,18 @@ valuation_approval_email = "approvals@example.com"
 # Up to 10. Wins over valuationDesk.email in the param file; the desk itself is
 # switched on there (valuationDesk.enabled).
 # valuation_desk_emails = ["valuations@example.com", "second.evaluator@example.com"]
+
+# --- Stripe billing --------------------------------------------------------------
+
+# Off until your Stripe products, prices, customer portal and webhook are ready.
+# See ../../docs/billing.md. Use Price IDs from the same account and mode as the key.
+# billing_enabled = false
+# stripe_subscription_plans = [
+#   { key = "standard", name = "Standard", priceId = "price_REPLACEWITHRECURRING" }
+# ]
+# stripe_valuation_price_id = "price_REPLACEWITHONETIME"
+# Pass credentials through TF_VAR_stripe_secret_key and TF_VAR_stripe_webhook_secret.
+# Do not store them in this file; Terraform puts them in Key Vault.
 
 # --- Monitoring -------------------------------------------------------------------
 

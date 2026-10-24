@@ -24,6 +24,8 @@ import { takeImportFiles, isPdf } from '../importHandoff.ts';
 import { dateTime } from '../format.ts';
 import { config } from '../config.ts';
 import { CheckScreen, type CheckHandlers, type LeftOutRow } from './import/Check.tsx';
+import { OcfCheck } from './import/OcfCheck.tsx';
+import { mergeOcfParts, ocfQuestionsOf, ocfRequestBody, type OcfState } from './import/ocf.ts';
 import { DoneScreen } from './import/Done.tsx';
 import { ColumnsPanel, SettingsPanel } from './import/Panels.tsx';
 import {
@@ -36,9 +38,9 @@ type Step = 'upload' | 'check' | 'done';
 const stepOf = (path: string): Step => (/\/import\/check\/?$/.test(path) ? 'check' : /\/import\/done\/?$/.test(path) ? 'done' : 'upload');
 
 const SUBTITLE: Record<Kind | 'all', string> = {
-  all: 'Bring in your cap table, stakeholders, grants and SAFEs from Excel or CSV.',
+  all: 'Bring in your cap table, stakeholders, grants and SAFEs from Excel, CSV or an Open Cap Format package.',
   stakeholders: 'Bring in your stakeholders from Excel or CSV.',
-  captable: 'Bring in your cap table from Excel or CSV.',
+  captable: 'Bring in your cap table from Excel, CSV or an Open Cap Format package.',
   grants: 'Bring in your equity grants from Excel or CSV.',
   convertibles: 'Bring in your SAFEs and notes from Excel or CSV.',
 };
@@ -88,15 +90,17 @@ export default function ImportData() {
   const [fixes, setFixes] = useState(0);
   const [nonce, setNonce] = useState(0);
 
+  // An Open Cap Format package, imported on its own: it stands in for the tabs.
+  const [ocf, setOcf] = useState<OcfState | null>(null);
   const [review, setReview] = useState<Review | null>(null);
-  const [reviewBody, setReviewBody] = useState<ReturnType<typeof requestBody> | null>(null);
+  const [reviewBody, setReviewBody] = useState<ReturnType<typeof requestBody> | ReturnType<typeof ocfRequestBody> | null>(null);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   // Import was refused because the company (or the rows) changed since the check; the page checked again.
   const [stale, setStale] = useState(false);
-  const [result, setResult] = useState<{ review: Review; files: string[]; tabs: Tab[]; why: Edits['why'] } | null>(null);
+  const [result, setResult] = useState<{ review: Review; files: string[]; tabs: Tab[]; why: Edits['why']; ocf: boolean } | null>(null);
 
   const [reading, setReading] = useState<string | null>(null);
   const [problems, setProblems] = useState<FileProblem[]>([]);
@@ -125,7 +129,7 @@ export default function ImportData() {
   const backNav = useRef(navType);
 
   const reset = useCallback(() => {
-    setFiles([]); setTabs([]); setEdits(NO_EDITS); setSettings(DEFAULT_SETTINGS); setAnswers(NO_ANSWERS); setDismissed([]);
+    setFiles([]); setTabs([]); setOcf(null); setEdits(NO_EDITS); setSettings(DEFAULT_SETTINGS); setAnswers(NO_ANSWERS); setDismissed([]);
     setLeftOutByBar([]); setAsked([]); setFixes(0); setReview(null); setReviewBody(null); setCheckError(null);
     setCommitError(null); setStale(false); setProblems([]); setPdfs([]); setColumnsFor(null); setSettingsOpen(false);
     seq.current++;
@@ -137,12 +141,13 @@ export default function ImportData() {
   // check stays on screen, as it was, until the answer: decided while rendering, so it never unmounts.
   // "Stay" goes back to the check.
   const lastStep = useRef(routeStep);
-  const leavingCheck = lastStep.current === 'check' && routeStep === 'upload' && navType !== 'REPLACE' && tabs.length > 0 && fixes > 0;
+  const holdsFiles = tabs.length > 0 || !!ocf;
+  const leavingCheck = lastStep.current === 'check' && routeStep === 'upload' && navType !== 'REPLACE' && holdsFiles && fixes > 0;
   useEffect(() => {
     const from = lastStep.current;
     lastStep.current = routeStep;
     if (routeStep !== 'upload') setHolding(false);
-    if (from === 'check' && routeStep === 'upload' && navType !== 'REPLACE' && tabs.length > 0) {
+    if (from === 'check' && routeStep === 'upload' && navType !== 'REPLACE' && holdsFiles) {
       backNav.current = navType;
       if (fixes > 0) setConfirm('back'); else reset();
     }
@@ -157,7 +162,7 @@ export default function ImportData() {
   }, [step, !!schema]);
 
   // Fixes live only in this page: closing or reloading it asks first.
-  const unsaved = tabs.length > 0 && fixes > 0;
+  const unsaved = holdsFiles && fixes > 0;
   useEffect(() => {
     if (!unsaved) return;
     const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
@@ -227,6 +232,29 @@ export default function ImportData() {
       if (mode === 'replace' && stepOf(window.location.pathname) !== 'upload') navigate(`/import${search}`, { replace: true });
     };
     if (parsed.length === 0) { nothing(); return; }
+
+    // An Open Cap Format package (a .ocf.zip, or a manifest and its files) is imported on its own.
+    const ocfParts = parsed.filter(({ data }) => data.format === 'ocf' && data.ocf);
+    if (ocfParts.length && mode === 'add') {
+      found.push({ file: ocfParts[0].file.name, message: `${ocfParts.map((x) => x.file.name).join(', ')}: an OCF package is imported on its own. Import these files first, then drop the package.` });
+      for (let i = parsed.length - 1; i >= 0; i--) if (parsed[i].data.format === 'ocf') parsed.splice(i, 1);
+      if (parsed.length === 0) { nothing(); return; }
+    } else if (ocfParts.length) {
+      const merged = mergeOcfParts(ocfParts.map(({ file, data }) => ({ name: file.name, uploadId: data.uploadId ?? null, ocf: data.ocf! })));
+      if (!merged.ok) { found.push({ file: '', message: merged.problem }); nothing(); return; }
+      const first = ocfParts[0].file;
+      reset();
+      setFiles([{ id: `f${Date.now().toString(36)}-${++fileSeq}`, name: merged.name, original: merged.name, size: first.size, lastModified: first.lastModified, uploadId: merged.uploadIds[0] ?? null }]);
+      setOcf({ name: merged.name, uploadIds: merged.uploadIds, info: merged.info, pkg: merged.pkg, leftAside: parsed.filter(({ data }) => data.format !== 'ocf').map(({ file }) => file.name) });
+      setResult(null);
+      tabsCompany.current = cid;
+      setProblems(found);
+      if (extraPdfs.length) setPdfQueue((q) => [...q, ...extraPdfs]);
+      setReading(null);
+      immediate.current = true;
+      if (stepOf(window.location.pathname) !== 'check') navigate(`/import/check${search}`);
+      return;
+    }
 
     const taken = new Set(known.map((f) => f.name));
     const newFiles: ImportFile[] = parsed.map(({ file, data }) => {
@@ -325,17 +353,17 @@ export default function ImportData() {
   useEffect(() => {
     if (routeStep === 'done') committed.current = false;
     if (!handled.current || reading || committed.current) return;
-    if (routeStep === 'check' && tabs.length === 0 && confirm !== 'back') navigate(`/import${search}`, { replace: true });
+    if (routeStep === 'check' && tabs.length === 0 && !ocf && confirm !== 'back') navigate(`/import${search}`, { replace: true });
     if (routeStep === 'done' && !result) navigate(`/import${search}`, { replace: true });
-  }, [routeStep, tabs.length, result, reading, confirm, navigate, search]);
+  }, [routeStep, tabs.length, ocf, result, reading, confirm, navigate, search]);
 
   // The check: at once after files arrive or "Check again", 300 ms after any other change.
   useEffect(() => {
-    if (!schema || !companyId || tabs.length === 0 || tabsCompany.current !== companyId) return;
-    const body = requestBody(tabs, files, edits, settings, answers, schema);
+    if (!schema || !companyId || (tabs.length === 0 && !ocf) || tabsCompany.current !== companyId) return;
+    const body = ocf ? ocfRequestBody(ocf, edits.exclude, answers) : requestBody(tabs, files, edits, settings, answers, schema);
     const id = ++seq.current;
     setCommitError(null);
-    if (body.sheets.length === 0) { setReview(null); setReviewBody(null); setChecking(false); setCheckError(null); return; }
+    if ('sheets' in body && body.sheets.length === 0) { setReview(null); setReviewBody(null); setChecking(false); setCheckError(null); return; }
     setChecking(true);
     const delay = immediate.current ? 0 : 300;
     immediate.current = false;
@@ -355,11 +383,12 @@ export default function ImportData() {
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [tabs, files, edits, settings, answers, nonce, schema, companyId]);
+  }, [tabs, ocf, files, edits, settings, answers, nonce, schema, companyId]);
 
   const hasSchedules = (schedules?.length ?? 0) > 0;
-  const questions = useMemo(() => (schema ? questionsOf(review, tabs, files, schema, dismissed, hasSchedules) : []),
-    [review, tabs, files, schema, dismissed, hasSchedules]);
+  const questions = useMemo(() => (schema && !ocf ? questionsOf(review, tabs, files, schema, dismissed, hasSchedules) : []),
+    [review, tabs, files, schema, dismissed, hasSchedules, ocf]);
+  const ocfQuestions = useMemo(() => (ocf ? ocfQuestionsOf(review, dismissed) : []), [ocf, review, dismissed]);
 
   // ---------------------------------------------------------------------------
   // What the person does
@@ -488,6 +517,19 @@ export default function ImportData() {
     dismissProblems: () => setProblems([]),
   };
 
+  /** Who a stakeholder of the package is: one on file, or someone new. */
+  const setOcfPerson = (ocfId: string, stakeholderId: string) => { fixed(); setAnswers((a) => ({ ...a, ocfPeople: { ...a.ocfPeople, [ocfId]: stakeholderId } })); };
+  const setOcfCompanyFill = (fill: boolean) => { fixed(); setAnswers((a) => ({ ...a, ocfCompanyFill: fill })); };
+  const onOcf = {
+    ...on, setOcfPerson, setOcfCompanyFill,
+    // "Same person": the package's person is the one on file of that name.
+    samePerson: (keep: Parameters<CheckHandlers['samePerson']>[0]) => {
+      const onRecord = keep.sameName.find((x) => x.onRecord && x.stakeholderId);
+      if (keep.ocfId && onRecord?.stakeholderId) setOcfPerson(keep.ocfId, onRecord.stakeholderId);
+      setDismissed((d) => [...d, `same:${keep.name.toLowerCase()}`]);
+    },
+  };
+
   const commit = async () => {
     if (!review || !reviewBody || !companyId) return;
     setCommitting(true);
@@ -495,9 +537,9 @@ export default function ImportData() {
     setStale(false);
     try {
       const res = await api<Review>(`/c/${companyId}/imports/workbook/commit`, { body: { ...reviewBody, reviewToken: review.reviewToken } });
-      const names = files.filter((f) => reviewBody.sheets.some((s) => s.file === f.name)).map((f) => f.name);
+      const names = 'sheets' in reviewBody ? files.filter((f) => reviewBody.sheets.some((s) => s.file === f.name)).map((f) => f.name) : [reviewBody.ocf.file];
       committed.current = true;
-      setResult({ review: res, files: names, tabs, why: edits.why });
+      setResult({ review: res, files: names, tabs, why: edits.why, ocf: !!ocf });
       reset();
       tabsCompany.current = companyId;
       toast('Import complete');
@@ -530,14 +572,19 @@ export default function ImportData() {
         <UploadScreen kind={kind} heading={heading} reading={reading} problems={problems} note={note} history={history ?? []}
           onDismissNote={() => setNote(null)} onFiles={(list) => void addFiles(list, 'replace')} />
       )}
-      {step === 'check' && (
+      {step === 'check' && ocf && (
+        <OcfCheck ocf={ocf} schema={schema} review={review} edits={edits} answers={answers} dismissed={dismissed}
+          checking={checking} checkError={checkError} commitError={commitError} stale={stale} committing={committing}
+          leftOutByBar={leftOutByBar.length} questions={ocfQuestions} askedPeople={asked} assistant={assistant} heading={heading} on={onOcf} />
+      )}
+      {step === 'check' && !ocf && (
         <CheckScreen schema={schema} files={files} tabs={tabs} edits={edits} answers={answers} dismissed={dismissed} review={review}
           checking={checking} checkError={checkError} commitError={commitError} stale={stale} committing={committing}
           leftOutByBar={leftOutByBar.length} kind={kind} questions={questions} askedPeople={asked} reading={reading} problems={problems} pdfs={pdfs}
           schedules={schedules ?? []} pools={pools ?? []} assistant={assistant} heading={heading} on={on} />
       )}
       {step === 'done' && result && (
-        <DoneScreen result={result.review} files={result.files} tabs={result.tabs} why={result.why} kind={kind} heading={heading}
+        <DoneScreen result={result.review} files={result.files} tabs={result.tabs} why={result.why} kind={result.ocf ? 'captable' : kind} ocf={result.ocf} heading={heading}
           onMore={() => { reset(); setResult(null); navigate(`/import${search}`); }} />
       )}
 

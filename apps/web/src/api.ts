@@ -47,8 +47,8 @@ export async function api<T = any>(
   return payload as T;
 }
 
-/** Downloads any authenticated endpoint as a file, using the browser's save flow. */
-export async function downloadFile(path: string, filename: string): Promise<void> {
+/** Downloads any authenticated endpoint as a file, using the browser's save flow. Resolves to the response's headers. */
+export async function downloadFile(path: string, filename: string): Promise<Headers> {
   const res = await fetch(`/api${path}`, { credentials: 'include' });
   if (!res.ok) {
     let message = 'That file could not be downloaded.';
@@ -64,10 +64,11 @@ export async function downloadFile(path: string, filename: string): Promise<void
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  return res.headers;
 }
 
 /** Downloads a CSV report through the authenticated endpoint. */
-export function downloadReport(companyId: string, report: string, asOf?: string): Promise<void> {
+export function downloadReport(companyId: string, report: string, asOf?: string): Promise<Headers> {
   const qs = asOf ? `?asOf=${asOf}` : '';
   return downloadFile(`/c/${companyId}/reports/${report}${qs}`, `${report}-${asOf ?? 'current'}.csv`);
 }

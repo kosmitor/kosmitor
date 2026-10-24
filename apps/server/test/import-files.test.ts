@@ -135,7 +135,8 @@ test('several files at once: people first whatever the order, matched across fil
 
   const done = await commit(cid, { sheets, expectedCounts: dry.json.counts });
   assert.equal(done.status, 200, JSON.stringify(done.json));
-  assert.deepEqual(done.json.imported, { stakeholders: 3, shareClasses: 0, issuances: 2, awards: 1, convertibles: 0, vestingSchedules: 0, pools: 1, updated: { stakeholders: 0 } });
+  assert.deepEqual(done.json.imported, { stakeholders: 3, shareClasses: 0, issuances: 2, awards: 1, convertibles: 0, vestingSchedules: 0, pools: 1,
+    warrants: 0, valuations: 0, stockSplits: 0, poolAdjustments: 0, events: 0, updated: { stakeholders: 0 } });
   const ines = await one<{ id: string; relation: string }>("SELECT id, relation FROM stakeholders WHERE company_id = ? AND name = 'Ines Calloway'", cid);
   assert.equal(ines!.relation, 'FOUNDER', 'the report\'s relationship, not a guess from the cap table');
   assert.equal((await one<{ stakeholder_id: string }>("SELECT stakeholder_id FROM issuances WHERE company_id = ? AND certificate_no = 'CS-1'", cid))!.stakeholder_id, ines!.id);
@@ -321,7 +322,8 @@ test('the same name with two emails makes two people, and the review says so', a
   assert.equal((await commit(cid, { sheets: one })).status, 200);
   const later = await sheetsFrom(cid, [{ name: 'later.csv', body: csv([['Stakeholder', 'Email', 'Share class', 'Shares', 'Issue date'], ['Robin Vale', 'rv@elsewhere.example', 'Common', '10', '2024-05-05']]) }]);
   const third = await preview(cid, { sheets: later });
-  assert.deepEqual(third.json.newPeople[0].sameName, [{ name: 'Robin Vale', email: 'robin@vale.example', onRecord: true }]);
+  const robin = (await all<{ id: string }>("SELECT id FROM stakeholders WHERE company_id = ? AND email = 'robin@vale.example'", cid))[0].id;
+  assert.deepEqual(third.json.newPeople[0].sameName, [{ name: 'Robin Vale', email: 'robin@vale.example', onRecord: true, stakeholderId: robin }]);
 });
 
 test('going over the authorized shares is flagged before saving, with a raise that settles it', async () => {

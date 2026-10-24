@@ -284,6 +284,69 @@ test('an enabled 409A desk requires one privately configured approval mailbox', 
   }
 });
 
+test('billing is opt-in and accepts only distinct server-configured Stripe prices', () => {
+  const plans = [{ key: 'standard', name: 'Standard', priceId: 'price_Standard123' }];
+  withEnv(noEnvOverrides(), () => {
+    assert.deepEqual(config().billing, { enabled: false, subscriptionPlans: [], valuationPriceId: null });
+    configure({ billing: { enabled: true, subscriptionPlans: plans, valuationPriceId: 'price_Valuation123' } });
+    assert.deepEqual(config().billing, { enabled: true, subscriptionPlans: plans, valuationPriceId: 'price_Valuation123' });
+  });
+
+  const invalid: [Json, RegExp][] = [
+    [{ subscriptionPlans: [...plans, { key: 'standard', name: 'Other', priceId: 'price_Other123' }] }, /distinct keys/],
+    [{ subscriptionPlans: [...plans, { key: 'other', name: 'Other', priceId: 'price_Standard123' }] }, /price IDs must be distinct/],
+    [{ subscriptionPlans: plans, valuationPriceId: 'price_Standard123' }, /price IDs must be distinct/],
+    [{ subscriptionPlans: [{ ...plans[0], key: 'Unstable key' }] }, /subscriptionPlans\[0\]\.key/],
+    [{ subscriptionPlans: [{ ...plans[0], name: '   ' }] }, /subscriptionPlans\[0\]\.name/],
+    [{ subscriptionPlans: [{ key: 'standard', name: 'Standard' }] }, /priceId is missing/],
+    [{ subscriptionPlans: [{ ...plans[0], priceId: 'prod_NotAPrice' }] }, /subscriptionPlans\[0\]\.priceId/],
+    [{ subscriptionPlans: [{ ...plans[0], amount: 100 }] }, /amount is not a setting/],
+    [{ valuationPriceId: '' }, /valuationPriceId/],
+    [{ valuationPriceId: 'https://example.com/price_123' }, /valuationPriceId/],
+    [{ secretKey: 'test-only-placeholder' }, /secretKey is not a setting/],
+    [{ webhookSecret: 'test-only-placeholder' }, /webhookSecret is not a setting/],
+  ];
+  for (const [billing, error] of invalid) {
+    withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ billing }) }, () => {
+      assert.throws(() => config(), problem(error));
+    });
+  }
+  const ten = Array.from({ length: 10 }, (_, i) => ({ key: `plan-${i}`, name: `Plan ${i}`, priceId: `price_Plan${i}` }));
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ billing: { subscriptionPlans: ten } }) }, () => {
+    assert.equal(config().billing.subscriptionPlans.length, 10);
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: overrides({ billing: { subscriptionPlans: [...ten, { key: 'extra', name: 'Extra', priceId: 'price_Extra' }] } }) }, () => {
+    assert.throws(() => config(), problem(/billing\.subscriptionPlans can hold at most 10 entries/));
+  });
+});
+
+test('billing environment values override files and reject malformed JSON or booleans', () => {
+  const file = overrides({ billing: {
+    enabled: false, subscriptionPlans: [{ key: 'file', name: 'File plan', priceId: 'price_File' }], valuationPriceId: 'price_FileValuation',
+  } });
+  const plans = [{ key: 'environment', name: 'Environment plan', priceId: 'price_Environment' }];
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: file, BILLING_ENABLED: 'yes', STRIPE_SUBSCRIPTION_PLANS: JSON.stringify(plans), STRIPE_VALUATION_PRICE_ID: ' price_EnvValuation ' }, () => {
+    assert.deepEqual(config().billing, { enabled: true, subscriptionPlans: plans, valuationPriceId: 'price_EnvValuation' });
+  });
+  withEnv({ ...noEnvOverrides(), KOSMITOR_CONFIG: file, STRIPE_SUBSCRIPTION_PLANS: '[]', STRIPE_VALUATION_PRICE_ID: ' ' }, () => {
+    assert.deepEqual(config().billing.subscriptionPlans, [], 'an explicit empty array clears the configured catalog');
+    assert.equal(config().billing.valuationPriceId, 'price_FileValuation', 'a blank environment value leaves the file setting');
+  });
+  withEnv({ ...noEnvOverrides(), BILLING_ENABLED: 'sometimes' }, () => {
+    assert.throws(() => config(), problem(/billing\.enabled must be a boolean/));
+  });
+  for (const value of ['not json', '[{"key":']) {
+    withEnv({ ...noEnvOverrides(), STRIPE_SUBSCRIPTION_PLANS: value }, () => {
+      assert.throws(() => config(), problem(/STRIPE_SUBSCRIPTION_PLANS.*must be valid JSON/));
+    });
+  }
+  for (const value of ['null', '{}', '42', '"price_123"']) {
+    withEnv({ ...noEnvOverrides(), STRIPE_SUBSCRIPTION_PLANS: value }, () => {
+      assert.throws(() => config(), problem(/billing\.subscriptionPlans must be an array/));
+    });
+  }
+});
+
 test('configure() layers its changes and resetConfig() goes back to the files', () => {
   try {
     configure({ auth: { sessionDays: 7 } });
@@ -308,6 +371,7 @@ test('publicConfig() holds nothing the browser should not see', () => {
   try {
     configure({
       valuationDesk: { enabled: true, email: 'desk@example.com', approvalEmail: 'private-approvals@example.com' },
+      billing: { enabled: true, subscriptionPlans: [{ key: 'private', name: 'Private plan', priceId: 'price_PrivateSubscription' }], valuationPriceId: 'price_PrivateValuation' },
       mail: { from: 'Example <mailer@example.com>' },
       backup: { drillDatabase: 'secret_drill_db' },
     });
@@ -317,6 +381,8 @@ test('publicConfig() holds nothing the browser should not see', () => {
     assert.ok(!('email' in pc.valuationDesk), 'the desk inbox is not public');
     assert.ok(!('approvalEmail' in pc.valuationDesk), 'the approval inbox is not public');
     assert.equal(pc.valuationDesk.enabled, true);
+    assert.deepEqual(pc.billing, { enabled: true }, 'only billing availability belongs in the public configuration');
+    assert.ok(!json.includes('price_Private'), 'server price identifiers are not included in the page configuration');
     assert.deepEqual(strings(pc).filter((s) => email.test(s)), [], 'no email address, demo disabled');
     assert.ok(!json.includes('secret_drill_db'));
     for (const provider of Object.values<Json>(base.ai.providers)) assert.ok(!json.includes(provider.endpoint), `${provider.endpoint} is not public`);

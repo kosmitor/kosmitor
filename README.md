@@ -113,7 +113,8 @@ with one. The seat decides who votes on board consents and who gets the board's 
 
 - [Configuration](docs/configuration.md): every setting and its default
 - [The math](docs/math.md): vesting, priced rounds, SAFEs, waterfalls, splits, compliance checks
-- [Importing data](docs/importing.md): the import wizard, and checking the math against a Pulley or Carta export
+- [Importing data](docs/importing.md): the import wizard (spreadsheets and OCF packages), and checking the math against a Pulley or Carta export
+- [Open Cap Format](docs/ocf.md): the OCF package the cap table exports and the import reads, and what it holds
 - [Signing in](docs/auth.md): Google sign-in, invitations, password resets, email
 - [Data and files](docs/data.md): documents, where data lives, backups
 - [Dated ledger](docs/design/dated-ledger.md): design notes on past-date views

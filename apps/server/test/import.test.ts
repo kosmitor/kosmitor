@@ -335,7 +335,8 @@ test('a cap table spreadsheet becomes stakeholders, share classes and certificat
   // Errors block the commit unless the caller opts to skip those rows.
   await assert.rejects(() => commitImport(companyId, request, 'Tester'), /1 row has errors/);
   const result = await commitImport(companyId, { ...request, options: { ...request.options, skipRowsWithErrors: true } }, 'Tester');
-  assert.deepEqual(result.imported, { stakeholders: 2, shareClasses: 1, issuances: 4, awards: 0, convertibles: 0, vestingSchedules: 1, pools: 0, updated: { stakeholders: 0 } });
+  assert.deepEqual(result.imported, { stakeholders: 2, shareClasses: 1, issuances: 4, awards: 0, convertibles: 0, vestingSchedules: 1, pools: 0,
+    warrants: 0, valuations: 0, stockSplits: 0, poolAdjustments: 0, events: 0, updated: { stakeholders: 0 } });
 
   const data = await loadCompanyData(companyId);
   const table = computeCapTable(data, { asOf: '2023-01-01' });
@@ -767,7 +768,8 @@ test('a workbook is applied tab by tab in one transaction — later tabs see ear
   assert.equal((await one<{ n: number }>('SELECT COUNT(*)::int AS n FROM stakeholders WHERE company_id = ?', companyId))!.n, 0);
 
   const committed = await runWorkbook(companyId, sheets, 'Tester', false);
-  assert.deepEqual(committed.imported, { stakeholders: 2, shareClasses: 1, issuances: 1, awards: 1, convertibles: 0, vestingSchedules: 0, pools: 1, updated: { stakeholders: 0 } });
+  assert.deepEqual(committed.imported, { stakeholders: 2, shareClasses: 1, issuances: 1, awards: 1, convertibles: 0, vestingSchedules: 0, pools: 1,
+    warrants: 0, valuations: 0, stockSplits: 0, poolAdjustments: 0, events: 0, updated: { stakeholders: 0 } });
   const data = await loadCompanyData(companyId);
   const kestrel = data.stakeholders.find((s) => s.name === 'Kestrel Ventures II')!;
   assert.equal(kestrel.type, 'ENTITY');                                                  // from the people tab, not guessed

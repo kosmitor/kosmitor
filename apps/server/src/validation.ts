@@ -1,5 +1,6 @@
 import { badRequest, date, num, str } from './http.ts';
 import { one } from './db.ts';
+import { MAX_VESTING_MONTHS } from '@kosmitor/core';
 
 const moneyFields = new Set(['parValue', 'originalIssuePrice', 'pricePerShare', 'strikePrice', 'fmvAtGrant',
   'principal', 'valuationCap', 'qualifiedFinancingMinimum', 'fairMarketValue', 'enterpriseValue', 'totalAssetsCents']);
@@ -78,6 +79,10 @@ export async function validateEntity(table: string, values: Record<string, unkno
   }
   if (table === 'vesting_schedules') {
     if ((values.kind ?? 'TIME') === 'TIME' && Number(values.cliffMonths ?? 12) > Number(values.durationMonths ?? 48)) throw badRequest('The cliff cannot exceed the vesting duration.');
+    // Fifty years at most: a daily schedule over centuries would have every cap table work out a million dates.
+    for (const f of ['durationMonths', 'cliffMonths', 'accelerationMonths']) {
+      if (values[f] != null && Number(values[f]) > MAX_VESTING_MONTHS) throw badRequest(`Vesting can run for at most ${MAX_VESTING_MONTHS} months (50 years).`);
+    }
     for (const key of ['yearWeights', 'milestones', 'customTranches']) {
       if (values[key] == null) continue;
       let list: unknown = values[key];

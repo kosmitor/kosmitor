@@ -161,7 +161,7 @@ export function StatusBadge({ status }: { status: string }) {
   const map: Record<string, keyof typeof BADGE_TONES> = {
     OUTSTANDING: 'success', ACTIVE: 'success', EXECUTED: 'success', APPROVED: 'success',
     SIGNED: 'success', COMPLETED: 'success', FINAL: 'success', SENT: 'success', CONVERTED: 'info',
-    PENDING: 'warning', PENDING_APPROVAL: 'warning', AWAITING_SIGNATURE: 'warning', PENDING_SIGNATURE: 'warning', DRAFT: 'neutral',
+    PENDING: 'warning', PENDING_APPROVAL: 'warning', AWAITING_PAYMENT: 'warning', REFUNDED: 'neutral', AWAITING_SIGNATURE: 'warning', PENDING_SIGNATURE: 'warning', DRAFT: 'neutral',
     OPEN: 'warning', EXPIRED: 'danger', CANCELLED: 'danger', REJECTED: 'danger', FORFEITED: 'danger',
     REPURCHASED: 'neutral', TRANSFERRED: 'neutral', SUPERSEDED: 'neutral', EXERCISED: 'info',
     REPAID: 'neutral', VOID: 'danger', DONE: 'success', REQUESTED: 'info', IN_PROGRESS: 'info', DELIVERED: 'success',

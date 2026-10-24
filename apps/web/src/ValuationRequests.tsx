@@ -27,7 +27,7 @@
  * by name, and the files are on the team's page while the request is open.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useSession } from './session.tsx';
 import { useQuery, api, downloadFile } from './api.ts';
 import { FormModal, FormGrid } from './crud.tsx';
@@ -48,6 +48,8 @@ import {
 import { VaultPicker } from './VaultPicker.tsx';
 import { useReportOpener } from './ValuationReportField.tsx';
 import { reportDocumentOf, type RequestReport } from './ReportReading.tsx';
+import { billingAmount, stripeUrl } from './billing-format.ts';
+import { CheckoutReturnNotice, useCheckoutReturn } from './BillingCheckout.tsx';
 
 export interface RefreshTrigger {
   reason: 'NO_VALUATION' | 'EXPIRED' | 'EXPIRING' | 'PRICED_ROUND' | 'CONVERTIBLE';
@@ -64,9 +66,9 @@ export interface ValuationRefresh {
 
 export interface RequestEvent {
   id: string;
-  kind: 'APPROVED' | 'IN_PROGRESS' | 'DELIVERED' | 'CANCELLED' | 'COMPLETED' | 'MESSAGE' | 'CONTACT_CHANGED';
+  kind: 'PAID' | 'APPROVED' | 'IN_PROGRESS' | 'DELIVERED' | 'CANCELLED' | 'COMPLETED' | 'MESSAGE' | 'CONTACT_CHANGED';
   message: string | null;
-  author: 'company' | 'desk' | 'approval';
+  author: 'company' | 'desk' | 'approval' | 'payment';
   authorName: string;
   createdAt: string;
 }
@@ -107,6 +109,9 @@ export interface ValuationRequest {
   approvalRequired: boolean;
   approvedAt: string | null;
   approvalNotifiedAt: string | null;
+  paymentRequired: boolean;
+  paymentStatus: 'unpaid' | 'paid' | 'refunded';
+  paidAt: string | null;
   /** Set by the team when it delivers the report. */
   appraiser: string | null;
   reportDate: string | null;
@@ -154,16 +159,22 @@ export function useValuationRequests() {
   const refresh = useQuery<ValuationRefresh>(companyId ? `/c/${companyId}/valuation-refresh` : null, [companyId]);
   const list = useQuery<ValuationRequest[]>(companyId ? `/c/${companyId}/valuation-requests` : null, [companyId]);
   const requests = list.data ?? [];
+  const open = requests.find(isOpen) ?? null;
+  const payment = useQuery<{ required: boolean; configured: boolean; price: { amount: number; currency: string } | null; error?: string }>(companyId ? `/c/${companyId}/valuation-requests/payment${open ? `?requestId=${encodeURIComponent(open.id)}` : ''}` : null, [companyId, open?.id]);
   return {
     refresh: refresh.data ?? null,
     requests,
-    open: requests.find(isOpen) ?? null,
+    open,
     earlier: requests.filter((r) => !isOpen(r)),
     // Until both have answered, nothing that depends on them is offered: the list
     // empties while it reloads, and for that moment it looks as if nothing is open.
     loaded: refresh.data != null && list.data != null && !list.loading && !refresh.loading,
     error: refresh.error ?? list.error,
-    reload: () => { refresh.reload(); list.reload(); },
+    payment: payment.data,
+    paymentError: payment.error ?? payment.data?.error ?? null,
+    paymentLoading: payment.loading || !payment.data,
+    reloadPayment: payment.reload,
+    reload: () => { refresh.reload(); list.reload(); payment.reload(); },
   };
 }
 
@@ -182,20 +193,22 @@ export function useDataWorkbook() {
 interface Step { label: string; done: boolean; when: string | null; note?: string }
 
 /** Older requests keep their original steps; new requests require internal approval first. */
-export function stepsOf(r: Pick<ValuationRequest, 'status' | 'createdAt' | 'events' | 'deskNotifiedAt' | 'closedAt'> & Partial<Pick<ValuationRequest, 'approvalRequired' | 'approvedAt' | 'approvalNotifiedAt'>>, audience: 'company' | 'desk'): Step[] {
+export function stepsOf(r: Pick<ValuationRequest, 'status' | 'createdAt' | 'events' | 'deskNotifiedAt' | 'closedAt'> & Partial<Pick<ValuationRequest, 'approvalRequired' | 'approvedAt' | 'approvalNotifiedAt' | 'paymentRequired' | 'paymentStatus' | 'paidAt'>>, audience: 'company' | 'desk'): Step[] {
   const first = (kind: RequestEvent['kind']) => r.events.find((e) => e.kind === kind)?.createdAt ?? null;
   const last = (kind: RequestEvent['kind']) => [...r.events].reverse().find((e) => e.kind === kind)?.createdAt ?? null;
   const started = r.status === 'IN_PROGRESS' || r.status === 'DELIVERED' || (r.status === 'COMPLETED' && !!first('IN_PROGRESS'));
   const delivered = r.status === 'DELIVERED' || (r.status === 'COMPLETED' && !!first('DELIVERED'));
+  const unpaid = r.paymentRequired && r.paymentStatus !== 'paid';
   return [
     {
       label: r.approvalRequired ? 'Submitted' : 'Sent', done: true, when: r.createdAt,
       note: !r.approvalRequired && audience === 'company' && !r.deskNotifiedAt && r.status === 'REQUESTED' && !r.events.some((e) => e.author === 'desk')
         ? 'Not yet with the team' : undefined,
     },
+    ...(r.paymentRequired ? [{ label: r.paymentStatus === 'refunded' ? 'Payment refunded' : r.paymentStatus === 'paid' ? 'Paid' : 'Payment', done: r.paymentStatus === 'paid', when: r.paymentStatus === 'paid' ? r.paidAt ?? null : null }] : []),
     ...(r.approvalRequired ? [{
-      label: r.approvedAt ? 'Approved' : 'Awaiting approval', done: !!r.approvedAt, when: r.approvedAt ?? null,
-      note: audience === 'company' && !r.approvedAt && !r.approvalNotifiedAt ? 'Approval email not sent' : undefined,
+      label: r.approvedAt ? 'Approved' : unpaid ? 'Internal approval' : 'Awaiting approval', done: !!r.approvedAt, when: r.approvedAt ?? null,
+      note: !unpaid && audience === 'company' && !r.approvedAt && !r.approvalNotifiedAt ? 'Approval email not sent' : undefined,
     }] : []),
     { label: 'In progress', done: started, when: first('IN_PROGRESS') },
     { label: 'Report delivered', done: delivered, when: delivered ? last('DELIVERED') : null },
@@ -208,7 +221,7 @@ export function RequestTracker({ steps, cancelled }: { steps: Step[]; cancelled?
   // if it skipped a step on the way (recorded before the team marked it delivered).
   const current = cancelled || steps[steps.length - 1]?.done ? -1 : steps.findIndex((s) => !s.done);
   return (
-    <ol className={cx('grid gap-3', steps.length === 5 ? 'sm:grid-cols-5' : 'sm:grid-cols-4')} aria-label="Where the request is">
+    <ol className={cx('grid gap-3', steps.length >= 6 ? 'sm:grid-cols-3 xl:grid-cols-6' : steps.length === 5 ? 'sm:grid-cols-5' : 'sm:grid-cols-4')} aria-label="Where the request is">
       {steps.map((s, i) => (
         <li key={s.label} aria-current={i === current ? 'step' : undefined} className="flex items-start gap-2.5">
           <span className={cx('mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold',
@@ -230,6 +243,7 @@ export function RequestTracker({ steps, cancelled }: { steps: Step[]; cancelled?
 
 const EVENT_LABELS = (e: RequestEvent, previous: RequestEvent[]): string => {
   switch (e.kind) {
+    case 'PAID': return 'Payment confirmed';
     case 'APPROVED': return 'Approved for evaluation';
     case 'IN_PROGRESS': return previous.some((p) => p.kind === 'DELIVERED') ? 'Back in progress' : 'Started';
     case 'DELIVERED': return 'Report delivered';
@@ -270,7 +284,7 @@ export function RequestHistory({ request }: { request: Pick<ValuationRequest, 'c
 const KEPT = 'Your answers are kept while the app is open, even if you go to another page.';
 
 /** What the form is and what happens after it, said before the first question so nobody starts it with five minutes to spare. */
-const WHAT_HAPPENS = `The appraiser’s information request. It takes about ten minutes with the documents to hand. Our team reviews and approves it before sending it to the ${DESK}. Follow each step here${STATUS_EMAILS ? ' and by email' : ''}.`;
+const WHAT_HAPPENS = `The appraiser’s information request. It takes about ten minutes with the documents to hand. ${config.billing.enabled ? 'Complete payment, then our team reviews and approves it' : 'Our team reviews and approves it'} before sending it to the ${DESK}. Follow each step here${STATUS_EMAILS ? ' and by email' : ''}.`;
 
 /** The form in progress: what was typed, how far it has got, and which steps Next or Send has checked. */
 interface Draft {
@@ -346,7 +360,17 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
     reportDocumentId?: string | null; reportUrl?: string | null;
   }[];
 }) {
-  const { companyId, canEdit, user, role } = useSession();
+  const { companyId, canEdit, user, role, isSample } = useSession();
+  const currentCompany = useRef(companyId);
+  currentCompany.current = companyId;
+  useEffect(() => { currentCompany.current = companyId; return () => { currentCompany.current = null; }; }, [companyId]);
+  const [checkoutParams] = useSearchParams();
+  const checkoutRequestId = checkoutParams.get('request_id');
+  const checkoutPaid = checkoutParams.get('company') === companyId && data.requests.some((request) => request.id === checkoutRequestId && request.paymentStatus === 'paid');
+  const checkoutReturn = useCheckoutReturn({
+    path: companyId && checkoutRequestId ? `/c/${companyId}/valuation-requests/${encodeURIComponent(checkoutRequestId)}/payment/reconcile` : null,
+    onRefresh: data.reload, canReconcile: canEdit, confirmed: checkoutPaid,
+  });
   const toast = useToast();
   const workbook = useDataWorkbook();
   // Keyed by the person as well as the company, since signing out does not reload the app.
@@ -370,6 +394,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   const returnTo = useRef<DocumentItem | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  useEffect(() => { setBusy(false); }, [companyId]);
   const [cancelling, setCancelling] = useState(false);
   const [editing, setEditing] = useState(false);
   const [contact, setContact] = useState({ contactName: '', contactEmail: '', contactPhone: '', notes: '' });
@@ -498,8 +523,12 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
 
   /** Sends what has not gone yet, and says exactly what went: nothing more, and to whom it really went. */
   const send = async (requestId: string, again = false) => {
+    const request = data.requests.find((item) => item.id === requestId);
+    if (request?.paymentRequired && request.paymentStatus !== 'paid') throw new Error('Complete payment before sending this request for approval.');
+    const originCompany = companyId;
     const res = await api<RequestSendOutcome>(
       `/c/${companyId}/valuation-requests/${requestId}/send`, { body: again ? { again: true } : {} });
+    if (currentCompany.current !== originCompany) return;
     const recapTo = res.recapTo && res.recapTo !== user?.name ? res.recapTo : 'you';
     if (res.approval === 'sent' || res.approval === 'failed') {
       const notice = res.approval === 'sent'
@@ -526,8 +555,26 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
     }
   };
 
-  /** Checks every step, opens the first with a problem, and only then saves and sends. */
+  const startCheckout = async (request: ValuationRequest) => {
+    if (!companyId || !canEdit || isSample || !request.paymentRequired || request.paymentStatus !== 'unpaid') return;
+    if (data.paymentLoading || data.paymentError || !data.payment?.configured || !data.payment.price) throw new Error('Payment is not available yet. Your request is saved; try again once billing is configured.');
+    const originCompany = companyId;
+    const result = await api<{ url: string }>(`/c/${originCompany}/valuation-requests/${request.id}/checkout`, { body: {} });
+    if (currentCompany.current === originCompany) window.location.assign(stripeUrl(result.url, window.location.origin));
+  };
+
+  const resumePayment = async (request: ValuationRequest) => {
+    if (busy) return;
+    const originCompany = companyId;
+    setBusy(true);
+    try { await startCheckout(request); }
+    catch (err) { if (currentCompany.current === originCompany) toast((err as Error).message, 'error'); }
+    finally { if (currentCompany.current === originCompany) { setBusy(false); data.reload(); } }
+  };
+
+  /** Save the complete intake, then pay before any request reaches internal review. */
   const submit = async () => {
+    if (busy || data.paymentLoading || data.paymentError || !data.payment || (data.payment.required && (!data.payment.configured || !data.payment.price))) return;
     setChecked(STEPS.map((s) => s.id));
     const bad = STEPS.findIndex((s) => flagged.has(s.id));
     if (bad >= 0) {
@@ -539,24 +586,29 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
       return;
     }
     setBusy(true);
+    const originCompany = companyId;
     try {
       const made = await api<ValuationRequest>(`/c/${companyId}/valuation-requests`, { body: intakeBody(form) });
+      if (currentCompany.current !== originCompany) return;
       setRequesting(false);
       // The next request starts again from the answers this one leaves behind, and
       // from the vault as it now stands, the documents sent this time included.
       change(() => ({ form: blankIntake(), phase: 'fresh' }));
-      // Saved first, then sent, so a message that fails leaves a request to retry
-      // rather than nothing at all.
-      try { await send(made.id); } catch (err) { toast(`Request saved, but it could not be sent: ${(err as Error).message}`, 'error'); }
+      // A cancelled or failed checkout leaves this request available to resume.
+      try {
+        if (made.paymentRequired && made.paymentStatus !== 'paid') await startCheckout(made);
+        else await send(made.id);
+      } catch (err) { if (currentCompany.current === originCompany) toast(`Request saved. ${(err as Error).message}`, 'error'); }
       data.reload();
     } catch (err) {
-      toast((err as Error).message, 'error');
+      if (currentCompany.current === originCompany) toast((err as Error).message, 'error');
     } finally {
-      setBusy(false);
+      if (currentCompany.current === originCompany) setBusy(false);
     }
   };
 
   const resend = (r: ValuationRequest, again: boolean) => {
+    if (r.paymentRequired && r.paymentStatus !== 'paid') return;
     setBusy(true);
     send(r.id, again).catch((err: Error) => toast(err.message, 'error')).finally(() => { setBusy(false); data.reload(); });
   };
@@ -625,7 +677,9 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   const hiddenSent = open?.documentsHidden ?? 0;
   const delivered = open?.status === 'DELIVERED';
   const reached = !!open && (!!open.deskNotifiedAt || open.events.some((e) => e.author === 'desk'));
-  const awaitingApproval = !!open?.approvalRequired && !open.approvedAt;
+  const paymentBlocked = !!open?.paymentRequired && open.paymentStatus !== 'paid';
+  const awaitingApproval = !paymentBlocked && !!open?.approvalRequired && !open.approvedAt;
+  const paymentPrice = data.payment?.price ? `${billingAmount(data.payment.price.amount, data.payment.price.currency)} ${data.payment.price.currency.toUpperCase()}` : null;
 
   // The one thing to do next, when it is the company's to do. Recording from a
   // delivered report is offered beside the report's values, in the banner, so
@@ -643,7 +697,8 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
   // A colleague's request is theirs to hear about: whoever closes it is named in the email.
   const toldYouClosed = (what: string) => (open && !open.mine && open.emailsRequester ? ` ${open.requestedBy} is emailed that you ${what} it.` : '');
   const next = !open || legacy ? null
-    : answer ? null
+    : paymentBlocked ? open.paymentStatus === 'refunded' ? 'contact our team about this refunded request.' : 'complete payment to submit your saved request for internal approval.'
+      : answer ? null
       : awaitingApproval ? 'our team reviews your request. It will be sent to the evaluator once approved.'
         : delivered ? 'check the values against the report and record the 409A. This request closes against it.'
         : !reached ? null
@@ -653,7 +708,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
     ...(!legacy && !delivered ? [{ label: 'Edit contact details', icon: 'edit' as const, onClick: () => startEdit(open), disabled: busy }] : []),
     // A fresh notice mints a new link and retires the old one, for an email the team lost.
     // With the service turned off, the team is sent nothing.
-    ...(DESK_ON && !legacy && reached ? [{ label: 'Send to the team again, with a new link', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
+    ...(DESK_ON && !legacy && !paymentBlocked && reached ? [{ label: 'Send to the team again, with a new link', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
     ...(DESK_ON && !legacy && awaitingApproval && open.approvalNotifiedAt ? [{ label: 'Resend the approval request', icon: 'send' as const, onClick: () => resend(open, true), disabled: busy }] : []),
     ...(main?.label !== 'Record the result' && !reviewInBanner
       ? [{ label: answer ? 'Record a different 409A' : 'Record a 409A from another appraiser', icon: 'document' as const, onClick: () => onRecordResult(open), disabled: busy }]
@@ -662,6 +717,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
 
   return (
     <>
+      {checkoutReturn.checkout && <div className="mb-5"><CheckoutReturnNotice result={checkoutReturn} confirmed={checkoutPaid} /></div>}
       {showReasons && triggers.length > 0 && !open && (
         <div className="mb-5">
           <Banner tone={due ? 'danger' : 'warning'} title={due ? 'A new 409A is due' : 'Worth starting a new 409A'}>
@@ -690,7 +746,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 sm:flex-1">
               <h3 className="flex flex-wrap items-center gap-2 text-[15px] font-semibold leading-tight text-ink-900">
-                {legacy ? `409A requested from ${open.provider}` : '409A request'} <StatusBadge status={awaitingApproval ? 'PENDING_APPROVAL' : open.status} />
+                {legacy ? `409A requested from ${open.provider}` : '409A request'} <StatusBadge status={paymentBlocked ? open.paymentStatus === 'refunded' ? 'REFUNDED' : 'AWAITING_PAYMENT' : awaitingApproval ? 'PENDING_APPROVAL' : open.status} />
               </h3>
               <p className="mt-0.5 text-[13px] text-ink-500">Submitted on {date(open.createdAt.slice(0, 10))} by {open.requestedBy}</p>
               {next && <p className="mt-1.5 text-[13px] text-ink-700"><span className="font-medium">Next:</span> {next}</p>}
@@ -711,6 +767,20 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
             <>
               <RequestTracker steps={stepsOf(open, 'company')} />
 
+              {paymentBlocked && (
+                <div className="mt-4"><Banner tone="info" title={open.paymentStatus === 'refunded' ? 'This payment was refunded' : 'Complete payment to request your 409A'}>
+                  <p>{open.paymentStatus === 'refunded' ? 'This request cannot proceed to approval or the evaluator. Contact our team for the next step.'
+                    : `Your answers and documents are saved. ${paymentPrice ? `The one-time valuation fee is ${paymentPrice}. ` : ''}The request reaches internal review after Stripe confirms payment.`}</p>
+                  {open.paymentStatus === 'unpaid' && canEdit && <div className="mt-3">
+                    <Button size="sm" variant="primary" icon={<Icon name="external" />} loading={busy} disabled={!DESK_ON || data.paymentLoading || !!data.paymentError || !data.payment?.configured || !data.payment.price || isSample} onClick={() => void resumePayment(open)}>Continue to payment</Button>
+                    {data.paymentLoading ? <p className="mt-2 text-[12px]">Loading payment details…</p>
+                      : (!data.payment?.configured || !data.payment.price) && <p className="mt-2 text-[12px]">Payments are not available yet. You can return to this saved request later.</p>}
+                  </div>}
+                  {data.paymentError && <div className="mt-3"><ErrorNote error={data.paymentError} onRetry={data.reloadPayment} /></div>}
+                  {open.paymentStatus === 'unpaid' && !canEdit && <p className="mt-2 text-[12px]">An administrator or editor can complete payment.</p>}
+                </Banner></div>
+              )}
+
               {/* Once the team has done anything, it plainly has the request, whatever the mail said. */}
               {canEdit && awaitingApproval && !open.approvalNotifiedAt && (
                 <div className="mt-4">
@@ -721,7 +791,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
                   </Banner>
                 </div>
               )}
-              {canEdit && !awaitingApproval && !open.deskNotifiedAt && !open.events.some((e) => e.author === 'desk') && (
+              {canEdit && !paymentBlocked && !awaitingApproval && !open.deskNotifiedAt && !open.events.some((e) => e.author === 'desk') && (
                 <div className="mt-4">
                   <Banner tone="warning" title={`The ${open.provider} has not been told about this request yet`}>
                     <p>{open.approvedAt ? 'Your request is approved, but the notice to the evaluator did not go out.' : 'The notice with your answers did not go out, so nobody has started on it.'}{!open.recapSentAt && ' Your recap email did not go out either.'}</p>
@@ -735,7 +805,7 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
                   </Banner>
                 </div>
               )}
-              {DESK_ON && canEdit && (open.approvalNotifiedAt || reached) && !open.recapSentAt && (
+              {DESK_ON && canEdit && !paymentBlocked && (open.approvalNotifiedAt || reached) && !open.recapSentAt && (
                 <p className="mt-3 text-[12px] text-ink-600">
                   Your recap email did not go out.{' '}
                   <button type="button" className="font-medium text-brand-600 hover:text-brand-700" onClick={() => resend(open, false)}>Send it again</button>
@@ -884,10 +954,16 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
             : <Button variant="secondary" onClick={() => setRequesting(false)}>Close</Button>}
           {step < STEPS.length - 1
             ? <Button variant="primary" onClick={goNext}>Next</Button>
-            : <Button variant="primary" loading={busy} onClick={() => void submit()}>Submit for approval</Button>}
+            : <Button variant="primary" loading={busy} disabled={data.paymentLoading || !!data.paymentError || !data.payment || (data.payment.required && (!data.payment.configured || !data.payment.price))} onClick={() => void submit()}>{data.payment?.required ? 'Continue to payment' : 'Submit for approval'}</Button>}
         </>}>
         <form data-intake className="space-y-3"
           onSubmit={(e) => { e.preventDefault(); if (step < STEPS.length - 1) goNext(); else void submit(); }}>
+          {data.paymentError ? <ErrorNote error={data.paymentError} onRetry={data.reloadPayment} />
+            : data.paymentLoading ? <p className="rounded-lg bg-ink-50 px-3 py-2 text-[13px] text-ink-500">Loading payment details…</p>
+              : data.payment?.required && <Banner tone={data.payment.configured && paymentPrice ? 'info' : 'warning'} title={paymentPrice ? `${paymentPrice} · one-time valuation fee` : 'Payment is not available yet'}>
+                {data.payment.configured && paymentPrice ? 'Complete the request, then pay securely with Stripe. Payment is required before internal approval and before the evaluator receives your request.'
+                  : 'You can prepare your answers, but checkout stays unavailable until billing is configured.'}
+              </Banner>}
           {/* How far along the form is: one answer per required question, on every step. */}
           <div className="flex items-center gap-3">
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-100" role="progressbar"
@@ -1015,9 +1091,11 @@ export function ValuationRequestPanel({ data, requesting, setRequesting, onRecor
 
       <ConfirmDialog open={cancelling} onClose={() => setCancelling(false)} loading={busy} danger
         title="Cancel this 409A request" confirmLabel="Cancel the request"
-        message={open?.deskNotifiedAt
+        message={<>{open?.deskNotifiedAt
           ? <>Stop the request to the <strong>{open.provider}</strong>? They are emailed that you cancelled, and their link stops accepting changes.{toldYouClosed('cancelled')}</>
           : <>Stop the request{open ? <> to {open.answers ? 'the ' : ''}<strong>{open.provider}</strong></> : null}?{toldYouClosed('cancelled') || ' Nothing more is sent.'}</>}
+          {open?.paymentRequired && open.paymentStatus === 'paid' && <p className="mt-2">Cancelling does not issue a refund. Contact our team about your payment.</p>}
+        </>}
         onConfirm={async () => {
           if (open) await act(() => api(`/c/${companyId}/valuation-requests/${open.id}`, { method: 'PATCH', body: { status: 'CANCELLED' } }), 'Request cancelled');
           setCancelling(false);

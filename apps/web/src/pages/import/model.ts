@@ -10,6 +10,7 @@
  */
 import { AWARD_LABELS, INSTRUMENT_LABELS, RELATION_LABELS } from '../../format.ts';
 import { STAKEHOLDER_TYPES } from '../stakeholders/StakeholderForm.tsx';
+import type { OcfParse, OcfReview, OcfSection } from './ocf.ts';
 
 // ---------------------------------------------------------------------------
 // What the API sends
@@ -38,32 +39,44 @@ export interface ParsedSheet {
   numberFormat: NumberFormat; numberDecidedBy: 'file' | 'delimiter' | 'default';
   numberEvidence: { text: string; row: number } | null; numberMixed: boolean; notices: Notice[];
 }
-export interface ParsedFile { uploadId: string | null; fileName: string; format: 'xlsx' | 'csv' | 'xml'; sheets: ParsedSheet[] }
+/** A file as parse read it: its sheets, or (format 'ocf') an Open Cap Format package or one of its files, and no sheets. */
+export interface ParsedFile { uploadId: string | null; fileName: string; format: 'xlsx' | 'csv' | 'xml' | 'ocf'; sheets: ParsedSheet[]; ocf?: OcfParse }
 export interface Detection {
   name: string; file: string | null; kind: Kind | null; mapping: Record<string, number | null>;
   constants: Record<string, string>; missing: string[]; ready: boolean; reason: string | null;
 }
-export interface RowMessage { level: 'error' | 'warning' | 'info'; text: string; code?: string; field?: string; value?: Cell; choices?: string[] }
+export interface RowMessage {
+  level: 'error' | 'warning' | 'info'; text: string; code?: string; field?: string; value?: Cell; choices?: string[];
+  /** 'ambiguous-person' in an OCF package: the people on file it may be. */
+  people?: { id: string; name: string; email: string | null }[];
+}
 export type Outcome = 'add' | 'update' | 'existing' | 'excluded' | 'skip' | 'error';
 export interface PreviewRow {
   row: number; status: 'ok' | 'warning' | 'error'; action: 'create' | 'update' | 'skip'; outcome: Outcome;
   summary: Record<string, string | number | null>; messages: RowMessage[];
+  /** An OCF package's row: the object's id in the package, and its object_type. */
+  ocfId?: string; object?: string;
 }
 export interface Counts { total: number; ok: number; warnings: number; errors: number; skipped: number; willImport: number; existing: number; excluded: number }
 export interface Creates { stakeholders: string[]; shareClasses: string[]; vestingSchedules: string[]; pools: string[] }
 export interface Imported {
   stakeholders: number; shareClasses: number; issuances: number; awards: number; convertibles: number;
   vestingSchedules: number; pools: number; updated: { stakeholders: number };
+  /** Only an OCF package brings these. `events`: the history entries written for its transactions. */
+  warrants?: number; valuations?: number; stockSplits?: number; poolAdjustments?: number; events?: number;
 }
 export interface SheetResult {
-  sheetName: string; file: string | null; kind: Kind; blocked: boolean; dateOrder: DateOrder | 'auto';
+  /** What the sheet holds; an OCF package's sections are its sheets. */
+  sheetName: string; file: string | null; kind: Kind | OcfSection; blocked: boolean; dateOrder: DateOrder | 'auto';
   numberFormat: NumberFormat; columnsNotImported: string[];
   preview: { rows: PreviewRow[]; counts: Counts; creates: Creates; notices: Notice[] };
 }
 export interface NewPerson {
   key: string; name: string; email: string | null; type: string; relation: string; guessed: boolean;
-  sameName: { name: string; email: string | null; onRecord: boolean }[];
+  sameName: { name: string; email: string | null; onRecord: boolean; stakeholderId?: string }[];
   rows: { file: string | null; sheet: string; row: number }[];
+  /** A stakeholder of an OCF package: its id there, which options.ocfPeople answers by. */
+  ocfId?: string;
 }
 export interface ReadAs {
   file: string | null; sheets: string[]; dateOrder: DateOrder | 'mixed'; dateDecidedBy: 'file' | 'setting' | 'default';
@@ -74,6 +87,8 @@ export interface Review {
   sheets: SheetResult[]; counts: Counts; creates: Creates; imported: Imported; importIds: string[];
   files: (string | null)[]; newPeople: NewPerson[]; readAs: ReadAs[]; notices: Notice[];
   raised: { shareClassId: string; name: string; from: number; to: number }[]; reviewToken: string;
+  /** An OCF package's reading: its files, notices, what is not imported, what the company takes from it. */
+  ocf?: OcfReview;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,10 +170,14 @@ export interface Answers {
   raiseAuthorized: string[];
   /** The class each raise is for, by its value: so "Common raised to N" can be undone. */
   raisedNames: Record<string, string>;
+  /** An OCF package's people the person said who they are: package stakeholder id → stakeholder id, or 'new'. */
+  ocfPeople: Record<string, string>;
+  /** Whether another company's package fills in this company's details; null until asked. */
+  ocfCompanyFill: boolean | null;
 }
 
 export const NO_EDITS: Edits = { cells: {}, replace: {}, exclude: {}, why: {} };
-export const NO_ANSWERS: Answers = { relationships: {}, raiseAuthorized: [], raisedNames: {} };
+export const NO_ANSWERS: Answers = { relationships: {}, raiseAuthorized: [], raisedNames: {}, ocfPeople: {}, ocfCompanyFill: null };
 export const DEFAULT_SETTINGS: Settings = {
   createMissingStakeholders: true, createMissingShareClasses: true,
   defaultVestingScheduleId: '', certificateVestingScheduleId: '', defaultPoolId: '', defaultPoolName: '',
@@ -414,6 +433,13 @@ export const FILLED_IN: Record<string, string> = {
   'settled-date-missing': 'No date it was settled',
   'type-as-relationship': 'A type column read as the relationship',
   'relationship-as-type': 'A relationship column read as the type',
+  // OCF packages.
+  'ptep-assumed': 'No post-termination exercise window, or one in days: recorded in months',
+  'ocf-vesting-per-security': 'Vesting terms read for each security on its own dates',
+  'ocf-vesting-rounding': 'Shares vest rounded down on each date, as Kosmitor does',
+  'ocf-history-current-only': 'Only the latest value of a class\'s history kept',
+  'ocf-transfer-as-cancellation': 'A transfer of a grant, warrant or SAFE recorded as a cancellation and a new one',
+  'ocf-rounded': 'An amount with more decimals than Kosmitor keeps, rounded',
 };
 
 /** Everything the review asks, in the order the cards show. `dismissed` holds the ids of notices the person left as they are. */

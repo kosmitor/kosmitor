@@ -13,11 +13,13 @@ resource "azurerm_key_vault" "main" {
   tags                       = local.tags
 }
 
-# Whoever runs Terraform writes the secrets.
+# The deployers write the secrets.
 resource "azurerm_role_assignment" "kv_deployer" {
+  for_each = local.deployer_object_ids
+
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
-  principal_id         = data.azurerm_client_config.current.object_id
+  principal_id         = each.value
 }
 
 # The application and its jobs read them.
@@ -78,5 +80,30 @@ resource "azurerm_key_vault_secret" "smtp_url" {
   value        = var.smtp_url
   key_vault_id = azurerm_key_vault.main.id
   content_type = "SMTP connection string"
+  depends_on   = [time_sleep.rbac]
+}
+
+# Reveal only whether a credential exists to Terraform's resource count. Keep
+# credentials available for existing customers and webhooks when checkout is off.
+locals {
+  stripe_api_key_configured = nonsensitive(length(trimspace(var.stripe_secret_key)) > 0)
+  stripe_webhook_configured = nonsensitive(length(trimspace(var.stripe_webhook_secret)) > 0)
+}
+
+resource "azurerm_key_vault_secret" "stripe_secret_key" {
+  count        = local.stripe_api_key_configured ? 1 : 0
+  name         = "stripe-secret-key"
+  value        = var.stripe_secret_key
+  key_vault_id = azurerm_key_vault.main.id
+  content_type = "Stripe API secret key"
+  depends_on   = [time_sleep.rbac]
+}
+
+resource "azurerm_key_vault_secret" "stripe_webhook_secret" {
+  count        = local.stripe_webhook_configured ? 1 : 0
+  name         = "stripe-webhook-secret"
+  value        = var.stripe_webhook_secret
+  key_vault_id = azurerm_key_vault.main.id
+  content_type = "Stripe webhook signing secret"
   depends_on   = [time_sleep.rbac]
 }

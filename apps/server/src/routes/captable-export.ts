@@ -2,9 +2,11 @@
  * The cap table as an Excel workbook or a PDF, matching what the page shows:
  * the same as-of date, view, convertibles, unallocated pool and entity
  * grouping. The workbook adds a share-class sheet and a summary sheet; the
- * PDF is a print-ready landscape table with the company's totals.
+ * PDF is a print-ready landscape table with the company's totals. The Open Cap
+ * Format package is the whole cap table and its history to today, for another
+ * cap table tool (src/ocf/export.ts, docs/ocf.md).
  */
-import { route, audit, badRequest } from '../http.ts';
+import { route, audit, badRequest, assertFullView } from '../http.ts';
 import { one } from '../db.ts';
 import { getCompanyData } from '../store.ts';
 import { computeCapTable, today, type CapTable, type CapTableRow } from '@kosmitor/core';
@@ -12,6 +14,7 @@ import { xlsx, type Cell } from '../xlsx-writer.ts';
 import { tablePdf, type PdfRow } from '../pdf-writer.ts';
 import { config } from '../config.ts';
 import { seesWholeCompany } from '../auth.ts';
+import { buildOcfPackage, ocfZip, STANDARD_COMMENTS } from '../ocf/export.ts';
 
 type View = 'FULLY_DILUTED' | 'OUTSTANDING' | 'AS_CONVERTED' | 'VOTING';
 const VIEW_LABELS: Record<View, string> = { FULLY_DILUTED: 'Fully diluted', OUTSTANDING: 'Outstanding', AS_CONVERTED: 'As converted', VOTING: 'Voting' };
@@ -178,4 +181,42 @@ route.get('/api/c/:cid/captable/export.pdf', 'read', async (ctx) => {
   });
   ctx.res.end(pdf);
   return undefined;
+});
+
+/**
+ * The Open Cap Format package (.ocf.zip): the manifest, stakeholders, classes, legends,
+ * plans, vesting terms, valuations and every transaction to today. It takes no options:
+ * OCF records the history, and the as-of date is the day it is made. `X-Ocf-Notes`
+ * says how many things the manifest's comments list that the package leaves out or
+ * shows differently; export.ocf.notes lists them for the page.
+ */
+route.get('/api/c/:cid/captable/export.ocf.zip', 'read', async (ctx) => {
+  assertFullView(ctx, 'Your role can only view your own holdings.');
+  const day = today();
+  const pkg = await buildOcfPackage(ctx.companyId!, { asOf: day });
+  const body = ocfZip(pkg);
+  await audit(ctx, 'EXPORT', 'reports', 'captable', 'Cap table exported as an OCF package');
+  ctx.res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="cap-table-${day}.ocf.zip"`,
+    'Content-Length': body.length,
+    'X-Ocf-Notes': String(ocfNotes(pkg).length),
+  });
+  ctx.res.end(body);
+  return undefined;
+});
+
+/** The manifest's comments past the standard ones: what the package leaves out, or shows differently from Kosmitor. */
+const ocfNotes = (pkg: Awaited<ReturnType<typeof buildOcfPackage>>): string[] =>
+  ((pkg.files[0].json as { comments?: string[] }).comments ?? []).slice(STANDARD_COMMENTS);
+
+/**
+ * What an Open Cap Format package of the cap table today leaves out or shows
+ * differently, as its manifest says it: { asOf, notes }. The page shows them after a
+ * download. Nothing is exported, so nothing is audited.
+ */
+route.get('/api/c/:cid/captable/export.ocf.notes', 'read', async (ctx) => {
+  assertFullView(ctx, 'Your role can only view your own holdings.');
+  const day = today();
+  return { asOf: day, notes: ocfNotes(await buildOcfPackage(ctx.companyId!, { asOf: day })) };
 });

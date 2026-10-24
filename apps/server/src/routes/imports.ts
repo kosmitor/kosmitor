@@ -30,6 +30,7 @@ import {
 import { xlsx } from '../xlsx-writer.ts';
 import { config, megabytes } from '../config.ts';
 import { track } from '../telemetry.ts';
+import { readOcfUpload, readPackageBody, readExclude, readOcfPeople, OcfRefusal, type OcfRun } from '../ocf/read.ts';
 
 const isKind = (k: unknown): k is ImportKind => typeof k === 'string' && Object.hasOwn(IMPORT_KINDS, k);
 
@@ -121,13 +122,18 @@ route.get('/api/c/:cid/imports/template.xlsx', 'read', async (ctx) => {
   return undefined;
 });
 
-/** Which parser a file wants, from its bytes first and its name second. 'ole' is the pre-2007 Office format (.xls, .doc). */
-export function detectFormat(body: Buffer, fileName: string): 'xlsx' | 'xml' | 'csv' | 'pdf' | 'ole' {
+/**
+ * Which parser a file wants, from its bytes first and its name second. 'ole' is the
+ * pre-2007 Office format (.xls, .doc); 'json' is text that starts with `{` (an Open
+ * Cap Format file), and 'xlsx' any zip, an .ocf.zip included (zipContents tells).
+ */
+export function detectFormat(body: Buffer, fileName: string): 'xlsx' | 'xml' | 'csv' | 'pdf' | 'ole' | 'json' {
   if (body.length > 4 && body.readUInt32LE(0) === 0x04034b50) return 'xlsx';
   if (body.length > 8 && body.readUInt32BE(0) === 0xd0cf11e0 && body.readUInt32BE(4) === 0xa1b11ae1) return 'ole';
   if (body.subarray(0, 1024).toString('latin1').includes('%PDF-') || /\.pdf$/i.test(fileName)) return 'pdf';
   const head = body.subarray(0, 512).toString('utf8').replace(/^﻿/, '').trimStart();
   if (head.startsWith('<?xml') || /^<[A-Za-z_]/.test(head)) return 'xml';
+  if (head.startsWith('{') || /\.json$/i.test(fileName)) return 'json';
   if (/\.xlsx$/i.test(fileName)) return 'xlsx';
   if (/\.xml$/i.test(fileName)) return 'xml';
   return 'csv';
@@ -145,6 +151,8 @@ interface UploadSheet { name: string; rows: Cell[][]; rowCount?: number; columns
 function readUpload(body: Buffer, fileName: string): { format: 'xlsx' | 'xml' | 'csv'; encoding: string | null; delimiter: string | null; mixedLines: number[]; sheets: UploadSheet[] } {
   const format = detectFormat(body, fileName);
   const keep = config().limits.importMaxRows + HEADER_SCAN;
+  // JSON is an Open Cap Format file, read by the parse route before this; any other is not a table.
+  if (format === 'json') throw refuse('not-a-spreadsheet', 'This JSON file is not an Open Cap Format file.');
   // A PDF is kept as a document and linked to an instrument; it is never read as a table.
   if (format === 'pdf') throw refuse('pdf', 'PDF files are stored as documents rather than read as tables. Save it as a document instead, linked to a stakeholder or instrument.');
   if (format === 'ole') {
@@ -193,6 +201,15 @@ function readUpload(body: Buffer, fileName: string): { format: 'xlsx' | 'xml' | 
     sheets: [{ name: fileName.replace(/\.[^.]+$/, ''), rows: squareUp(table.rows), rowCount: table.rowCount, columnsCut: table.columnsCut }] };
 }
 
+/** Whether an upload is OCF: a zip of JSON files with no office document, or a JSON file. */
+function ocfUpload(body: Buffer, fileName: string): 'zip' | 'json' | null {
+  const format = detectFormat(body, fileName);
+  if (format === 'json') return 'json';
+  if (format !== 'xlsx') return null;
+  // A .zip that does not open is not a workbook to save again from Excel: readOcfUpload refuses it as a damaged package.
+  try { return zipContents(openZip(body, megabytes(config().limits.importUnzippedMb))) === 'ocf' ? 'zip' : null; } catch { return /\.zip$/i.test(fileName) ? 'zip' : null; }
+}
+
 /**
  * Parses one uploaded file into sheets of raw cells. Nothing is written; the
  * page detects and previews before anything touches the cap table. The file
@@ -206,15 +223,31 @@ function readUpload(body: Buffer, fileName: string): { format: 'xlsx' | 'xml' | 
  * The route reads and writes no company data, so it holds no lock.
  *
  * Response: { fileName, format, encoding, delimiter, sheets: [{ name, rows, rowCount, truncated, headerRow,
- *   numberFormat, numberDecidedBy, numberEvidence, numberMixed, notices }] }.
+ *   numberFormat, numberDecidedBy, numberEvidence, numberMixed, notices }] }. An Open Cap Format package
+ *   (.ocf.zip) or one of its JSON files answers with format 'ocf', no sheets, and `ocf` (OcfParse in src/ocf/read.ts).
  * Refusals: 400 with detail.code empty | pdf | legacy-xls | word-document | powerpoint | opendocument | numbers |
- * not-a-spreadsheet | damaged | not-a-table | unzips-too-large (with limitMb); 413 too-large (with limitMb).
+ * not-a-spreadsheet | damaged | not-a-table | unzips-too-large (with limitMb) | ocf-no-manifest | ocf-two-manifests |
+ * ocf-missing-file | ocf-version | ocf-too-large | too-many-rows; 413 too-large (with limitMb).
  */
 route.post('/api/c/:cid/imports/parse', 'write', async (ctx) => {
   const body = ctx.rawBody;
   const fileName = str(ctx.query.get('name') ?? 'upload', 'File name', { max: 255 });
   if (!body || body.length === 0) throw refuse('empty', 'This file is empty.');
   const uploadId = await keepUpload(ctx, fileName, body);
+  // An Open Cap Format package (.ocf.zip), or one of its JSON files: read whole, not as sheets.
+  const ocf = ocfUpload(body, fileName);
+  if (ocf) {
+    try {
+      const read = readOcfUpload(body, fileName, ocf === 'zip');
+      track(ctx.user!.id, 'import_parsed', { companyId: ctx.companyId, format: 'ocf', part: read.part, files: read.files.length, objects: Object.values(read.counts).reduce((a, b) => a + b, 0) - read.counts.transactions });
+      return { uploadId, fileName, format: 'ocf', encoding: null, delimiter: null, sheets: [], ocf: read };
+    } catch (err) {
+      const refusal = err instanceof OcfRefusal ? badRequest(err.message, { code: err.code, ...err.extra }) : err;
+      await settleUpload(ctx, uploadId, 'PARSE_FAILED', (err as Error).message);
+      track(ctx.user!.id, 'import_failed', { companyId: ctx.companyId, step: 'parse', error: (err as Error).message });
+      throw refusal;
+    }
+  }
   let upload: ReturnType<typeof readUpload>;
   let sheets: UploadSheet[];
   try {
@@ -477,6 +510,7 @@ const COUNT_KEYS: (keyof ImportCounts)[] = ['total', 'ok', 'warnings', 'errors',
  * row number means nothing without its sheet.
  */
 function readWorkbook(body: Record<string, unknown>): { sheets: WorkbookSheet[]; files: string[]; extras: WorkbookExtras; options: ImportOptions } {
+  if (body.ocf != null) return readOcfRequest(body);
   if (!Array.isArray(body.sheets) || body.sheets.length === 0) throw badRequest('Choose at least one sheet to import.', { code: 'no-sheets' });
   const { importMaxSheets: maxSheets, importMaxTotalRows: maxTotal } = config().limits;
   if (body.sheets.length > maxSheets) throw badRequest(`An import takes at most ${maxSheets} sheet${maxSheets === 1 ? '' : 's'}.`, { code: 'too-many-sheets' });
@@ -514,6 +548,68 @@ function readWorkbook(body: Record<string, unknown>): { sheets: WorkbookSheet[];
 }
 
 /**
+ * An Open Cap Format package instead of sheets: `{ ocf: { file, package, exclude? },
+ * options?: { relationships?, raiseAuthorized?, skipRowsWithErrors?, ocfPeople?, ocfCompanyFill? }, reviewToken? }`.
+ * The package is the one parse returned, checked again here for shape and size; a
+ * package goes on its own (400 ocf-alone with sheets). The spreadsheet options are not read.
+ */
+function readOcfRequest(body: Record<string, unknown>): { sheets: WorkbookSheet[]; files: string[]; extras: WorkbookExtras; options: ImportOptions } {
+  if (Array.isArray(body.sheets) && body.sheets.length > 0) throw badRequest('An OCF package is imported on its own: send it without sheets, and import the spreadsheets afterwards.', { code: 'ocf-alone' });
+  const raw = body.ocf;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw badRequest('ocf must be the package parse returned.', { code: 'bad-sheet' });
+  const o = raw as Record<string, unknown>;
+  const opts = (body.options && typeof body.options === 'object' ? body.options : {}) as Record<string, unknown>;
+  const { relationships, raiseAuthorized, skipRowsWithErrors } = readOptions({ relationships: opts.relationships, raiseAuthorized: opts.raiseAuthorized, skipRowsWithErrors: opts.skipRowsWithErrors });
+  let run: OcfRun;
+  try {
+    run = {
+      file: str(o.file ?? 'package.ocf.zip', 'File name', { max: 255 }), pkg: readPackageBody(o.package), exclude: readExclude(o.exclude),
+      relationships, ocfPeople: readOcfPeople(opts.ocfPeople), skipRowsWithErrors: skipRowsWithErrors ?? false,
+      ...(opts.ocfCompanyFill != null ? { companyFill: readFlag(opts.ocfCompanyFill) } : {}),
+    };
+  } catch (err) {
+    if (err instanceof OcfRefusal) throw badRequest(err.message, { code: err.code, ...err.extra });
+    throw err;
+  }
+  let expectedCounts: Partial<ImportCounts> | undefined;
+  if (body.expectedCounts != null) {
+    const given = body.expectedCounts as Record<string, unknown>;
+    if (typeof given !== 'object' || !COUNT_KEYS.every((k) => typeof given[k] === 'number')) throw badRequest('expectedCounts must be the counts of the preview, all of them.', { code: 'bad-option' });
+    expectedCounts = Object.fromEntries(COUNT_KEYS.map((k) => [k, given[k] as number]));
+  }
+  const reviewToken = optional(body.reviewToken, isToken, 'reviewToken');
+  return { sheets: [], files: [run.file], extras: { raiseAuthorized, expectedCounts, reviewToken, ocf: run }, options: {} };
+}
+
+/** "a, b and c". */
+const listWords = (words: string[]): string => (words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words.at(-1)}` : words[0] ?? '');
+
+const readFlag = (v: unknown): boolean => {
+  if (typeof v !== 'boolean') throw new OcfRefusal('bad-option', 'options.ocfCompanyFill must be true or false.');
+  return v;
+};
+
+/** ocfPeople names this company's stakeholders: an id of anyone else's is refused. */
+async function assertOwnPeople(companyId: string, extras: WorkbookExtras): Promise<void> {
+  const ids = [...new Set([...(extras.ocf?.ocfPeople?.values() ?? [])].filter((v) => v !== 'new'))];
+  if (ids.length === 0) return;
+  let found = 0;
+  for (let at = 0; at < ids.length; at += 10_000) {
+    const chunk = ids.slice(at, at + 10_000);
+    found += (await all<{ id: string }>(`SELECT id FROM stakeholders WHERE company_id = ? AND id IN (${chunk.map(() => '?').join(', ')})`, companyId, ...chunk)).length;
+  }
+  if (found !== ids.length) throw badRequest('options.ocfPeople names someone who is not a stakeholder of this company.', { code: 'bad-option' });
+}
+
+/** A package refused while it is read for the check: the same 400 parse gives. */
+async function runOcfChecked<T>(fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); } catch (err) {
+    if (err instanceof OcfRefusal) throw badRequest(err.message, { code: err.code, ...err.extra });
+    throw err;
+  }
+}
+
+/**
  * The dry run of everything the page would import: every sheet of every file,
  * in dependency order, inside a transaction that is rolled back. Its response
  * is the review: rows, counts, new people, how each file was read, what the
@@ -528,7 +624,8 @@ function readWorkbook(body: Record<string, unknown>): { sheets: WorkbookSheet[];
 route.post('/api/c/:cid/imports/workbook/preview', 'write', async (ctx) => {
   const { sheets, extras, options } = readWorkbook(ctx.body);
   await assertOwnDefaults(ctx.companyId!, options);
-  return runWorkbook(ctx.companyId!, sheets, ctx.user!.name, true, { raiseAuthorized: extras.raiseAuthorized });
+  await assertOwnPeople(ctx.companyId!, extras);
+  return runOcfChecked(() => runWorkbook(ctx.companyId!, sheets, ctx.user!.name, true, { raiseAuthorized: extras.raiseAuthorized, ocf: extras.ocf }));
 }, { maxBytes: () => megabytes(config().limits.importJsonMb) });
 
 /**
@@ -546,9 +643,10 @@ route.post('/api/c/:cid/imports/workbook/preview', 'write', async (ctx) => {
 route.post('/api/c/:cid/imports/workbook/commit', 'write', async (ctx) => {
   const { sheets, files, extras, options } = readWorkbook(ctx.body);
   await assertOwnDefaults(ctx.companyId!, options);
+  await assertOwnPeople(ctx.companyId!, extras);
   let result: WorkbookResult;
   try {
-    result = await runWorkbook(ctx.companyId!, sheets, ctx.user!.name, false, extras);
+    result = await runOcfChecked(() => runWorkbook(ctx.companyId!, sheets, ctx.user!.name, false, extras));
   } catch (err) {
     await settleUpload(ctx, ctx.body.uploadIds, 'FAILED', (err as Error).message);
     track(ctx.user!.id, 'import_failed', { companyId: ctx.companyId, step: 'commit', error: (err as Error).message });
@@ -560,14 +658,19 @@ route.post('/api/c/:cid/imports/workbook/commit', 'write', async (ctx) => {
   invalidate(ctx.companyId!);
   await settleUpload(ctx, ctx.body.uploadIds, 'COMMITTED', null, result.importIds[0] ?? null);
   const i = result.imported;
-  track(ctx.user!.id, 'import_committed', { companyId: ctx.companyId, kinds: [...new Set(sheets.map((s) => s.kind))].join(','), sheets: sheets.length, files: files.length, ...i, updated: undefined });
+  track(ctx.user!.id, 'import_committed', { companyId: ctx.companyId, kinds: extras.ocf ? 'ocf' : [...new Set(sheets.map((s) => s.kind))].join(','), sheets: sheets.length, files: files.length, ...i, updated: undefined });
   const from = files.length ? ` from ${files.length > 2 ? `${files.slice(0, -1).join(', ')} and ${files.at(-1)}` : files.join(' and ')}` : '';
   await audit(ctx, 'IMPORT', 'imports', result.importIds[0] ?? null,
-    `Imported ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}${from}: ` +
+    `${extras.ocf ? `Imported the OCF package ${extras.ocf.file}` : `Imported ${sheets.length} sheet${sheets.length === 1 ? '' : 's'}${from}`}: ` +
     [i.stakeholders && `${i.stakeholders} stakeholders`, i.shareClasses && `${i.shareClasses} share classes`,
      i.pools && `${i.pools} equity plans`, i.issuances && `${i.issuances} certificates`, i.awards && `${i.awards} grants`,
-     i.convertibles && `${i.convertibles} convertibles`, i.updated.stakeholders && `${i.updated.stakeholders} stakeholders updated`,
-     ...result.raised.map((r) => `${r.name} authorized shares raised from ${r.from.toLocaleString('en-US')} to ${r.to.toLocaleString('en-US')}`)].filter(Boolean).join(', '));
+     i.warrants && `${i.warrants} warrants`, i.convertibles && `${i.convertibles} convertibles`, i.valuations && `${i.valuations} valuations`,
+     i.stockSplits && `${i.stockSplits} stock splits`, i.poolAdjustments && `${i.poolAdjustments} plan changes`, i.events && `${i.events} history entries`,
+     i.updated.stakeholders && `${i.updated.stakeholders} stakeholders updated`,
+     ...result.raised.map((r) => `${r.name} authorized shares raised from ${r.from.toLocaleString('en-US')} to ${r.to.toLocaleString('en-US')}`),
+     // What a package changed of the company's own record, and of classes already on file.
+     result.ocf?.companyFillApplied && result.ocf.companyFill.length && `the company's ${listWords(result.ocf.companyFill.map((f) => f.field))} filled in`,
+     ...(result.ocf?.classUpdates ?? []).map((name) => `${name} given the package's terms`)].filter(Boolean).join(', ') || 'nothing new');
   return result;
 }, { maxBytes: () => megabytes(config().limits.importJsonMb) });
 

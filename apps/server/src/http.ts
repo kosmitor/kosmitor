@@ -59,9 +59,9 @@ interface RouteOptions {
   maxBytes?: number | (() => number);
   /**
    * Runs outside a transaction and without the company's lock, as a GET does.
-   * Only for a route that writes nothing and waits on something slow, such as
-   * reading a report: holding the lock meanwhile would keep every other change at
-   * the company waiting for it.
+   * For reads that wait on something slow, or integrations that explicitly own
+   * their transactions and commit an idempotent operation before a network call.
+   * Such handlers must lock and recheck the company inside each mutation transaction.
    */
   unlocked?: boolean;
 }

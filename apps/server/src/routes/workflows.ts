@@ -399,7 +399,7 @@ async function performExercise(ctx: Ctx, awardId: string, body: { quantity: unkn
     stakeholderId: award.stakeholderId, counterpartyId: null, securityId: award.id,
     shareClassId: pool?.shareClassId ?? null, quantity: shares, pricePerShare: strike,
     amount: totalCost, memo: `${method} exercise of ${award.label ?? 'grant'} (${formatShares(sharesIssued)} shares issued)`,
-    createdAt: nowISO(), createdBy: ctx.user!.name,
+    resultingSecurityId: issuanceId, createdAt: nowISO(), createdBy: ctx.user!.name,
   });
 
   invalidate(ctx.companyId!);
@@ -463,7 +463,7 @@ route.post('/api/c/:cid/warrants/:id/exercise', 'write', async (ctx) => {
     id: newId('tx'), companyId: ctx.companyId, type: 'EXERCISE', date: exerciseDate,
     stakeholderId: warrant.stakeholderId, counterpartyId: null, securityId: warrant.id,
     shareClassId: warrant.shareClassId, quantity: shares, pricePerShare: strike, amount: method === 'CASH' ? totalCost : 0,
-    memo: `${method} exercise of warrant (${formatShares(sharesIssued)} shares issued)`, createdAt: nowISO(), createdBy: ctx.user!.name,
+    memo: `${method} exercise of warrant (${formatShares(sharesIssued)} shares issued)`, resultingSecurityId: issuanceId, createdAt: nowISO(), createdBy: ctx.user!.name,
   });
   invalidate(ctx.companyId!);
   await audit(ctx, 'EXERCISE', 'warrants', warrant.id,
@@ -656,7 +656,7 @@ route.post('/api/c/:cid/issuances/:id/transfer', 'write', async (ctx) => {
     stakeholderId: source.stakeholderId as string, counterpartyId: toStakeholderId,
     securityId: ctx.params.id, shareClassId: source.shareClassId as string, quantity: moved,
     pricePerShare: movedPrice, amount: shareValue(quantity, pricePerShare),
-    memo: ctx.body.memo ?? 'Share transfer', createdAt: nowISO(), createdBy: ctx.user!.name,
+    memo: ctx.body.memo ?? 'Share transfer', resultingSecurityId: newId1, createdAt: nowISO(), createdBy: ctx.user!.name,
   });
   invalidate(ctx.companyId!);
   await audit(ctx, 'TRANSFER', 'issuances', ctx.params.id, `${formatShares(moved)} shares transferred` +
@@ -724,7 +724,7 @@ route.post('/api/c/:cid/convertibles/:id/convert', 'write', async (ctx) => {
     stakeholderId: convertible.stakeholderId, counterpartyId: null, securityId: convertible.id,
     shareClassId, quantity: shares, pricePerShare, amount: convertible.principal,
     memo: `${convertible.instrument} converted at ${formatPPS(pricePerShare)}`,
-    createdAt: nowISO(), createdBy: ctx.user!.name,
+    resultingSecurityId: issuanceId, createdAt: nowISO(), createdBy: ctx.user!.name,
   });
   invalidate(ctx.companyId!);
   await audit(ctx, 'CONVERT', 'convertibles', convertible.id, `Converted into ${formatShares(shares)} shares`);

@@ -44,6 +44,9 @@ Each of these sets one entry and wins over both files. An empty variable counts 
 | `VALUATION_APPROVAL_EMAIL` | `valuationDesk.approvalEmail` |
 | `POSTHOG_KEY` | `analytics.posthog.key` |
 | `POSTHOG_HOST` | `analytics.posthog.host` |
+| `BILLING_ENABLED` | `billing.enabled` |
+| `STRIPE_SUBSCRIPTION_PLANS` | `billing.subscriptionPlans` |
+| `STRIPE_VALUATION_PRICE_ID` | `billing.valuationPriceId` |
 | `BACKUP_CONTAINER` | `backup.container` |
 | `BACKUP_PREFIX` | `backup.prefix` |
 | `DRILL_DATABASE` | `backup.drillDatabase` |
@@ -64,7 +67,7 @@ Secrets and wiring stay in the environment and never go in a param file:
 
 ## Settings
 
-[brand](#brand) · [app](#app) · [server](#server) · [database](#database) · [mail](#mail) · [auth](#auth) · [demo](#demo) · [valuationDesk](#valuationdesk) · [limits](#limits) · [compliance](#compliance) · [alerts](#alerts) · [company](#company) · [equity](#equity) · [modeling](#modeling) · [tax](#tax) · [stockComp](#stockcomp) · [locale](#locale) · [legal](#legal) · [ai](#ai) · [analytics](#analytics) · [backup](#backup)
+[brand](#brand) · [app](#app) · [server](#server) · [database](#database) · [mail](#mail) · [auth](#auth) · [demo](#demo) · [billing](#billing) · [valuationDesk](#valuationdesk) · [limits](#limits) · [compliance](#compliance) · [alerts](#alerts) · [company](#company) · [equity](#equity) · [modeling](#modeling) · [tax](#tax) · [stockComp](#stockcomp) · [locale](#locale) · [legal](#legal) · [ai](#ai) · [analytics](#analytics) · [backup](#backup)
 
 ### brand
 
@@ -195,6 +198,19 @@ A card on the sign-in page that hands out a demo login. Create the account with 
 | `demo.email` | `"founder@example.com"` | Demo account email. |
 | `demo.password` | `"password123"` | Demo account password. It is shown to every visitor, so never reuse a real one. |
 | `demo.description` | `"to explore a sample company with its cap table, grants, SAFEs and compliance findings."` | Text after "Sign in with <email> and <password>". |
+
+### billing
+
+Stripe-hosted subscription and 409A payments. Off by default. Prices are read from Stripe, never set by the browser. Credentials are environment variables only: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET. See docs/billing.md for setup.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `billing.enabled` | `false` | Offer new Stripe Checkouts. When enabled, new 409A requests must be paid before internal approval; a missing valuationPriceId leaves new requests unavailable rather than bypassing payment. Existing requests keep their earlier workflow; customer portal access and webhooks keep working while credentials remain configured. BILLING_ENABLED overrides this setting. Configure credentials and prices before enabling it. |
+| `billing.subscriptionPlans` | `[]` | The subscription choices the server offers, up to 10. Each has a stable unique key, a display name and a distinct recurring Stripe Price ID. Amounts, currencies and recurring intervals come from Stripe. STRIPE_SUBSCRIPTION_PLANS overrides the whole list as a JSON array; [] clears it. |
+| `billing.subscriptionPlans[].key` |  | Stable plan identifier. Start with a lowercase letter; use lowercase letters, digits, underscores or hyphens, up to 64 characters. |
+| `billing.subscriptionPlans[].name` |  | The plan's display name, up to 80 characters. |
+| `billing.subscriptionPlans[].priceId` |  | A recurring Price ID from the same Stripe account and test or live mode as the secret key. |
+| `billing.valuationPriceId` | `null` | One-time Stripe Price ID for a 409A request, distinct from subscription prices. null leaves valuation checkout unconfigured and blocks new 409A requests while billing is enabled. STRIPE_VALUATION_PRICE_ID overrides it; an empty environment value leaves the file setting in effect. |
 
 ### valuationDesk
 

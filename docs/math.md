@@ -35,7 +35,9 @@ reconcile to the distributable amount to the cent at every exit value.
 
 **Stock splits** are normalised away before any formula runs: share counts are
 multiplied and per-share prices divided, so a $2M preference stays $2M and a
-$1.00 strike on 100 options becomes $0.50 on 200.
+$1.00 strike on 100 options becomes $0.50 on 200. A custom schedule whose tranches
+are share counts is restated with the security it vests (a copy, `<id>@<factor>`), so
+a split grant still vests all of itself and never more than it holds.
 
 ## Compliance checks
 

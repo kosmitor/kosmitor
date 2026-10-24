@@ -62,7 +62,7 @@ resource "azurerm_container_app_environment" "main" {
 
 locals {
   # The app's environment. APP_URL, ALLOWED_ORIGINS, PG_POOL_MAX, TRUST_PROXY,
-  # MAIL_FROM, GOOGLE_* and VALUATION_*_EMAIL win over kosmitor.config.json in the image, which (with
+  # MAIL_FROM, GOOGLE_*, POSTHOG_* and VALUATION_*_EMAIL win over kosmitor.config.json in the image, which (with
   # kosmitor.config.local.json when the build context has one) supplies every
   # other setting. Container Apps ingress is a proxy in front of every request,
   # so the client address comes from X-Forwarded-For.
@@ -79,8 +79,11 @@ locals {
     },
     { MAIL_FROM = local.mail_from },
     { VALUATION_APPROVAL_EMAIL = var.valuation_approval_email },
+    { BILLING_ENABLED = tostring(var.billing_enabled), STRIPE_SUBSCRIPTION_PLANS = jsonencode(var.stripe_subscription_plans) },
+    var.stripe_valuation_price_id != "" ? { STRIPE_VALUATION_PRICE_ID = var.stripe_valuation_price_id } : {},
     var.google_client_id != "" ? { GOOGLE_CLIENT_ID = var.google_client_id } : {},
     var.google_allowed_domains != "" ? { GOOGLE_ALLOWED_DOMAINS = var.google_allowed_domains } : {},
+    var.posthog_key != "" ? { POSTHOG_KEY = var.posthog_key, POSTHOG_HOST = var.posthog_host } : {},
     length(var.valuation_desk_emails) > 0 ? { VALUATION_DESK_EMAIL = join(",", var.valuation_desk_emails) } : {},
   )
 }
@@ -127,6 +130,18 @@ resource "azurerm_container_app" "main" {
       name                = "smtp-url"
       identity            = azurerm_user_assigned_identity.app.id
       key_vault_secret_id = azurerm_key_vault_secret.smtp_url[0].versionless_id
+    }
+  }
+
+  dynamic "secret" {
+    for_each = merge(
+      local.stripe_api_key_configured ? { stripe-secret-key = azurerm_key_vault_secret.stripe_secret_key[0].versionless_id } : {},
+      local.stripe_webhook_configured ? { stripe-webhook-secret = azurerm_key_vault_secret.stripe_webhook_secret[0].versionless_id } : {},
+    )
+    content {
+      name                = secret.key
+      identity            = azurerm_user_assigned_identity.app.id
+      key_vault_secret_id = secret.value
     }
   }
 
@@ -181,6 +196,17 @@ resource "azurerm_container_app" "main" {
         }
       }
 
+      dynamic "env" {
+        for_each = merge(
+          local.stripe_api_key_configured ? { STRIPE_SECRET_KEY = "stripe-secret-key" } : {},
+          local.stripe_webhook_configured ? { STRIPE_WEBHOOK_SECRET = "stripe-webhook-secret" } : {},
+        )
+        content {
+          name        = env.key
+          secret_name = env.value
+        }
+      }
+
       startup_probe {
         transport               = "HTTP"
         port                    = 4000
@@ -222,6 +248,14 @@ resource "azurerm_container_app" "main" {
   ]
 
   lifecycle {
+    precondition {
+      condition     = !var.billing_enabled || (trimspace(var.stripe_secret_key) != "" && trimspace(var.stripe_webhook_secret) != "")
+      error_message = "billing_enabled requires stripe_secret_key and stripe_webhook_secret. Supply both through TF_VAR environment variables."
+    }
+    precondition {
+      condition     = var.stripe_valuation_price_id == "" || !contains([for p in var.stripe_subscription_plans : p.priceId], var.stripe_valuation_price_id)
+      error_message = "stripe_valuation_price_id must differ from subscription Price IDs: valuations use a one-time price and subscriptions use recurring prices."
+    }
     # Images up to v21 read VALUATION_DESK_EMAIL as one address and refuse a list,
     # so a revision with several would not start. Stops the plan instead.
     precondition {

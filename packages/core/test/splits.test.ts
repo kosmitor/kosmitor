@@ -110,3 +110,29 @@ test('a reverse split halves shares and doubles prices', () => {
   assert.equal(shareValue(n.awards[0].quantity, n.awards[0].strikePrice),
     shareValue(d.awards[0].quantity, d.awards[0].strikePrice));
 });
+
+test('a custom schedule\'s share-count tranches are restated with a split, so a split grant still vests all of itself and never more', async () => {
+  const { company, award, customSchedule, holder, pool } = await import('./builders.ts');
+  const { summarizeVesting } = await import('../src/vesting.ts');
+  // 300 / 300 / 400 shares on dates of their own: a grant of 1,000 whose tranches are counts, not portions.
+  const counts = customSchedule('vs_counts', [{ date: '2022-01-01', quantity: 300 }, { date: '2023-01-01', quantity: 300 }, { date: '2024-01-01', quantity: 400 }]);
+  for (const [ratio, after] of [[0.5, 500], [3, 3000]] as const) {
+    const grant = award('sh_a', 1_000, { grantDate: '2021-06-01', vestingStartDate: '2021-06-01', vestingScheduleId: counts.id });
+    const d = company({ stakeholders: [holder('sh_a', 'Ada Example')], pools: [pool(10_000)], awards: [grant], vestingSchedules: [counts], stockSplits: [{ id: 'sp', date: '2022-06-01', ratio }] });
+    const n = normalizeSplits(d, '2025-01-01');
+    const a = n.awards[0];
+    const s = n.vestingSchedules.find((v) => v.id === a.vestingScheduleId)!;
+    assert.equal(a.quantity, after);
+    assert.equal(a.vestingScheduleId, `vs_counts@${ratio}`, 'a copy of its own, restated');
+    assert.deepEqual(s.customTranches?.map((t) => t.quantity), [300 * ratio, 300 * ratio, 400 * ratio]);
+    assert.equal(summarizeVesting({ schedule: s, totalQuantity: a.quantity, vestingStartDate: a.vestingStartDate }, '2025-01-01').vested, after, `${ratio}: all of it vests`);
+    // The cap table works it out: no tranche past the grant (a reverse split used to throw).
+    const table = computeCapTable(d, { asOf: '2025-01-01' });
+    assert.equal(table.rows[0].optionsVested, after);
+    // The schedule on file is untouched, and portions need no copy.
+    assert.deepEqual(d.vestingSchedules[0].customTranches?.map((t) => t.quantity), [300, 300, 400]);
+  }
+  const portions = customSchedule('vs_portions', [{ date: '2022-01-01', portion: 0.5 }, { date: '2023-01-01', portion: 0.5 }]);
+  const d = company({ stakeholders: [holder('sh_a', 'Ada Example')], pools: [pool(10_000)], awards: [award('sh_a', 1_000, { vestingScheduleId: portions.id })], vestingSchedules: [portions], stockSplits: [{ id: 'sp', date: '2022-06-01', ratio: 2 }] });
+  assert.equal(normalizeSplits(d, '2025-01-01').awards[0].vestingScheduleId, 'vs_portions');
+});

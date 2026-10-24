@@ -54,6 +54,18 @@ variable "alert_email" {
   type        = string
 }
 
+variable "deployer_object_ids" {
+  description = "Entra ID object ids (users, groups or service principals) given Key Vault Secrets Officer on the vault and Storage Blob Data Reader on the backups: what plan and apply need to read the secrets, and a restore needs to download a dump. Listed here rather than taken from whoever runs apply, so a colleague's apply cannot swap the owner's access for theirs. Empty means whoever runs apply, alone. Your own is az ad signed-in-user show --query id -o tsv."
+  type        = list(string)
+  default     = []
+  validation {
+    condition = alltrue([
+      for id in var.deployer_object_ids : can(regex("^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", id))
+    ])
+    error_message = "Each object id must be a GUID."
+  }
+}
+
 variable "alerts" {
   description = "When each operational alert fires. Set only what you change, for example { postgres_cpu = { percent = 90 } }. postgres_storage and postgres_cpu fire above percent, averaged over the window; app_5xx above that many server-error responses in the window. frequency is how often the rule is evaluated (PT1M, PT5M, PT15M, PT30M or PT1H) and window the period it looks back over (one of those, or PT6H, PT12H or P1D, and no shorter than frequency)."
   type = object({
@@ -274,6 +286,18 @@ variable "smtp_url" {
   sensitive   = true
 }
 
+variable "posthog_key" {
+  description = "PostHog project token (phc_...) for product analytics, error tracking and logs, from the server and the browser; empty turns PostHog off. Public by design: the browser receives it."
+  type        = string
+  default     = ""
+}
+
+variable "posthog_host" {
+  description = "PostHog ingestion host: https://eu.i.posthog.com, https://us.i.posthog.com or a self-hosted instance. Used only with posthog_key."
+  type        = string
+  default     = "https://eu.i.posthog.com"
+}
+
 variable "google_client_id" {
   description = "Google OAuth client ID for \"Sign in with Google\"; empty disables it."
   type        = string
@@ -321,6 +345,67 @@ variable "valuation_approval_email" {
     condition     = can(regex("^[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+@[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+\\.[^\\s\\v\\p{Z}\\x{FEFF}@<>,;\"]+$", var.valuation_approval_email))
     error_message = "valuation_approval_email must be one email address, with no name, spaces, commas or semicolons. Approval cannot be disabled with an empty value."
   }
+}
+
+variable "billing_enabled" {
+  description = "Enable new Stripe-hosted subscription checkouts and payment before internal approval of new 409A requests. Missing valuation pricing leaves new requests unavailable. Off until Stripe credentials and prices are configured. Existing customer portal access and webhooks keep working while credentials remain supplied."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "stripe_subscription_plans" {
+  description = "Subscription choices passed as STRIPE_SUBSCRIPTION_PLANS JSON. Each stable key and recurring Stripe Price ID must be unique; amounts and intervals come from Stripe."
+  type = list(object({
+    key     = string
+    name    = string
+    priceId = string
+  }))
+  default  = []
+  nullable = false
+
+  validation {
+    condition     = length(var.stripe_subscription_plans) <= 10
+    error_message = "stripe_subscription_plans can hold at most 10 plans."
+  }
+
+  validation {
+    condition     = alltrue([for p in var.stripe_subscription_plans : can(regex("^[a-z][a-z0-9_-]{0,63}$", p.key)) && can(regex("^price_[A-Za-z0-9]+$", p.priceId)) && length(p.priceId) <= 255 && length(trimspace(p.name)) > 0 && length(p.name) <= 80])
+    error_message = "Each plan needs a lowercase key (up to 64 characters, letters/digits/_/-), a display name up to 80 characters, and a Stripe price_ ID."
+  }
+
+  validation {
+    condition     = length(distinct([for p in var.stripe_subscription_plans : p.key])) == length(var.stripe_subscription_plans) && length(distinct([for p in var.stripe_subscription_plans : p.priceId])) == length(var.stripe_subscription_plans)
+    error_message = "stripe_subscription_plans must have distinct keys and Price IDs."
+  }
+}
+
+variable "stripe_valuation_price_id" {
+  description = "One-time Stripe Price ID for a 409A request, passed as STRIPE_VALUATION_PRICE_ID. Empty leaves billing.valuationPriceId from the image configuration. Must differ from every subscription Price ID."
+  type        = string
+  default     = ""
+  nullable    = false
+
+  validation {
+    condition     = var.stripe_valuation_price_id == "" || (can(regex("^price_[A-Za-z0-9]+$", var.stripe_valuation_price_id)) && length(var.stripe_valuation_price_id) <= 255)
+    error_message = "stripe_valuation_price_id must be empty or a Stripe price_ ID."
+  }
+}
+
+variable "stripe_secret_key" {
+  description = "Stripe API secret key. Supply through TF_VAR_stripe_secret_key, never a checked-in variables file. Required when billing_enabled is true; stored in Key Vault and passed only to the app as STRIPE_SECRET_KEY."
+  type        = string
+  default     = ""
+  nullable    = false
+  sensitive   = true
+}
+
+variable "stripe_webhook_secret" {
+  description = "Signing secret for the Stripe webhook endpoint /api/stripe/webhook. Supply through TF_VAR_stripe_webhook_secret. Required when billing_enabled is true; stored in Key Vault and passed only to the app as STRIPE_WEBHOOK_SECRET."
+  type        = string
+  default     = ""
+  nullable    = false
+  sensitive   = true
 }
 
 variable "tags" {

@@ -86,6 +86,11 @@ export interface KosmitorConfig {
     google: { clientId: string; allowedDomains: string[] };
   };
   demo: { enabled: boolean; email: string; password: string; description: string };
+  billing: {
+    enabled: boolean;
+    subscriptionPlans: { key: string; name: string; priceId: string }[];
+    valuationPriceId: string | null;
+  };
   valuationDesk: {
     enabled: boolean;
     name: string | null;
@@ -227,6 +232,7 @@ export interface PublicConfig {
   brand: KosmitorConfig['brand'];
   auth: Pick<KosmitorConfig['auth'], 'passwordMinLength' | 'passwordMaxLength' | 'resetLinkMinutes' | 'adminResetLinkHours' | 'inviteLinkDays' | 'passwordSignIn' | 'selfSignup'>;
   demo: KosmitorConfig['demo'];
+  billing: Pick<KosmitorConfig['billing'], 'enabled'>;
   /**
    * statusEmails: whether valuationDesk.statusEmailsPerRequestPerDay lets any status email go out.
    * reportUploads: whether valuationDesk.reportUploadsPerRequestPerDay lets the team upload the report at all.

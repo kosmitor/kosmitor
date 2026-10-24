@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session.tsx';
-import { useQuery, downloadReport, downloadFile } from '../api.ts';
+import { useQuery, downloadReport, downloadFile, api } from '../api.ts';
 import {
   PageHeader, Card, CardHeader, TD, TR, Badge, Loading, ErrorNote, Button, Select,
-  SegmentedControl, Input, MiniBar, Avatar, Banner, EmptyState, Tooltip, useToast, cx,
+  SegmentedControl, Input, MiniBar, Avatar, Banner, EmptyState, Tooltip, Modal, useToast, cx,
 } from '../ui.tsx';
 import { OwnershipDonut, ChartLegend, StackedAreaChart } from '../charts.tsx';
 import { Icon } from '../icons.tsx';
@@ -83,8 +83,17 @@ export default function CapTable() {
   const qs = `asOf=${asOf}&includeConvertibles=${includeConvertibles}&includePool=${includePool}&groupEntities=${groupEntities}`;
   const toast = useToast();
 
-  // Export menu: Excel and PDF mirror the view on screen; CSV is the fully diluted table.
+  // Export menu: Excel and PDF mirror the view on screen; CSV is the fully diluted table; the
+  // Open Cap Format package is the whole cap table and its history to today, for another tool.
+  // What the package leaves out or shows differently is in its manifest; after a download the
+  // page says how many such notes there are, and lists them on request.
   const [exportOpen, setExportOpen] = useState(false);
+  const [ocfNotes, setOcfNotes] = useState<{ asOf: string; notes: string[] } | null>(null);
+  const showOcfNotes = () => {
+    api<{ asOf: string; notes: string[] }>(`/c/${companyId}/captable/export.ocf.notes`)
+      .then(setOcfNotes)
+      .catch((err: Error) => toast(err.message, 'error'));
+  };
   const exportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!exportOpen) return;
@@ -94,11 +103,18 @@ export default function CapTable() {
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [exportOpen]);
-  const exportAs = (format: 'csv' | 'xlsx' | 'pdf') => {
+  const exportAs = (format: 'csv' | 'xlsx' | 'pdf' | 'ocf') => {
     setExportOpen(false);
     const run = format === 'csv'
       ? downloadReport(companyId!, 'captable', asOf)
-      : downloadFile(`/c/${companyId}/captable/export.${format}?${qs}&view=${view}`, `cap-table-${asOf}.${format}`);
+      : format === 'ocf'
+        ? downloadFile(`/c/${companyId}/captable/export.ocf.zip`, `cap-table-${today()}.ocf.zip`).then((headers) => {
+          const n = Number(headers.get('X-Ocf-Notes') ?? 0);
+          if (n > 0) toast(`Downloaded. The package notes ${n === 1 ? 'one thing' : `${n} things`} it leaves out or shows differently from Kosmitor.`, 'info', { label: 'See what', onClick: showOcfNotes });
+          else toast('Downloaded the Open Cap Format package.');
+          return headers;
+        })
+        : downloadFile(`/c/${companyId}/captable/export.${format}?${qs}&view=${view}`, `cap-table-${asOf}.${format}`);
     run.catch((err: Error) => toast(err.message, 'error'));
   };
   const { data: fresh, error, loading, reload } = useQuery<any>(
@@ -383,6 +399,7 @@ export default function CapTable() {
                     ['xlsx', 'Excel workbook (.xlsx)', 'This view, plus share classes and a summary sheet'],
                     ['pdf', 'PDF document', 'Print-ready table of this view'],
                     ['csv', 'CSV file', 'Fully diluted cap table for any spreadsheet'],
+                    ['ocf', 'Open Cap Format (.ocf.zip)', 'Cap table and history in Open Cap Format 1.2.0, for another cap table tool. Some details are approximated; the package lists them'],
                   ] as const).map(([format, label, hint]) => (
                     <button key={format} role="menuitem" type="button" onClick={() => exportAs(format)}
                       className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-ink-50">
@@ -559,6 +576,13 @@ export default function CapTable() {
           )}
         </div>
       </div>
+      <Modal open={!!ocfNotes} onClose={() => setOcfNotes(null)} title="What the Open Cap Format package leaves out"
+        description={ocfNotes ? `As its manifest (Manifest.ocf.json) says, for the package of ${date(ocfNotes.asOf)}. Kosmitor-specific details travel in comments beginning kosmitor:1:, which another tool may ignore.` : undefined}
+        footer={<Button onClick={() => setOcfNotes(null)}>Close</Button>}>
+        {ocfNotes && (ocfNotes.notes.length
+          ? <ul className="list-disc space-y-1.5 pl-5 text-[13px] leading-relaxed text-ink-700">{ocfNotes.notes.map((n, i) => <li key={i} className="break-words">{n}</li>)}</ul>
+          : <p className="text-[13px] text-ink-700">Nothing: the package says everything the cap table does.</p>)}
+      </Modal>
     </>
   );
 }

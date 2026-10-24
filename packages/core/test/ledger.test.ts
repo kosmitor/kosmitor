@@ -440,6 +440,25 @@ test('a certificate cancelled after the as-of date held its shares then, in part
   assert.deepEqual([computeCapTable(d, { asOf: '2023-06-01' }).totals.outstanding, computeCapTable(d, { asOf: '2024-06-01' }).totals.outstanding], [14_000_000, 7_000_000]);
 });
 
+test('OCF StockConversion: a certificate converted after the as-of date held its shares then, in part or in full, across a split', () => {
+  // Only an OCF import records a certificate's conversion. CS-1: 1,000,000 of its 4,500,000 converted
+  // in 2022, the rest (3,500,000, 7,000,000 shares of the day) after a 2:1 split; each conversion
+  // issued a certificate of another class, dated the conversion.
+  const d = base();
+  d.stockSplits.push({ id: 'sp', date: '2023-01-01', ratio: 2 });
+  Object.assign(cert(d, 'cs1'), { quantity: 3_500_000, status: 'CONVERTED' });
+  d.issuances.push(issuance('f', 'common', 1_000_000, $$(0.0001), '2022-01-01', { id: 'cv1', certificateNo: 'CV-1' }));
+  d.issuances.push(issuance('f', 'common', 7_000_000, $$(0.00005), '2024-01-01', { id: 'cv2', certificateNo: 'CV-2' }));
+  d.ledger = [entry('CONVERSION', '2022-01-01', 'cs1', 1_000_000), entry('CONVERSION', '2024-01-01', 'cs1', 7_000_000)];
+  const at = (asOf: string) => cert(rewindToDate(d, asOf), 'cs1');
+  assert.deepEqual([at('2021-06-01').quantity, at('2021-06-01').status], [4_500_000, 'OUTSTANDING']);
+  assert.deepEqual([at('2023-06-01').quantity, at('2023-06-01').status], [3_500_000, 'OUTSTANDING']);
+  assert.deepEqual([at('2024-01-01').quantity, at('2024-01-01').status], [3_500_000, 'CONVERTED']);
+  // The founder's shares are the same on every date: the conversions only moved them to new certificates.
+  const founder = (asOf: string) => computeCapTable(d, { asOf }).rows.find((r) => r.stakeholderId === 'f')!.outstanding;
+  assert.deepEqual([founder('2021-06-01'), founder('2022-06-01'), founder('2023-06-01'), founder('2024-06-01')], [4_500_000, 4_500_000, 9_000_000, 9_000_000]);
+});
+
 test('a warrant cancelled or expired after the as-of date was outstanding then, with what was left', () => {
   const d = base();
   d.warrants = [

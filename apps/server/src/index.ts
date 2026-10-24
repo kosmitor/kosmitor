@@ -23,7 +23,7 @@ const { WEB_DIST, hasWebBuild } = await import('./static.ts');
 for (const name of [
   'health', 'auth', 'entities', 'analytics', 'workflows', 'offers', 'fundraising', 'communications', 'company',
   'certificates', 'report-builder', 'tax-forms', 'imports', 'data', 'search', 'captable-export', 'certificate-detail',
-  'security-documents', 'instrument-detail', 'ai', 'valuation-requests', 'valuation-report', 'my-actions',
+  'security-documents', 'instrument-detail', 'ai', 'valuation-requests', 'valuation-report', 'my-actions', 'billing',
 ]) {
   await import(`./routes/${name}.ts`);
 }

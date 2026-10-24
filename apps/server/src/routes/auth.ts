@@ -667,6 +667,10 @@ route.del('/api/c/:cid', 'admin', async (ctx) => {
   const company = await one<{ id: string; name: string }>('SELECT id, name FROM companies WHERE id = ?', ctx.companyId);
   if (!company) throw notFound('Company not found.');
   if ((ctx.query.get('confirm') ?? '').trim() !== company.name.trim()) throw badRequest('Type the company name exactly to confirm the deletion.');
+  if (await one("SELECT id FROM billing_subscriptions WHERE company_id = ? AND status NOT IN ('canceled', 'incomplete_expired') LIMIT 1", company.id)
+    || await one("SELECT id FROM billing_checkouts WHERE company_id = ? AND status IN ('pending', 'processing') LIMIT 1", company.id)) {
+    throw badRequest('Cancel the company subscription and finish or expire pending checkouts in Billing before deleting this company.');
+  }
   await deleteCompany(company.id);
   console.log(`[companies] ${ctx.user!.email} deleted company ${company.id} (${company.name})`);
   return { ok: true };

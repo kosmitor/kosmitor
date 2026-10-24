@@ -46,6 +46,7 @@ const StockComp = lazy(() => import('./pages/StockComp.tsx'));
 const AuditLog = lazy(() => import('./pages/AuditLog.tsx'));
 const Team = lazy(() => import('./pages/Team.tsx'));
 const Company = lazy(() => import('./pages/Company.tsx'));
+const Billing = lazy(() => import('./pages/Billing.tsx'));
 const Portal = lazy(() => import('./pages/Portal.tsx'));
 const Preferences = lazy(() => import('./pages/Preferences.tsx'));
 import { AssistantLauncher } from './assistant/AssistantLauncher.tsx';
@@ -314,6 +315,7 @@ function Shell() {
             <Route path="/portal" element={<Portal />} />
             <Route path="/preferences" element={<Preferences />} />
             <Route path="/company" element={<Company />} />
+            <Route path="/billing" element={<Billing />} />
             <Route path="/team" element={<Team />} />
             <Route path="/settings" element={<Navigate to="/company" replace />} />
             <Route path="/onboarding" element={<Onboarding />} />

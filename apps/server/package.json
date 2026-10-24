@@ -19,9 +19,12 @@
   "dependencies": {
     "@kosmitor/core": "*",
     "pg": "^8.23.0",
-    "posthog-node": "^5.55.0"
+    "posthog-node": "^5.55.0",
+    "stripe": "23.0.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.23.1"
+    "@types/pg": "^8.23.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
   }
 }

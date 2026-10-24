@@ -10,8 +10,10 @@ import**, **Done** (`/import`, `/import/check`, `/import/done`).
 
 The drop zone comes first. Drop one file or several, or choose them (on a phone
 it says only "Choose files"): Excel (.xlsx), CSV or XML, including the exports of
-other cap table tools as they are. A Pulley export is two files, the stakeholder
-report and the cap table workbook; drop them together. Under the zone,
+other cap table tools as they are, or an Open Cap Format package (.ocf.zip, or its
+manifest and JSON files dropped together; see [OCF packages](#ocf-packages)). A
+Pulley export is two files, the stakeholder report and the cap table workbook;
+drop them together. Under the zone,
 **Download a template ▾** offers one Excel workbook with a tab per kind and a
 "How to fill this in" tab, then a CSV per kind (headers only), then the XML
 versions. **Past imports** lists what was imported before, one line per import.
@@ -550,6 +552,183 @@ fields. What behaves differently:
   trailing empty columns.
 - A body is read only after the caller's access is checked.
 - CSV templates carry the header row only.
+- `Imported` has five more counts, `warrants`, `valuations`, `stockSplits`,
+  `poolAdjustments` and `events`, each 0 for spreadsheets; a namesake on record in
+  `NewPerson.sameName` carries its `stakeholderId`; parse answers an Open Cap Format
+  file with `format: 'ocf'` and no sheets ([OCF packages](#ocf-packages)).
+
+## OCF packages
+
+An [Open Cap Format](ocf.md) package is the whole cap table and its history: people,
+classes, plans, vesting terms, valuations, and every issuance and event since. It is
+imported on its own, through the same three screens, and lands whole or not at all,
+with every event written to the dated ledger, so every earlier date of the cap table
+reads as the package says. Kosmitor's own export ([OCF](ocf.md)) imports back to the
+same cap table on every date.
+
+### Upload
+
+Drop the .ocf.zip, or the manifest and all of its files together. A loose file
+without its manifest, a manifest without one of its files, or two packages at once
+is said in the drop zone. Spreadsheets dropped with a package are not read: the
+check says to import them afterwards.
+
+### Check your import
+
+The reading note names the package ("cap-table-2026-01-15.ocf.zip — Open Cap Format
+1.2.0 package of Brightwater Kinetics, Inc., as of Jan 15, 2026"), what it holds,
+the company fields it fills in (legal name, incorporation date, jurisdiction, EIN,
+address: empty ones, and while the cap table is empty the ones a new company starts
+with), the classes on file that take the package's terms, and its notices: checksums
+that do not match (only a notice; many tools write placeholder ones), a file found by
+its kind rather than the path the manifest gives, files the manifest does not list,
+legend templates, financings and documents (not imported), and a package of another
+company than this one. For another company's package the company fields are a choice,
+**Copy them** or **Leave the company as it is** (the default).
+
+Then the questions: **Which Robin Vale is this?** for a person the package does not
+tell apart from several on file (or *Someone new*), and the cap table's warnings after
+the import, with *Raise to N*. New people whose relationship the package does not
+give are listed with a choice, as for spreadsheets.
+
+Each part of the package is a table of its own, in the order it is applied:
+Stakeholders, Share classes, Equity plans, Vesting schedules, Valuations,
+Certificates, Equity grants, Warrants, SAFEs & notes, and **History**, every other
+transaction. A row is an **item**: the object's place in its files (a security's,
+its issuance transaction's). Nothing is edited here. A row with a problem is left
+out (**Leave out**, or *Leave out N rows* in the bar), and its **family** goes with
+it: a security, the balance certificates that carry it on, the certificates its
+transfers, exercises and conversions created, and their events, which land
+together or not at all. A row of a family where another row has a problem says
+**Waits for item N**; one left out with another says **Left out with item N**;
+neither has buttons. A row that needs another (its holder, class, plan or vesting
+terms) waits for or is left out with it too. A package goes in whole, so while any row
+needs fixing nothing is ready: the bar and *What this adds* count every row to add as
+ready once that is fixed or left out.
+
+Importing a package again, or into the company it came from, finds every row already
+there. A family is wholly new or wholly there: when its security is on the cap table
+but an event of it is not ("The cap table's PS-1 has no transfer on 2024-09-02"),
+nothing of the family is written and the row says so; record the event on the
+security's page.
+
+### Done
+
+What was added, warrants, valuations, stock splits, plan changes and history entries
+included; the company fields filled in and the classes that took the package's terms;
+*Download them (.csv)* lists the items left out (Section, Item, OCF id, Object,
+Summary, Problem); the main button opens the cap table.
+
+### The API
+
+**Parse.** `POST imports/parse` answers an OCF file with `format: 'ocf'`, no
+`sheets`, and `ocf`:
+
+```ts
+ocf: {
+  part: 'package' | 'manifest' | 'file',   // a .ocf.zip; a loose manifest; one loose file of a package
+  version: string | null, fileType: string | null,
+  issuer: { id, legalName, dba } | null, asOf: string | null, generatedAt: string | null,
+  files: { path, fileType, items, checksum: 'ok' | 'mismatch' | 'none', md5 }[],
+  missing: string[],                          // a loose manifest's files, for the page to find among the files dropped
+  counts: Record<OcfSection | 'transactions', number>,
+  notices: Notice[],                          // ocf-checksum, ocf-path-resolved, ocf-unlisted-file, ocf-version-older, ocf-not-imported-file
+  package: { manifestPath: string | null, manifest: object | null, files: { path, md5, content }[] },
+}
+```
+
+A zip is read when it holds `.json` entries and no office document; only its JSON
+entries are unpacked, within `limits.importJsonMb` (and `limits.importUnzippedMb`), so
+an entry that lies about its size stops there. A `.zip` that does not open is refused as
+a damaged package ("We couldn't open cap-table.ocf.zip — it may be damaged. Export the
+package again and drop it here."), not as a workbook to save again from Excel. The page puts a loose
+manifest and its files together (`mergeOcfParts` in `apps/web/src/pages/import/ocf.ts`),
+each file under the path its manifest gives it. Refusals, 400 with `detail.code`:
+`ocf-no-manifest`, `ocf-two-manifests`, `ocf-missing-file` (the manifest lists a file
+the package does not have), `ocf-version` (not OCF 1.x), `ocf-too-large` (more than
+`limits.importJsonMb` of JSON, or more than 200 files), `too-many-rows` (more than
+`limits.importMaxTotalRows` objects), `damaged` (a zip that does not open, JSON that
+does not parse, or nests deeper than 64), `not-utf8` (JSON that is not UTF-8: a Latin-1
+or UTF-16 file), `unzips-too-large`, and `not-a-spreadsheet` for JSON that is not OCF.
+
+**Preview and commit.** `imports/workbook/preview` and `/commit` take, instead of
+`sheets`:
+
+```ts
+{ ocf: { file: string, package, exclude?: Partial<Record<OcfSection, number[]>> },   // package as parse returned it; items left out by section
+  options?: { relationships?, raiseAuthorized?, skipRowsWithErrors?,
+              ocfPeople?: Record<string, string>,      // package stakeholder id -> a stakeholder of this company, or 'new'
+              ocfCompanyFill?: boolean },              // whether the issuer's details fill in the company's; unset: yes unless the package is another company's
+  uploadIds?: string[], reviewToken?: string }
+```
+
+`OcfSection` is `stakeholders | shareClasses | plans | vesting | valuations | captable
+| grants | warrants | convertibles | events`. The package is checked again as parse
+checked it. `sheets` with it is 400 `ocf-alone`; an `ocfPeople` value that is not
+`'new'` or a stakeholder of this company, an `ocfCompanyFill` that is not true or
+false, or an unknown section in `exclude`, is `bad-option`. A package whose securities
+would vest on more than 2,000,000 dates in all is 400 `ocf-too-large` (docs/ocf.md,
+"Vesting is bounded"). The spreadsheet options (date order, number format, defaults, the
+`createMissing…` flags) are not read. The review token covers the package, the items
+left out and every answer.
+
+The response is the workbook response, with one `sheets` entry per section that has
+rows (`kind` the section, `sheetName` its title, `file` the package's name) and:
+
+- `PreviewRow.row` is the item number; `ocfId` and `object` (the object_type) name it.
+  Summary keys: stakeholders, certificates, grants and SAFEs & notes as for
+  spreadsheets, plus `state` (the status it ends in) on certificates and grants;
+  share classes `name, classType, authorized, price, seniority, votes`; plans `name,
+  shareClass, reserved, boardApprovalDate`; vesting `name, reading`; valuations
+  `effectiveDate, price, provider, shareClass`; warrants `stakeholder, shareClass,
+  shares, strike, issueDate, expirationDate, state`; history `date, event` (the
+  object_type) `, security` (its number) `, stakeholder, quantity, amount, detail`.
+- `ocf`: `{ file, version, issuer, asOf, generatedAt, files, notices, notImported:
+  { what, count, reason }[], companyFill: { field, value }[], companyFillAsked,
+  companyFillApplied, classUpdates: string[] }`: the company's fields the issuer's
+  details fill in, whether the person is asked (another company's package) and whether
+  this check writes them, and the classes on file that take the package's terms.
+- `counts.willImport` is 0 while any section is blocked: a package goes in whole.
+- `RowMessage.people` on `ambiguous-person`: the people on file it may be (`id`, `name`,
+  `email`), answered by `options.ocfPeople`.
+- `NewPerson.ocfId`; `NewPerson.sameName[].stakeholderId` names one on record (also for
+  spreadsheets).
+- `Imported` gains `warrants`, `valuations`, `stockSplits`, `poolAdjustments` and
+  `events` (the ledger entries written for events, not those securities are created
+  with); each is 0 for spreadsheets.
+
+A package with an error in any section and `skipRowsWithErrors` off writes nothing,
+even in the dry run: the sections with errors are `blocked`, and commit is 400
+`rows-need-fixing`. One `imports` row is written per package (kind `ocf`), and the
+audit line reads "Imported the OCF package <file>: …", ending with the company fields
+filled in ("the company's EIN and address filled in") and the classes given the
+package's terms.
+
+**Message codes** added for packages:
+
+| Code | Level | Means |
+|---|---|---|
+| `ocf-bad-object` | error | an object or value that is not what OCF allows (a Numeric, a ratio, a missing name); a warning when an email that is not one plain address is left out |
+| `bad-number` | error | an amount past what Kosmitor can record (shares times a price) |
+| `ocf-unknown-reference` | error | an id the package does not have (`field` and `value` say which) |
+| `ocf-duplicate-id` | error | two objects with one id, or a security issued twice |
+| `ocf-currency` | error | money in another currency than the company's; nothing is converted |
+| `ocf-event-order` | error | an event before its security was issued, or after it closed |
+| `ocf-balance-mismatch` | error | a balance certificate that does not hold what the event left |
+| `ocf-unsupported` | error | what Kosmitor cannot record: vesting terms with two paths or past the bounds (dates, periods, conditions), a split of some classes only, part of a SAFE or note converted, an event a security of its kind cannot have |
+| `ocf-split-existing` | error | a stock split into a company that already has securities |
+| `ocf-depends` | error | waits for another row's fix ("Waits for item N") |
+| `ocf-no-balance`, `ocf-acceleration-not-applied`, `ocf-future-date`, `ocf-result-date`, `ocf-option-type-assumed`, `ocf-terms-approximate`, `ocf-planless-grant`, `ocf-vesting-ignored` | warning | imported as described |
+| `ocf-history-current-only`, `ocf-vesting-per-security`, `ocf-vesting-rounding`, `ocf-transfer-as-cancellation`, `ocf-rounded`, `ptep-assumed` | info | filled in ("We filled in N things") |
+| `ocf-folded`, `class-updated` | info | what a row does: an event folded into its security (a leaver's lapse Kosmitor works out itself among them), a class with nothing issued taking the package's terms |
+| `ocf-not-imported` | info | a transaction that is not imported (outcome `skip`) |
+| `ocf-excluded-with` | info | left out with another item |
+
+Notices: `ocf-checksum`, `ocf-path-resolved`, `ocf-unlisted-file`,
+`ocf-version-older`, `ocf-not-imported-file`, `ocf-legends` (info) and
+`ocf-other-issuer` (warning).
+
+The mapping, object by object, is in [docs/ocf.md](ocf.md#importing).
 
 ## Checking the math against a Pulley or Carta export
 

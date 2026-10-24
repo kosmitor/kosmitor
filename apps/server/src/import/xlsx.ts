@@ -230,13 +230,15 @@ function dateStyles(stylesXml: string | undefined): Set<number> {
  * other files that are ZIPs inside — a Word document, a PowerPoint deck, an
  * OpenDocument spreadsheet, an Apple Numbers file — or something else.
  */
-export function zipContents(files: ZipFiles): 'xlsx' | 'docx' | 'pptx' | 'ods' | 'numbers' | 'zip' {
+export function zipContents(files: ZipFiles): 'xlsx' | 'docx' | 'pptx' | 'ods' | 'numbers' | 'ocf' | 'zip' {
   if (files.has('xl/workbook.xml')) return 'xlsx';
   if (files.has('word/document.xml')) return 'docx';
   if (files.has('ppt/presentation.xml')) return 'pptx';
   const mimetype = files.has('mimetype') ? files.get('mimetype')!.subarray(0, 200).toString('utf8') : '';
   if (/opendocument\.spreadsheet/.test(mimetype)) return 'ods';
   if ([...files.keys()].some((name) => name.startsWith('Index/') && name.endsWith('.iwa'))) return 'numbers';
+  // An Open Cap Format package: JSON files, read by src/ocf/read.ts.
+  if ([...files.keys()].some((name) => /\.json$/i.test(name))) return 'ocf';
   return 'zip';
 }
 

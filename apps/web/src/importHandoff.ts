@@ -16,8 +16,8 @@ export function takeImportFiles(): { files: File[]; kind: string | null } | null
   return p;
 }
 
-/** What the file picker offers: spreadsheets, and PDFs, which are saved as documents instead. */
-export const IMPORT_ACCEPT = '.csv,.tsv,.txt,.xml,.xlsx,.pdf,text/csv,text/xml,application/xml,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+/** What the file picker offers: spreadsheets, Open Cap Format packages (.ocf.zip, or their JSON files), and PDFs, which are saved as documents instead. */
+export const IMPORT_ACCEPT = '.csv,.tsv,.txt,.xml,.xlsx,.zip,.json,.pdf,text/csv,text/xml,application/xml,application/zip,application/json,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 /** A PDF is never read as a table: it is saved as a document. */
 export const isPdf = (file: File): boolean => /\.pdf$/i.test(file.name) || file.type === 'application/pdf';

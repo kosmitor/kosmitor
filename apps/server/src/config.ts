@@ -126,6 +126,10 @@ function checkTogether(c: KosmitorConfig): string[] {
   if (c.valuationDesk.enabled && !c.valuationDesk.approvalEmail) {
     errors.push('valuationDesk.approvalEmail must be configured when valuationDesk.enabled is true');
   }
+  const plans = c.billing.subscriptionPlans;
+  if (new Set(plans.map((p) => p.key)).size !== plans.length) errors.push('billing.subscriptionPlans must have distinct keys');
+  const prices = [...plans.map((p) => p.priceId), ...(c.billing.valuationPriceId ? [c.billing.valuationPriceId] : [])];
+  if (new Set(prices).size !== prices.length) errors.push('billing price IDs must be distinct across subscriptionPlans and valuationPriceId');
   // noticesPerHour counts emails, one per address, so a list longer than it could never be sent a notice.
   const desk = c.valuationDesk.email;
   const evaluators = new Set((desk == null ? [] : Array.isArray(desk) ? desk : [desk]).map((a) => a.trim().toLowerCase())).size;
@@ -214,6 +218,13 @@ const ENV: { name: string; path: string; parse: (v: string) => Json; problem?: (
   { name: 'VALUATION_APPROVAL_EMAIL', path: 'valuationDesk.approvalEmail', parse: (v) => v.toLowerCase() },
   { name: 'POSTHOG_KEY', path: 'analytics.posthog.key', parse: (v) => v },
   { name: 'POSTHOG_HOST', path: 'analytics.posthog.host', parse: (v) => v.replace(/\/+$/, '') },
+  { name: 'BILLING_ENABLED', path: 'billing.enabled', parse: (v) => (/^(1|true|yes|on)$/i.test(v) ? true : /^(0|false|no|off)$/i.test(v) ? false : v) },
+  { name: 'STRIPE_SUBSCRIPTION_PLANS', path: 'billing.subscriptionPlans', parse: (v) => {
+    try { return JSON.parse(v) as Json; } catch { return v; }
+  }, problem: (v) => {
+    try { JSON.parse(v); return null; } catch { return 'must be valid JSON: an array of objects with key, name and priceId'; }
+  } },
+  { name: 'STRIPE_VALUATION_PRICE_ID', path: 'billing.valuationPriceId', parse: (v) => v },
   { name: 'BACKUP_CONTAINER', path: 'backup.container', parse: (v) => v },
   { name: 'BACKUP_PREFIX', path: 'backup.prefix', parse: (v) => v },
   { name: 'DRILL_DATABASE', path: 'backup.drillDatabase', parse: (v) => v },
@@ -363,6 +374,7 @@ export function publicConfig(c: KosmitorConfig = config()): PublicConfig {
       passwordSignIn: c.auth.passwordSignIn, selfSignup: c.auth.selfSignup,
     },
     demo: c.demo.enabled ? c.demo : { ...c.demo, email: '', password: '' },
+    billing: { enabled: c.billing.enabled },
     // Whether the person who asked is emailed at each step, and whether the team can
     // upload the report, so the pages offer and promise only what the server does.
     valuationDesk: {

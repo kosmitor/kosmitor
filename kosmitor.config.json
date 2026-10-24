@@ -164,6 +164,11 @@
     "password": "password123",
     "description": "to explore a sample company with its cap table, grants, SAFEs and compliance findings."
   },
+  "billing": {
+    "enabled": false,
+    "subscriptionPlans": [],
+    "valuationPriceId": null
+  },
   "valuationDesk": {
     "enabled": false,
     "name": null,

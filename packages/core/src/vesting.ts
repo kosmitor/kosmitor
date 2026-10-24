@@ -22,6 +22,13 @@ export interface VestingContext {
   changeOfControlDate?: ISODate | null;
 }
 
+/**
+ * The longest a vesting schedule may run: 50 years. A schedule is refused past it
+ * where one is entered (the API, an OCF package), so no cap table works out a daily
+ * schedule over centuries.
+ */
+export const MAX_VESTING_MONTHS = 600;
+
 const MONTHS_PER_PERIOD: Record<VestingFrequency, number> = {
   MONTHLY: 1, QUARTERLY: 3, ANNUAL: 12, WEEKLY: 0, DAILY: 0,
 };
@@ -170,24 +177,36 @@ function periodWeights(dates: ISODate[], start: ISODate, schedule: VestingSchedu
   // uses actual calendar days for daily and weekly schedules.
   const calendarPeriods = MONTHS_PER_PERIOD[schedule.frequency] > 0;
   const yearWeights = schedule.yearWeights?.length ? schedule.yearWeights : null;
-  const end = addMonths(start, schedule.durationMonths);
+  const D = schedule.durationMonths;
+  // Month boundaries, worked out once. The dates are in order, so each date only
+  // looks at the months between the date before it and itself: linear in the dates
+  // and the months together, where a daily schedule over decades used to cost
+  // every month for every date.
+  const bounds: ISODate[] = [];
+  for (let m = 0; m <= D; m++) bounds.push(addMonths(start, m));
+  const at = (m: number): ISODate => (m <= D ? bounds[m] : addMonths(start, m));
+  const end = bounds[D];
   let previous = start;
+  let first = 0;
   return dates.map((date) => {
     let weight = 0;
-    for (let m = 0; m < schedule.durationMonths; m++) {
-      const monthStart = addMonths(start, m), monthEnd = addMonths(start, m + 1);
+    // Months that end on or before the previous date add nothing to this one.
+    while (first < D && bounds[first + 1] <= previous) first++;
+    for (let m = first; m < D; m++) {
+      const monthStart = bounds[m], monthEnd = bounds[m + 1];
+      if (monthStart >= date) break;
       const lo = previous > monthStart ? previous : monthStart;
       const hi = date < monthEnd ? date : monthEnd;
       if (hi <= lo) continue;
       const year = Math.floor(m / 12);
       // The part of a full year the schedule covers (1, or less in a final part-year) and
       // the length of a month to weigh this slice by.
-      let covered = Math.min(12, schedule.durationMonths - year * 12) / 12;
+      let covered = Math.min(12, D - year * 12) / 12;
       let denominator: number;
       if (calendarPeriods) {
         denominator = daysBetween(monthStart, monthEnd);
       } else {
-        const yearStart = addMonths(start, year * 12), yearEnd = addMonths(start, (year + 1) * 12);
+        const yearStart = at(year * 12), yearEnd = at((year + 1) * 12);
         covered = daysBetween(yearStart, end < yearEnd ? end : yearEnd) / daysBetween(yearStart, yearEnd);
         denominator = daysBetween(yearStart, yearEnd) / 12;
       }
