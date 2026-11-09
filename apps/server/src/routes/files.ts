@@ -15,7 +15,9 @@ import { route, badRequest, notFound, forbidden, audit, newId, nowISO, str } fro
 import { one, all, insert, run, toCamel, transaction } from '../db.ts';
 import { SERVER_DIR } from '../env.ts';
 import { config, megabytes } from '../config.ts';
-import { documentFolder } from '../folders.ts';
+import { documentFolder, DEFAULT_FOLDER } from '../folders.ts';
+import { classifyDocument, readableText } from '../classify.ts';
+import { findLinks } from '../classify-link.ts';
 import { seesWholeVault } from '../auth.ts';
 
 /** The largest document upload, limits.uploadMb. */
@@ -126,18 +128,32 @@ route.post('/api/c/:cid/documents/upload', 'write', async (ctx) => {
   const body = ctx.rawBody;
   if (!body || body.length === 0) throw badRequest('The upload is empty.');
   const fileName = str(ctx.query.get('name') ?? '', 'File name', { max: 255 }).replace(/[\\/]/g, '_');
-  const category = String(ctx.query.get('category') ?? 'OTHER').toUpperCase();
+  let category = String(ctx.query.get('category') ?? 'OTHER').toUpperCase();
   if (!CATEGORIES.has(category)) throw badRequest('Choose a valid document category.');
   const mimeType = String(ctx.req.headers['content-type'] ?? 'application/octet-stream').split(';')[0].trim() || 'application/octet-stream';
-  const folder = documentFolder(ctx.query.get('folder'));
+  let folder = documentFolder(ctx.query.get('folder'));
 
-  const stakeholderId = ctx.query.get('stakeholderId') || null;
+  // "auto": the file says what it is. The category is taken from its content; the folder
+  // is the kind's own, inside the one chosen unless that is the default. A file that
+  // cannot be recognised keeps what was sent, so nothing is filed on a guess.
+  const auto = ctx.query.get('auto') === '1';
+  const text = auto ? readableText(fileName, mimeType, body) : '';
+  const classified = auto ? classifyDocument(fileName, mimeType, body, text) : null;
+  // And who it is about, when it names one person or one instrument of theirs and the uploader named neither.
+  const linked = auto && !ctx.query.get('stakeholderId') && !ctx.query.get('securityId') ? await findLinks(ctx.companyId!, fileName, text) : null;
+  if (classified?.confident) {
+    category = classified.category;
+    // keepFolder: the folder was the one the file came in, and stays exactly that.
+    if (ctx.query.get('keepFolder') !== '1') folder = documentFolder(folder === DEFAULT_FOLDER ? classified.folder : `${folder}/${classified.folder}`);
+  }
+
+  const stakeholderId = ctx.query.get('stakeholderId') || linked?.stakeholderId || null;
   if (stakeholderId && !(await one('SELECT id FROM stakeholders WHERE id = ? AND company_id = ?', stakeholderId, ctx.companyId))) {
     throw badRequest('That stakeholder does not belong to this company.');
   }
 
   // The instrument is chosen in the browser, so it is checked here rather than trusted.
-  const securityId = ctx.query.get('securityId') || null;
+  const securityId = ctx.query.get('securityId') || linked?.securityId || null;
   if (securityId && !(await securityKind(ctx.companyId!, securityId))) {
     throw badRequest('That instrument does not belong to this company.');
   }
@@ -168,7 +184,7 @@ route.post('/api/c/:cid/documents/upload', 'write', async (ctx) => {
     await storeFile(docId, ctx.companyId!, body);
   });
   await audit(ctx, 'UPLOAD', 'documents', docId, `Uploaded "${fileName}" (${Math.round(body.length / 1024)} KB)`);
-  return toCamel(await one('SELECT * FROM documents WHERE id = ?', docId));
+  return { ...toCamel<Record<string, unknown>>(await one('SELECT * FROM documents WHERE id = ?', docId)), ...(classified ? { filedAs: { ...classified, linkedTo: linked?.about ?? null } } : {}) };
 }, { raw: true, maxBytes: maxUploadBytes });
 
 route.get('/api/c/:cid/documents/:id/download', 'read', async (ctx) => {

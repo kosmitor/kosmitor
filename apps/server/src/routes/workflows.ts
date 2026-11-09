@@ -8,9 +8,11 @@ import { renderEmail, type EmailContent } from '../email.ts';
 import { stockFace, awardFace, faceText, stockLegends, isNonUsHolder, type CertificateFace } from '../certificate-face.ts';
 import { config, mailSignature } from '../config.ts';
 import { listTemplates, templateFor, templateById, renderTemplate, TEMPLATE_KINDS, MERGE_FIELDS, SAMPLE_CONTEXT, AWARD_TYPE_NAMES, ENTITY_WORDS as ENTITY_NAMES, usd as fmtUsd, perShare as fmtPerShare, integer as fmtInt, type TemplateKind, type MergeContext } from '../templates.ts';
-import { removeStoredFile, securityKind, isSubjectKind, isDocumentCategory } from './files.ts';
+import { removeStoredFile, securityKind, isSubjectKind, isDocumentCategory, maxUploadBytes } from './files.ts';
+import { docxToText, DocxRefusal } from '../docx-text.ts';
 import { changedSinceSigned, signedHash } from './certificates.ts';
 import { documentFolder } from '../folders.ts';
+import { UNSHOWABLE } from '../names.ts';
 import { startConvertibleSigning, activateConvertible, detachFromPendingConsents } from './fundraising.ts';
 import { updatesFor, markUpdateRead } from './communications.ts';
 import { isEditor, seesWholeCompany, seesWholeVault } from '../auth.ts';
@@ -255,14 +257,35 @@ route.post('/api/c/:cid/awards/:id/remind', 'write', async (ctx) => {
 
 // --- Templates ---------------------------------------------------------------
 
+const TEMPLATE_MAX = 500_000;
+
 route.get('/api/c/:cid/templates', 'read', async (ctx) => ({
   templates: await listTemplates(ctx.companyId!), kinds: TEMPLATE_KINDS, fields: MERGE_FIELDS,
 }));
 
 route.post('/api/c/:cid/templates/preview', 'read', async (ctx) => {
-  const body = str(ctx.body.body, 'Template', { max: 50_000 });
+  const body = str(ctx.body.body, 'Template', { max: TEMPLATE_MAX });
   return renderTemplate(body, { ...SAMPLE_CONTEXT, today: today() });
 });
+
+/**
+ * Reads a Word document sent as the raw body (?name=file.docx) and answers with the text to start a
+ * template from: { name, body, unknownTokens }. Nothing is saved; the page saves it as any other template.
+ * Refusals: 400 with detail.code empty | not-docx | damaged | too-large.
+ */
+route.post('/api/c/:cid/templates/import-docx', 'write', async (ctx) => {
+  const body = ctx.rawBody;
+  if (!body || body.length === 0) throw badRequest('This file is empty.', { code: 'empty' });
+  const fileName = str(ctx.query.get('name') ?? 'template.docx', 'File name', { max: 255 });
+  let text: string;
+  try { text = docxToText(body); } catch (err) {
+    if (err instanceof DocxRefusal) throw badRequest(err.message, { code: err.code });
+    throw err;
+  }
+  if (text.length > TEMPLATE_MAX) throw badRequest(`This document has ${text.length.toLocaleString('en-US')} characters of text, more than a template can hold (${TEMPLATE_MAX.toLocaleString('en-US')}).`, { code: 'too-large' });
+  const { unknownTokens } = renderTemplate(text, { ...SAMPLE_CONTEXT, today: today() });
+  return { name: fileName.replace(/\.docx$/i, '').replace(/[_]+/g, ' ').trim().slice(0, 120), body: text, unknownTokens };
+}, { raw: true, maxBytes: maxUploadBytes });
 
 route.post('/api/c/:cid/templates', 'write', async (ctx) => {
   const kind = str(ctx.body.kind, 'Kind') as TemplateKind;
@@ -271,7 +294,7 @@ route.post('/api/c/:cid/templates', 'write', async (ctx) => {
   const isDefault = ctx.body.isDefault ? 1 : 0;
   if (isDefault) await run('UPDATE document_templates SET is_default = 0 WHERE company_id = ? AND kind = ?', ctx.companyId, kind);
   await insert('document_templates', {
-    id, companyId: ctx.companyId, kind, name: str(ctx.body.name, 'Name', { max: 120 }), body: str(ctx.body.body, 'Template', { max: 50_000 }),
+    id, companyId: ctx.companyId, kind, name: str(ctx.body.name, 'Name', { max: 120 }), body: str(ctx.body.body, 'Template', { max: TEMPLATE_MAX }),
     isDefault, createdBy: ctx.user!.name, createdAt: nowISO(),
   });
   await audit(ctx, 'CREATE', 'document_templates', id, `Template "${ctx.body.name}" created`);
@@ -283,7 +306,7 @@ route.patch('/api/c/:cid/templates/:id', 'write', async (ctx) => {
   if (!existing) throw notFound('Template not found.');
   const values: Record<string, unknown> = { updatedAt: nowISO() };
   if (ctx.body.name != null) values.name = str(ctx.body.name, 'Name', { max: 120 });
-  if (ctx.body.body != null) values.body = str(ctx.body.body, 'Template', { max: 50_000 });
+  if (ctx.body.body != null) values.body = str(ctx.body.body, 'Template', { max: TEMPLATE_MAX });
   if (ctx.body.isDefault != null) {
     values.isDefault = ctx.body.isDefault ? 1 : 0;
     if (ctx.body.isDefault) await run('UPDATE document_templates SET is_default = 0 WHERE company_id = ? AND kind = ?', ctx.companyId, existing.kind);
@@ -997,9 +1020,15 @@ route.patch('/api/c/:cid/documents/:id', 'write', async (ctx) => {
     if (signed) throw badRequest(`${signed.signer_name.split(' — ')[0]} has signed this document, so its text and status cannot be edited. Send a new document to change it.`);
   }
 
-  const fields = ['name', 'body'];
   const values: Record<string, unknown> = { updatedAt: nowISO() };
-  for (const f of fields) if (ctx.body[f] !== undefined) values[f] = ctx.body[f];
+  if (ctx.body.body !== undefined) values.body = ctx.body.body;
+  if (ctx.body.name !== undefined) {
+    // Tidied like every other name: one space between words, nothing the page cannot draw.
+    const name = str(ctx.body.name, 'The name', { max: 800 }).normalize('NFC').replace(/\s+/g, ' ').trim();
+    if (UNSHOWABLE.test(name)) throw badRequest('The name contains a character that cannot be shown.');
+    if ([...name].length > 200) throw badRequest('The name can be at most 200 characters.');
+    values.name = name;
+  }
   if (ctx.body.category !== undefined) values.category = documentCategory(ctx.body.category);
   // The holder is checked as the create and upload routes check it. The
   // certificate email finds its recipient through this column, so another
@@ -1116,6 +1145,39 @@ route.post('/api/c/:cid/documents/move', 'write', async (ctx) => {
   return ids.map((id) => byId.get(id));
 });
 
+/**
+ * Renames a folder. A folder is only the text on its documents, so this rewrites
+ * that text on every document in it and in the folders below it: renaming
+ * "Financing/Series A" to "Financing/Seed" also turns "Financing/Series A/Side
+ * letters" into "Financing/Seed/Side letters". All or nothing: every new path is
+ * checked against the folder rules before anything is written.
+ */
+route.post('/api/c/:cid/documents/rename-folder', 'write', async (ctx) => {
+  if (typeof ctx.body.from !== 'string' || typeof ctx.body.to !== 'string') throw badRequest('A folder rename needs the folder and its new path.');
+  const from = documentFolder(ctx.body.from);
+  const to = documentFolder(ctx.body.to);
+  if (from === to) throw badRequest('That is already the name of the folder.');
+
+  const rows = await all<{ id: string; folder: string | null }>('SELECT id, folder FROM documents WHERE company_id = ?', ctx.companyId);
+  const moving = new Map<string, string[]>();
+  for (const row of rows) {
+    const now = storedFolder(row.folder);
+    if (now === null) continue;
+    // A document with no folder reads as General, so General can be renamed too.
+    if (now !== from && !now.startsWith(`${from}/`)) continue;
+    const next = documentFolder(`${to}${now.slice(from.length)}`);
+    moving.set(next, [...(moving.get(next) ?? []), row.id]);
+  }
+  const updatedAt = nowISO();
+  for (const [folder, ids] of moving) {
+    await run(`UPDATE documents SET folder = ?, updated_at = ? WHERE company_id = ? AND id IN (${ids.map(() => '?').join(', ')})`,
+      folder, updatedAt, ctx.companyId, ...ids);
+  }
+  const count = [...moving.values()].reduce((n, ids) => n + ids.length, 0);
+  if (count > 0) await audit(ctx, 'UPDATE', 'documents', [...moving.values()][0][0], `Folder "${from}" renamed to "${to}" (${count} document${count === 1 ? '' : 's'})`);
+  return { renamed: count };
+});
+
 route.del('/api/c/:cid/documents/:id', 'write', async (ctx) => {
   const doc = await one<{ storage_key: string | null }>(
     'SELECT storage_key FROM documents WHERE id = ? AND company_id = ?', ctx.params.id, ctx.companyId);
@@ -1128,6 +1190,43 @@ route.del('/api/c/:cid/documents/:id', 'write', async (ctx) => {
   await removeStoredFile(doc.storage_key);
   await audit(ctx, 'DELETE', 'documents', ctx.params.id, 'Document deleted');
   return { ok: true };
+});
+
+/**
+ * Deletes documents together: a selection, or every document in a folder and the
+ * folders under it (a folder is only the text on its documents, so emptying it
+ * removes it). Each is held to the rule the single delete has: one that someone
+ * has signed is kept, since the signature is the record of what was agreed. Those
+ * are named in the answer and the rest are deleted, so one signed paper in a
+ * folder does not stop the others from going. A document that is not this
+ * company's is answered as one that does not exist, and stops the whole request
+ * before anything is deleted.
+ */
+route.post('/api/c/:cid/documents/delete', 'write', async (ctx) => {
+  const asked: unknown = ctx.body.ids;
+  if (!Array.isArray(asked) || asked.length === 0 || asked.some((id) => typeof id !== 'string' || id === '')) {
+    throw badRequest('Choose at least one document to delete.');
+  }
+  if (asked.length > DOCUMENT_MOVE_MAX) throw badRequest(`At most ${DOCUMENT_MOVE_MAX} documents can be deleted at once.`);
+  const ids = [...new Set(asked as string[])];
+  const marks = ids.map(() => '?').join(', ');
+  const found = await all<{ id: string; name: string; storage_key: string | null }>(
+    `SELECT id, name, storage_key FROM documents WHERE company_id = ? AND id IN (${marks})`, ctx.companyId, ...ids);
+  if (found.length !== ids.length) throw notFound('Some of those documents were not found, so none were deleted.');
+
+  const signedIds = new Set((await all<{ document_id: string }>(
+    `SELECT DISTINCT document_id FROM signatures WHERE company_id = ? AND status = 'SIGNED' AND document_id IN (${marks})`,
+    ctx.companyId, ...ids)).map((r) => r.document_id));
+  const deleted: string[] = [];
+  const kept: { id: string; name: string }[] = [];
+  for (const doc of found) {
+    if (signedIds.has(doc.id)) { kept.push({ id: doc.id, name: doc.name }); continue; }
+    await run('DELETE FROM documents WHERE id = ? AND company_id = ?', doc.id, ctx.companyId);
+    await removeStoredFile(doc.storage_key);
+    await audit(ctx, 'DELETE', 'documents', doc.id, `Document deleted ("${doc.name}", with a selection of ${ids.length})`);
+    deleted.push(doc.id);
+  }
+  return { deleted, kept };
 });
 
 /** Records a typed signature. Members sign their own assigned blocks only. */

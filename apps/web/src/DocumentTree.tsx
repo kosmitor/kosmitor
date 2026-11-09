@@ -25,6 +25,7 @@
  * each folder, which the page does before handing them over; the folders keep
  * their order by name, turned round when the names themselves are sorted Z to A.
  */
+import { fromDrop, type Picked } from './folderImport.ts';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { cx } from './style.ts';
@@ -306,7 +307,7 @@ type Over = { at: 'top' | 'folder'; path: string; effect: 'move' | 'copy' };
 
 export function DocumentTree<D extends TreeDocument>({
   label, documents, extraFolders, expansion, canEdit, columns, renderName, renderCells,
-  selected, onSelect, onOpen, onMove, onDropFiles, onActiveFolderChange, toolbar, empty, sort = null, onSort,
+  selected, onSelect, onOpen, onMove, onDropFiles, onRenameFolder, onActiveFolderChange, toolbar, empty, sort = null, onSort,
 }: {
   label: string;
   /** The documents to show, already narrowed by any search. */
@@ -327,7 +328,10 @@ export function DocumentTree<D extends TreeDocument>({
   onOpen: (doc: D) => void;
   /** Documents dropped on a folder; `selection` says they were the selection, dragged together. */
   onMove: (docs: D[], folder: string, selection: boolean) => void;
-  onDropFiles: (files: File[], folder: string) => void;
+  /** Files and folders dropped from the computer; the folders are still being read. */
+  onDropFiles: (dropped: Promise<Picked[]>, folder: string) => void;
+  /** The pencil on a folder row: the page asks for the new name. */
+  onRenameFolder?: (path: string) => void;
   /** The folder of the row last chosen, or null before one is. */
   onActiveFolderChange?: (folder: string | null) => void;
   toolbar?: React.ReactNode;
@@ -407,6 +411,17 @@ export function DocumentTree<D extends TreeDocument>({
     onSelect(next);
   };
   const clearSelection = () => { anchor.current = null; onSelect(NO_SELECTION); };
+  /** The ids of every document in a folder and the folders under it, shown or not. */
+  const idsUnder = (path: string): string[] => documents
+    .filter((d) => { const f = folderPath(d.folder); return f === path || f.startsWith(`${path}/`); }).map((d) => d.id);
+  /** A folder's checkbox: selects everything in it, or, when all of it is already selected, lets go of it. */
+  const toggleFolder = (path: string) => {
+    const ids = idsUnder(path);
+    const next = new Set(selected);
+    if (ids.every((id) => next.has(id))) for (const id of ids) next.delete(id); else for (const id of ids) next.add(id);
+    anchor.current = null;
+    onSelect(next);
+  };
 
   // How many are selected is said as it changes, politely, so it never cuts
   // across the name of the row someone has just moved to.
@@ -547,9 +562,9 @@ export function DocumentTree<D extends TreeDocument>({
       endDrag();
       if (docs.length > 0) onMove(docs, folder, picked?.selection ?? false);
     } else {
-      const files = Array.from(e.dataTransfer.files);
+      const dropped = fromDrop(e.dataTransfer);
       endDrag();
-      if (files.length > 0) onDropFiles(files, folder);
+      onDropFiles(dropped, folder);
     }
   };
 
@@ -747,9 +762,28 @@ export function DocumentTree<D extends TreeDocument>({
                       <td role="gridcell" className={cx(CELL, pinnedName({ drop: inDrop, selected: false, folder: true }))} style={indent(row.level)}>
                         <span className="flex items-center gap-1.5">
                           <Icon name="chevron" className={cx('size-4 shrink-0 text-ink-400 transition-transform', !row.open && '-rotate-90')} />
+                          {canEdit && node.count > 0 && (() => {
+                            const ids = idsUnder(node.path);
+                            const on = ids.filter((id) => selected.has(id)).length;
+                            return (
+                              <label className="relative flex size-4 shrink-0 cursor-pointer select-none before:absolute before:-inset-1.5 before:content-['']"
+                                onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" checked={on === ids.length} aria-label={`Select every document in ${node.name}`}
+                                  ref={(el) => { if (el) el.indeterminate = on > 0 && on < ids.length; }}
+                                  className="m-0 size-4 cursor-pointer" onChange={() => toggleFolder(node.path)} />
+                              </label>
+                            );
+                          })()}
                           <Icon name="folder" className={cx('size-4 shrink-0', target ? 'text-brand-600' : 'text-ink-400')} />
                           <span className={cx('min-w-0 font-semibold text-ink-900', nameFit(node.name))}>{node.name}</span>
                           <span className="shrink-0 text-[13px] text-ink-500">({node.count})</span>
+                          {canEdit && onRenameFolder && (
+                            <button type="button" aria-label={`Rename ${node.name}`} title="Rename folder"
+                              onClick={(e) => { e.stopPropagation(); onRenameFolder(node.path); }}
+                              className="ml-1 shrink-0 rounded p-1 text-ink-400 opacity-0 hover:bg-ink-100 hover:text-ink-700 focus-visible:opacity-100 group-hover:opacity-100 max-sm:opacity-100">
+                              <Icon name="edit" className="size-3.5" />
+                            </button>
+                          )}
                           {hint(node.path)}
                         </span>
                       </td>
@@ -832,9 +866,12 @@ function idsIn(data: string): string[] {
  * What can be done with the documents selected, shown while there are any. The
  * page puts it in the tree's toolbar.
  */
-export function SelectionBar({ count, onMove, onClear, ref }: {
+export function SelectionBar({ count, onMove, onDelete, onSelectAll, onClear, ref }: {
   count: number;
   onMove: () => void;
+  onDelete: () => void;
+  /** Present while some documents shown are not selected. */
+  onSelectAll?: () => void;
   onClear: () => void;
   ref?: React.Ref<HTMLDivElement>;
 }) {
@@ -843,6 +880,8 @@ export function SelectionBar({ count, onMove, onClear, ref }: {
     <div ref={ref} role="group" aria-label="Selected documents" className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
       <span className="mr-1 text-[13px] font-semibold text-ink-900 tabular">{count} selected</span>
       <Button size="sm" variant="primary" icon={<Icon name="folder" className="size-4" />} onClick={onMove}>Move to folder</Button>
+      <Button size="sm" variant="secondary" icon={<Icon name="trash" className="size-4" />} onClick={onDelete}>Delete</Button>
+      {onSelectAll && <Button size="sm" variant="ghost" onClick={onSelectAll}>Select all</Button>}
       <Button size="sm" variant="ghost" onClick={onClear} aria-label="Clear selection">Clear</Button>
     </div>
   );

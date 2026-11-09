@@ -8,6 +8,8 @@ import {
 
 export interface FixHandlers {
   setKind: (tab: string, kind: Kind | null) => void;
+  /** Keeps the tab's file as a document as it is, and leaves the tab out of the import. */
+  saveAsDocument: (tab: string) => void;
   setColumn: (tab: string, field: string, source: number | { value: string }) => void;
   setPlan: (choice: { poolId: string } | { name: string }) => void;
   setVesting: (scheduleId: string) => void;
@@ -58,6 +60,7 @@ export function QuestionCard({ q, tabs, singles, schema, schedules, pools, on }:
           </p>
           <Controls>
             {KINDS.map((k) => <Button key={k} size="sm" onClick={() => on.setKind(tab.key, k)}>{KIND_WORDS[k].title}</Button>)}
+            <Button size="sm" onClick={() => on.saveAsDocument(tab.key)}>Save as a document</Button>
             <Button size="sm" variant="ghost" onClick={() => on.setKind(tab.key, null)}>Leave it out</Button>
           </Controls>
         </FixCard>

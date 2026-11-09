@@ -24,6 +24,7 @@ const PATHS: Record<string, string> = {
   gavel: 'm5 19 6-6M8 8l5 5M11 5l8 8M9.5 3.5l3.5 3.5M17 11l3.5 3.5M3.5 20.5h7',
   ledger: 'M5 3.5h14v17H5zM9 8h6M9 12h6M9 16h3',
   download: 'M12 3.5v11M8 11l4 4 4-4M4.5 19.5h15',
+  upload: 'M12 15.5v-11M8 8l4-4 4 4M4.5 19.5h15',
   history: 'M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 5v4h4M12 7.5V12l3 2',
   wallet: 'M3.5 7.5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-14zM3.5 7.5V6a1.5 1.5 0 0 1 1.5-1.5h11M16 12.5h2',
   key: 'M14.5 9.5a4 4 0 1 1-4-4M14.5 9.5 21 3M18 6l2 2M16 8l1.5 1.5',

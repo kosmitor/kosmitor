@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ActionMenu, Banner, Button, Card, ErrorNote, Select, Spinner, cx } from '../../ui.tsx';
 import { Icon } from '../../icons.tsx';
 import { RELATION_LABELS } from '../../format.ts';
-import { IMPORT_ACCEPT } from '../../importHandoff.ts';
+import { IMPORT_ACCEPT, isPdf } from '../../importHandoff.ts';
 import type { FileProblem } from '../../ImportDropZone.tsx';
 import { QuestionCard, type FixHandlers } from './FixCards.tsx';
 import { TabSection } from './TabSection.tsx';
@@ -33,6 +33,8 @@ export interface CheckHandlers extends FixHandlers {
   samePerson: (keep: NewPerson, others: NewPerson[]) => void;
   unraise: (value: string) => void;
   savePdf: (file: File) => void;
+  /** Several PDFs at once, each filed by what it is. */
+  savePdfs: (files: File[]) => Promise<void>;
   dismissProblems: () => void;
 }
 
@@ -84,6 +86,9 @@ const problemsOf = (messages: RowMessage[], hasSchedules: boolean): string => {
 export function CheckScreen(p: CheckProps) {
   const { schema, files, tabs, edits, answers, review, checking, questions, on } = p;
   const addInput = useRef<HTMLInputElement>(null);
+  const [pickedPdfs, setPickedPdfs] = useState<ReadonlySet<File>>(new Set());
+  const [savingPdfs, setSavingPdfs] = useState(false);
+  const pickedNow = p.pdfs.filter((f) => pickedPdfs.has(f));
   const cards = useRef<HTMLDivElement>(null);
   const addsHeading = useRef<HTMLHeadingElement>(null);
   const [only, setOnly] = useState<string | null>(null);
@@ -175,13 +180,37 @@ export function CheckScreen(p: CheckProps) {
             </Banner>
           </div>
         )}
-        {p.pdfs.map((f, i) => (
-          <div key={`${f.name}-${i}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-200 bg-white px-4 py-2.5 text-[13px] text-ink-700">
-            <Icon name="document" className="size-4 text-ink-400" />
-            <span className="min-w-0 flex-1">{f.name} isn't a spreadsheet.</span>
-            <Button size="sm" onClick={() => on.savePdf(f)}>Save it as a document</Button>
+        {p.pdfs.length > 0 && (
+          <div className="space-y-2">
+            {p.pdfs.length > 1 && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px] text-ink-700">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={pickedNow.length === p.pdfs.length}
+                    ref={(el) => { if (el) el.indeterminate = pickedNow.length > 0 && pickedNow.length < p.pdfs.length; }}
+                    onChange={(e) => setPickedPdfs(e.target.checked ? new Set(p.pdfs) : new Set())} />
+                  Select all {p.pdfs.length} files
+                </label>
+                {pickedNow.length > 0 && (
+                  <Button size="sm" variant="primary" disabled={savingPdfs}
+                    onClick={async () => { setSavingPdfs(true); try { await on.savePdfs(pickedNow); } finally { setSavingPdfs(false); setPickedPdfs(new Set()); } }}>
+                    {savingPdfs ? 'Saving…' : `Save ${pickedNow.length} as document${pickedNow.length === 1 ? '' : 's'}`}
+                  </Button>
+                )}
+              </div>
+            )}
+            {p.pdfs.map((f, i) => (
+              <div key={`${f.name}-${i}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-200 bg-white px-4 py-2.5 text-[13px] text-ink-700">
+                {p.pdfs.length > 1 && (
+                  <input type="checkbox" aria-label={`Select ${f.name}`} checked={pickedPdfs.has(f)}
+                    onChange={(e) => setPickedPdfs((s) => { const n = new Set(s); if (e.target.checked) n.add(f); else n.delete(f); return n; })} />
+                )}
+                <Icon name="document" className="size-4 text-ink-400" />
+                <span className="min-w-0 flex-1">{f.name} {isPdf(f) ? "isn't a spreadsheet." : "couldn't be read as a table."}</span>
+                <Button size="sm" onClick={() => on.savePdf(f)}>Save it as a document</Button>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
 
         {tabs.length === 0 && p.reading && (
           <div className="flex items-center justify-center gap-2.5 py-16 text-ink-500" aria-live="polite"><Spinner className="size-5" /><span className="text-sm">{p.reading}</span></div>

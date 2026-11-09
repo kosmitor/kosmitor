@@ -4,6 +4,7 @@ import { useSession } from './session.tsx';
 import { useQuery, uploadFile } from './api.ts';
 import { Button, ErrorNote, Field, Input, Modal, Select, useToast } from './ui.tsx';
 import { DOCUMENT_CATEGORIES } from './documents.ts';
+import { dirOf, baseName } from './folderImport.ts';
 import { AWARD_LABELS, INSTRUMENT_LABELS, fileSize, money, pps, shares } from './format.ts';
 
 const BLANK = { title: '', category: 'AGREEMENT', folder: 'General', stakeholderId: '', securityId: '', visibility: 'ADMIN' };
@@ -24,7 +25,7 @@ export function SavePdfDialog({ file, onClose, onSaved }: { file: File | null; o
 
   useEffect(() => {
     if (!file) return;
-    setForm({ ...BLANK, title: file.name.replace(/\.pdf$/i, '') });
+    setForm({ ...BLANK, title: baseName(file).replace(/\.pdf$/i, ''), folder: dirOf(file) || BLANK.folder });
     setError(null);
   }, [file]);
 
@@ -60,6 +61,7 @@ export function SavePdfDialog({ file, onClose, onSaved }: { file: File | null; o
     setError(null);
     try {
       await uploadFile(`/c/${companyId}/documents/upload`, file, {
+        name: baseName(file),
         title: form.title.trim() || file.name,
         category: form.category,
         folder: form.folder.trim() || 'General',

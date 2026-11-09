@@ -20,7 +20,7 @@ await import('../src/routes/auth.ts');
 await import('../src/routes/entities.ts');
 await import('../src/routes/workflows.ts');
 await import('../src/routes/files.ts');
-const { one, all } = await import('../src/db.ts');
+const { one, all, insert } = await import('../src/db.ts');
 const { documentFolder } = await import('../src/folders.ts');
 const { DOCUMENT_MOVE_MAX } = await import('../src/routes/workflows.ts');
 
@@ -316,4 +316,81 @@ test('a viewer cannot move documents in bulk either', async () => {
   assert.equal(await folderOf(a.id), 'Board');
   assert.equal(await folderOf(b.id), 'Board');
   assert.deepEqual(await moveLog(a.id), []);
+});
+
+test('a document can be renamed: the name is tidied, empty or hidden-character names are refused, the file stays', async () => {
+  const doc = (await upload(cid, { name: 'scan0001.pdf' }, admin)).json;
+  const renamed = await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { name: '  Series A   term sheet ' }, admin);
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.json.name, 'Series A term sheet');
+  assert.equal(renamed.json.fileName, 'scan0001.pdf', 'the stored file keeps its own name');
+  assert.equal(renamed.json.folder, doc.folder);
+  for (const bad of ['', '   ', 'a‮b', 'x'.repeat(201)]) {
+    assert.equal((await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { name: bad }, admin)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await call('PATCH', `/api/c/${other}/documents/${doc.id}`, { name: 'x' }, admin)).status, 404, 'another company cannot rename it');
+});
+
+test('documents are deleted together; signed ones are kept and named; another company\'s stops the request', async () => {
+  const a = (await upload(cid, { name: 'a.pdf', folder: 'Bulk/One' }, admin)).json;
+  const b = (await upload(cid, { name: 'b.pdf', folder: 'Bulk/Two' }, admin)).json;
+  const signed = (await upload(cid, { name: 'c.pdf', folder: 'Bulk' }, admin)).json;
+  const foreign = (await upload(other, { name: 'f.pdf' }, admin)).json;
+  await insert('signatures', { id: 'sig_bulk', companyId: cid, documentId: signed.id, signerName: 'Dana Reyes', status: 'SIGNED', token: 'tok_bulk', createdAt: new Date().toISOString() } as any);
+
+  assert.equal((await call('POST', `/api/c/${cid}/documents/delete`, { ids: [] }, admin)).status, 400);
+  const blocked = await call('POST', `/api/c/${cid}/documents/delete`, { ids: [a.id, foreign.id] }, admin);
+  assert.equal(blocked.status, 404);
+  assert.ok(await one('SELECT id FROM documents WHERE id = ?', a.id), 'nothing was deleted by the refused request');
+
+  const done = await call('POST', `/api/c/${cid}/documents/delete`, { ids: [a.id, b.id, signed.id, a.id] }, admin);
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.json.deleted.sort(), [a.id, b.id].sort());
+  assert.deepEqual(done.json.kept.map((k: any) => k.id), [signed.id]);
+  assert.equal(await one('SELECT id FROM documents WHERE id = ?', b.id), undefined);
+  assert.ok(await one('SELECT id FROM documents WHERE id = ?', signed.id));
+});
+
+test('an automatic upload is linked to the one person it names, and to nobody when it names several', async () => {
+  const dana = (await call('POST', `/api/c/${cid}/stakeholders`, { name: 'Dana Reyes', email: 'dana@example.com', type: 'INDIVIDUAL' }, admin)).json;
+  const lee = (await call('POST', `/api/c/${cid}/stakeholders`, { name: 'Lee Okafor', email: 'lee@example.com', type: 'INDIVIDUAL' }, admin)).json;
+  assert.ok(dana.id && lee.id, 'stakeholders created');
+  const send = async (name: string, text: string) => (await fetch(`${base}/api/c/${cid}/documents/upload?${new URLSearchParams({ name, auto: '1' })}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'text/plain' }, body: text,
+  }).then((r) => r.json())) as any;
+
+  const one1 = await send('safe.txt', 'Simple Agreement for Future Equity (SAFE). Post-money valuation cap. Investor: Dana Reyes.');
+  assert.equal(one1.filedAs.confident, true);
+  assert.equal(one1.stakeholderId, dana.id);
+  assert.equal(one1.visibility, 'ADMIN', 'linking does not show it to the person');
+  assert.match(one1.filedAs.linkedTo, /Dana Reyes/);
+
+  const both = await send('captable.txt', 'Cap table. Common stock: Dana Reyes 100, Lee Okafor 200. Post-money.');
+  assert.equal(both.stakeholderId, null, 'two people named: nobody is linked');
+});
+
+test('keepFolder files a recognised document in exactly the folder it came in', async () => {
+  const q = new URLSearchParams({ name: 'ts.txt', auto: '1', keepFolder: '1', folder: 'Deal room/Series A' });
+  const doc = await fetch(`${base}/api/c/${cid}/documents/upload?${q}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'text/plain' }, body: 'Term sheet. Pre-money valuation. Liquidation preference.',
+  }).then((r) => r.json()) as any;
+  assert.equal(doc.folder, 'Deal room/Series A');
+  assert.equal(doc.category, 'FINANCING', 'it is still recognised');
+});
+
+test('renaming a folder rewrites it and every folder below it, all or nothing', async () => {
+  const a = (await upload(cid, { name: 'a.pdf', folder: 'Deals/Series A' }, admin)).json;
+  const b = (await upload(cid, { name: 'b.pdf', folder: 'Deals/Series A/Side letters' }, admin)).json;
+  const c = (await upload(cid, { name: 'c.pdf', folder: 'Deals/Series AB' }, admin)).json;
+  const r = await call('POST', `/api/c/${cid}/documents/rename-folder`, { from: 'Deals/Series A', to: 'Deals/Seed' }, admin);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.renamed, 2);
+  const folderOf = async (id: string) => (await one<{ folder: string }>('SELECT folder FROM documents WHERE id = ?', id))!.folder;
+  assert.equal(await folderOf(a.id), 'Deals/Seed');
+  assert.equal(await folderOf(b.id), 'Deals/Seed/Side letters');
+  assert.equal(await folderOf(c.id), 'Deals/Series AB', 'a folder that only starts with the same letters is left alone');
+  assert.equal((await call('POST', `/api/c/${cid}/documents/rename-folder`, { from: 'Deals/Seed', to: 'Deals/Seed' }, admin)).status, 400);
+  assert.equal((await call('POST', `/api/c/${cid}/documents/rename-folder`, { from: 'Deals/Seed', to: 'x/'.repeat(5) + 'y' }, admin)).status, 400);
+  assert.equal(await folderOf(a.id), 'Deals/Seed', 'a refused rename changes nothing');
+  assert.equal((await call('POST', `/api/c/${other}/documents/rename-folder`, { from: 'Deals/Seed', to: 'Z' }, admin)).json.renamed, 0, 'another company\'s folders are not touched');
 });

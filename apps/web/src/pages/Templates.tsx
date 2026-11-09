@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSession } from '../session.tsx';
-import { useQuery, api } from '../api.ts';
+import { useQuery, api, uploadFile } from '../api.ts';
 import {
   PageHeader, Card, Button, Input, Field, Textarea, Badge, Loading, ErrorNote, EmptyState,
   Checkbox, ConfirmDialog, useToast, Banner, Modal, cx,
@@ -25,8 +25,11 @@ export default function Templates() {
   const [dirty, setDirty] = useState(false);
   const [preview, setPreview] = useState<{ rendered: string; unknownTokens: string[] } | null>(null);
   const [showFields, setShowFields] = useState(false);
+  const [imported, setImported] = useState<{ fileName: string; unknownTokens: string[] } | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
   const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const uploadKind = useRef<string>('');
 
   const templates = data?.templates ?? [];
   const kinds = data?.kinds ?? [];
@@ -41,12 +44,25 @@ export default function Templates() {
     setDraft({ id: t.id, kind: t.kind, name: t.name, body: t.body, isDefault: t.isDefault, builtIn: t.builtIn, source: null });
     setDirty(false);
     setPreview(null);
+    setImported(null);
   };
   const startNew = (kind: string) => {
     const base = templates.find((t) => t.kind === kind && t.builtIn);
     setDraft({ id: null, kind, name: '', body: base?.body ?? '', isDefault: false, builtIn: false, source: base?.id ?? null });
     setDirty(true);
     setPreview(null);
+  };
+  /** A Word document becomes the text of a new, unsaved template; the person reviews it, then saves. */
+  const importDocx = async (file: File, kind: string) => {
+    if (!/\.docx$/i.test(file.name)) { toast('Choose a Word document (.docx).', 'error'); return; }
+    setBusy(true);
+    try {
+      const read = await uploadFile<{ name: string; body: string; unknownTokens: string[] }>(`/c/${companyId}/templates/import-docx`, file, {}, { quiet: true });
+      setDraft({ id: null, kind, name: read.name, body: read.body, isDefault: false, builtIn: false, source: null });
+      setDirty(true);
+      setPreview(null);
+      setImported({ fileName: file.name, unknownTokens: read.unknownTokens });
+    } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
   };
   const duplicate = () => {
     if (!draft) return;
@@ -103,6 +119,9 @@ export default function Templates() {
       <PageHeader concept="templates" title="Document templates"
         subtitle="The agreements and certificates generated when you issue equity. Merge fields fill in the company, holder and grant details." />
 
+      <input ref={fileInput} type="file" hidden accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void importDocx(f, uploadKind.current); }} />
+
       <div className="grid gap-5 lg:grid-cols-[300px_1fr] [&>*]:min-w-0">
         <div className="space-y-4">
           {kinds.map((k) => (
@@ -113,9 +132,15 @@ export default function Templates() {
                   <p className="mt-0.5 text-[11px] leading-snug text-ink-500">{k.description}</p>
                 </div>
                 {canEdit && (
-                  <Button size="sm" variant="ghost" aria-label={`New ${k.label}`} title="New template" onClick={() => startNew(k.kind)}>
-                    <Icon name="plus" className="size-4" />
-                  </Button>
+                  <div className="flex shrink-0 gap-1">
+                    <Button size="sm" variant="ghost" aria-label={`Upload a Word document as a ${k.label}`} title="Upload a .docx" disabled={busy}
+                      onClick={() => { uploadKind.current = k.kind; fileInput.current?.click(); }}>
+                      <Icon name="upload" className="size-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" aria-label={`New ${k.label}`} title="New template" onClick={() => startNew(k.kind)}>
+                      <Icon name="plus" className="size-4" />
+                    </Button>
+                  </div>
                 )}
               </div>
               <ul>
@@ -168,6 +193,14 @@ export default function Templates() {
                 </div>
               </div>
 
+              {imported && !draft.id && (
+                <div className="mt-3">
+                  <Banner tone={imported.unknownTokens.length ? 'warning' : 'info'} title={`Read from ${imported.fileName}`}>
+                    Only the text came across; styling, images, headers and footers did not. Write merge fields as {'{{token}}'} in Word or here.
+                    {imported.unknownTokens.length > 0 && <> Not recognised, so they will render blank: {imported.unknownTokens.map((t) => `{{${t}}}`).join(', ')}.</>}
+                  </Banner>
+                </div>
+              )}
               {!draft.builtIn && draft.source && !draft.id && (
                 <div className="mt-3"><Banner tone="info" title="Starting from the built-in text">Edit anything below; merge fields in double braces are filled in when a document is generated.</Banner></div>
               )}

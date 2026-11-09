@@ -21,6 +21,8 @@ import { Banner, ConfirmDialog, EmptyState, ErrorNote, Loading, useToast } from 
 import { ImportDropZone, TemplateMenu, type FileProblem } from '../ImportDropZone.tsx';
 import { SavePdfDialog } from '../SavePdfDialog.tsx';
 import { takeImportFiles, isPdf } from '../importHandoff.ts';
+import { dirOf, baseName } from '../folderImport.ts';
+import { savedDocumentId } from '../SavedDocuments.tsx';
 import { dateTime } from '../format.ts';
 import { config } from '../config.ts';
 import { CheckScreen, type CheckHandlers, type LeftOutRow } from './import/Check.tsx';
@@ -105,6 +107,10 @@ export default function ImportData() {
   const [reading, setReading] = useState<string | null>(null);
   const [problems, setProblems] = useState<FileProblem[]>([]);
   const [pdfs, setPdfs] = useState<File[]>([]);
+  /** Files that could not be read at all, offered on the drop zone as documents to keep as they are. */
+  const [unread, setUnread] = useState<File[]>([]);
+  /** Each file in the import by id, so one the import cannot use can be kept as a document. */
+  const fileObjects = useRef(new Map<string, File>());
   // PDFs waiting for "Save this PDF as a document", one dialog after another.
   const [pdfQueue, setPdfQueue] = useState<File[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -131,7 +137,7 @@ export default function ImportData() {
   const reset = useCallback(() => {
     setFiles([]); setTabs([]); setOcf(null); setEdits(NO_EDITS); setSettings(DEFAULT_SETTINGS); setAnswers(NO_ANSWERS); setDismissed([]);
     setLeftOutByBar([]); setAsked([]); setFixes(0); setReview(null); setReviewBody(null); setCheckError(null);
-    setCommitError(null); setStale(false); setProblems([]); setPdfs([]); setColumnsFor(null); setSettingsOpen(false);
+    setCommitError(null); setStale(false); setProblems([]); setPdfs([]); setUnread([]); setColumnsFor(null); setSettingsOpen(false);
     seq.current++;
     suggests.current.clear();
     tabsCompany.current = null;
@@ -188,7 +194,9 @@ export default function ImportData() {
     if (!schema || !companyId) return;
     const cid = companyId;
     const sheetsFiles = list.filter((f) => !isPdf(f));
-    const pdfList = list.filter(isPdf);
+    // A PDF chosen from the saved documents is in Documents already: it is not offered for saving again.
+    const pdfList = list.filter((f) => isPdf(f) && !savedDocumentId(f));
+    if (list.some((f) => isPdf(f) && savedDocumentId(f)) && sheetsFiles.length === 0) setNote('That PDF is already in Documents, so it was not saved again. PDFs are not read as tables.');
     if (sheetsFiles.length === 0) {
       setNote(null);
       setProblems([]);
@@ -209,16 +217,18 @@ export default function ImportData() {
       return true;
     });
     setProblems([]);
+    setUnread([]);
     setNote(null);
     setReading(fresh.length === 1 ? `Reading ${fresh[0].name}…` : `Reading ${fresh.length} files…`);
     const extraPdfs: File[] = [...pdfList];
+    const unreadable: File[] = [];
     const parsed: { file: File; data: ParsedFile }[] = [];
     await Promise.all(fresh.map(async (file) => {
       try {
         parsed.push({ file, data: await uploadFile<ParsedFile>(`/c/${cid}/imports/parse`, file, {}, { quiet: true }) });
       } catch (err) {
         if (err instanceof ApiError && (err.detail as { code?: string } | undefined)?.code === 'pdf') extraPdfs.push(file);
-        else found.push({ file: file.name, message: problemOf(file, err) });
+        else { found.push({ file: file.name, message: problemOf(file, err) }); if (!savedDocumentId(file)) unreadable.push(file); }
       }
     }));
     if (currentCompany.current !== cid) { setReading(null); return; }
@@ -228,6 +238,7 @@ export default function ImportData() {
     const nothing = () => {
       setReading(null);
       setProblems(found.length ? found : [{ file: '', message: 'Nothing in these files could be read as a table.' }]);
+      setUnread(unreadable);
       if (extraPdfs.length) setPdfQueue((q) => [...q, ...extraPdfs]);
       if (mode === 'replace' && stepOf(window.location.pathname) !== 'upload') navigate(`/import${search}`, { replace: true });
     };
@@ -260,7 +271,9 @@ export default function ImportData() {
     const newFiles: ImportFile[] = parsed.map(({ file, data }) => {
       const name = uniqueName(file.name, taken);
       taken.add(name);
-      return { id: `f${Date.now().toString(36)}-${++fileSeq}`, name, original: file.name, size: file.size, lastModified: file.lastModified, uploadId: data.uploadId ?? null };
+      const id = `f${Date.now().toString(36)}-${++fileSeq}`;
+      fileObjects.current.set(id, file);
+      return { id, name, original: file.name, size: file.size, lastModified: file.lastModified, uploadId: data.uploadId ?? null };
     });
     // Each tab under the name the check reads it by: trimmed, within its length, unique in its file.
     const names = parsed.map(({ data }) => sheetNames(data.sheets.map((s) => s.name)));
@@ -326,7 +339,7 @@ export default function ImportData() {
     }
     tabsCompany.current = cid;
     setProblems(found);
-    if (extraPdfs.length) setPdfs((p) => [...p, ...extraPdfs]);
+    if (extraPdfs.length || unreadable.length) setPdfs((p) => [...p, ...extraPdfs, ...unreadable]);
     setReading(null);
     immediate.current = true;
     if (stepOf(window.location.pathname) !== 'check') navigate(`/import/check${search}`);
@@ -443,6 +456,33 @@ export default function ImportData() {
     return { ...e, exclude: out, why };
   });
 
+  /** Keeps files as documents, exactly as they are, each filed by what it turns out to be. */
+  const saveAsDocuments = async (list: File[], saved: (file: File) => void) => {
+    let done = 0;
+    let unsure = 0;
+    const linked: string[] = [];
+    for (const file of list) {
+      // Chosen from the saved documents: it is there already, so there is nothing to save.
+      if (savedDocumentId(file)) { saved(file); continue; }
+      try {
+        const r = await uploadFile<{ filedAs?: { confident: boolean; linkedTo?: string | null } }>(`/c/${companyId}/documents/upload`, file, {
+          auto: '1', name: baseName(file), title: baseName(file).replace(/\.pdf$/i, ''),
+          // A file that came in a folder goes back into it; the rest are filed by what they are.
+          ...(dirOf(file) ? { folder: dirOf(file), keepFolder: '1' } : {}),
+        });
+        done++;
+        if (!r.filedAs?.confident) unsure++;
+        if (r.filedAs?.linkedTo) linked.push(r.filedAs.linkedTo);
+        saved(file);
+      } catch (err) { toast(`${file.name}: ${(err as Error).message}`, 'error'); }
+    }
+    if (done > 0) {
+      toast(`${done} saved to Documents as ${done === 1 ? 'it is' : 'they are'}${unsure ? ` (${unsure} could not be recognised and ${unsure === 1 ? 'is' : 'are'} in General)` : ''}${linked.length ? `. Linked to ${[...new Set(linked)].slice(0, 3).join('; ')}` : ''}`, 'success',
+        { label: 'Open', onClick: () => navigate('/documents') });
+    }
+
+  };
+
   const on: CheckHandlers = {
     setKind: (key, k) => {
       fixed();
@@ -513,6 +553,14 @@ export default function ImportData() {
       writeCells(rows.map((r) => ({ ...r, field: 'email', value: email })));
       setDismissed((d) => [...d, `same:${keep.name.toLowerCase()}`]);
     },
+    savePdfs: (list) => saveAsDocuments(list, (file) => setPdfs((p) => p.filter((x) => x !== file))),
+    // A tab nobody could name: its whole file is kept as a document, and the tab is left out of the import.
+    saveAsDocument: (key) => {
+      const t = tabs.find((x) => x.key === key);
+      const file = t && fileObjects.current.get(t.fileId);
+      if (!file) { toast('That file is no longer here. Drop it again to keep it as a document.', 'error'); return; }
+      void saveAsDocuments([file], () => on.setKind(key, null));
+    },
     savePdf: (file) => setPdfQueue((q) => (q.includes(file) ? q : [...q, file])),
     dismissProblems: () => setProblems([]),
   };
@@ -570,7 +618,8 @@ export default function ImportData() {
     <>
       {step === 'upload' && (
         <UploadScreen kind={kind} heading={heading} reading={reading} problems={problems} note={note} history={history ?? []}
-          onDismissNote={() => setNote(null)} onFiles={(list) => void addFiles(list, 'replace')} />
+          onDismissNote={() => setNote(null)} onFiles={(list) => void addFiles(list, 'replace')}
+          unread={unread} onKeep={(list) => void saveAsDocuments(list, (f) => setUnread((u) => { const left = u.filter((x) => x !== f); if (left.length === 0) setProblems([]); return left; }))} />
       )}
       {step === 'check' && ocf && (
         <OcfCheck ocf={ocf} schema={schema} review={review} edits={edits} answers={answers} dismissed={dismissed}
@@ -617,9 +666,10 @@ export default function ImportData() {
 }
 
 /** Upload: the drop zone first, then the templates and the imports made before. */
-function UploadScreen({ kind, heading, reading, problems, note, history, onDismissNote, onFiles }: {
+function UploadScreen({ kind, heading, reading, problems, note, history, onDismissNote, onFiles, unread, onKeep }: {
   kind: Kind | null; heading: RefObject<HTMLHeadingElement | null>; reading: string | null; problems: FileProblem[];
   note: string | null; history: any[]; onDismissNote: () => void; onFiles: (files: File[]) => void;
+  unread: File[]; onKeep: (files: File[]) => void;
 }) {
   // The import history has a row per tab; the tabs of one import were written together, by one person.
   const past = useMemo(() => {
@@ -641,7 +691,7 @@ function UploadScreen({ kind, heading, reading, problems, note, history, onDismi
       <p className="mt-1 text-sm text-ink-500">{SUBTITLE[kind ?? 'all']} You check every row before anything is saved.</p>
       {note && <div className="mt-4"><Banner tone="info" onDismiss={onDismissNote}>{note}</Banner></div>}
       <div className="mt-5">
-        <ImportDropZone onFiles={onFiles} kind={kind} busy={reading} problems={problems} />
+        <ImportDropZone onFiles={onFiles} kind={kind} busy={reading} problems={problems} keepable={unread} onKeep={onKeep} />
       </div>
       <p className="mt-3 text-[13px] text-ink-500">Starting from scratch? <TemplateMenu kind={kind} /></p>
       {past.length > 0 && (

@@ -67,6 +67,17 @@ export async function downloadFile(path: string, filename: string): Promise<Head
   return res.headers;
 }
 
+/** Reads a stored file into memory as a File, so a page can treat it like one the person just chose. */
+export async function fetchStoredFile(path: string, name: string, type: string): Promise<File> {
+  const res = await fetch(`/api${path}`, { credentials: 'include' });
+  if (!res.ok) {
+    let message = `${name} could not be opened.`;
+    try { message = (await res.json()).error ?? message; } catch { /* keep the default */ }
+    throw new ApiError(res.status, message);
+  }
+  return new File([await res.blob()], name, { type: type || res.headers.get('Content-Type') || 'application/octet-stream' });
+}
+
 /** Downloads a CSV report through the authenticated endpoint. */
 export function downloadReport(companyId: string, report: string, asOf?: string): Promise<Headers> {
   const qs = asOf ? `?asOf=${asOf}` : '';

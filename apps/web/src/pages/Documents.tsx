@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from 'react';
+import { fromDrop, fromInput, plain, targetFolder, type Picked } from '../folderImport.ts';
 import { Link } from 'react-router-dom';
 import { useSession } from '../session.tsx';
 import { useQuery, api, uploadFile, downloadFile, ApiError } from '../api.ts';
@@ -27,6 +28,7 @@ const blank = {
   stakeholderId: '', requiresSignature: false, visibility: 'ADMIN', signerIds: [] as string[],
 };
 
+const FOLDER_HINT_NOTE = 'Folders you picked keep their structure under this one.';
 const FOLDER_HINT = 'Use / to put one folder inside another, such as Financing/Series A.';
 const DRAG_HINT = 'Drag documents onto a folder to move them. Shift-click selects a range.';
 
@@ -74,15 +76,20 @@ export default function Documents() {
   const { data: warrants } = useQuery<any[]>(companyId && canViewAll ? `/c/${companyId}/warrants` : null, [companyId, canViewAll]);
   const [search, setSearch] = useSearchQuery();
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState<{ id: string; name: string; value: string } | null>(null);
+  const [renamingFolder, setRenamingFolder] = useState<{ path: string; value: string } | null>(null);
   const [form, setForm] = useState(blank);
   const [viewing, setViewing] = useState<any>(null);
   const [signing, setSigning] = useState<any>(null);
   const [signature, setSignature] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
+  /** The selection about to be deleted, awaiting a confirmation that says what goes with it. */
+  const [confirmBulk, setConfirmBulk] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadFiles, setUploadFiles] = useState<Picked[]>([]);
   const [uploadMeta, setUploadMeta] = useState({ folder: DEFAULT_FOLDER, category: 'OTHER', stakeholderId: '', visibility: 'ADMIN' });
+  const [sortAuto, setSortAuto] = useState(true);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [reading, setReading] = useState<any>(null);
@@ -165,10 +172,13 @@ export default function Documents() {
     }
   };
 
-  const startUpload = (files: FileList | File[], folder?: string) => {
-    const list = Array.from(files).filter((f) => f.size > 0);
+  const startUpload = async (picked: Picked[] | Promise<Picked[]>, folder?: string) => {
+    let list: Picked[];
+    try { list = (await picked).filter((p) => p.file.size > 0); } catch { toast('That folder could not be read.', 'error'); return; }
     if (list.length === 0) return;
     if (folder) setUploadMeta((m) => ({ ...m, folder }));
+    // Folders keep their own structure, so unless one was chosen they land at the top rather than inside General.
+    else if (list.some((p) => p.dir)) setUploadMeta((m) => ({ ...m, folder: '' }));
     setUploadFiles(list);
     setUploading(true);
   };
@@ -179,15 +189,26 @@ export default function Documents() {
     setBusy(true);
     setUploadProgress({ done: 0, total: uploadFiles.length });
     let failed = 0;
-    for (const file of uploadFiles) {
+    const filed: string[] = [];
+    const reached = new Set<string>();
+    let unsure = 0;
+    for (const { file, dir } of uploadFiles) {
       try {
-        await uploadFile(`/c/${companyId}/documents/upload`, file, {
-          folder: uploadMeta.folder || DEFAULT_FOLDER, category: uploadMeta.category,
+        const folder = targetFolder(uploadMeta.folder.trim() || (dir ? '' : DEFAULT_FOLDER), dir);
+        const why = folderProblem(folder);
+        if (why) throw new Error(why);
+        // Files that came inside a folder keep the folder they were in; loose ones are filed by what they are.
+        const reply = await uploadFile<{ folder: string; filedAs?: { confident: boolean; reason: string; linkedTo?: string | null } }>(`/c/${companyId}/documents/upload`, file, {
+          ...(sortAuto && !dir ? { auto: '1' } : {}),
+          folder, category: uploadMeta.category,
           stakeholderId: uploadMeta.stakeholderId, visibility: uploadMeta.visibility,
         });
+        if (reply.filedAs?.confident) filed.push(`${file.name} → ${folderLabel(reply.folder)} (${reply.filedAs.reason}${reply.filedAs.linkedTo ? `, linked to ${reply.filedAs.linkedTo}` : ''})`);
+        else if (reply.filedAs) unsure++;
+        if (reply.filedAs?.confident) reached.add(reply.folder);
       } catch (err) {
         failed++;
-        toast(`${file.name}: ${(err as Error).message}`, 'error');
+        toast(`${dir ? `${dir}/` : ''}${file.name}: ${(err as Error).message}`, 'error');
       }
       setUploadProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
     }
@@ -197,7 +218,11 @@ export default function Documents() {
     setUploading(false);
     setUploadFiles([]);
     // Open the folder the files went into, so they can be seen once the list is back.
-    expansion.reveal(folderPath(uploadMeta.folder));
+    if (filed.length > 0) toast(`${filed.length} filed automatically: ${filed.slice(0, 3).join('; ')}${filed.length > 3 ? '…' : ''}${unsure ? `. ${unsure} left in ${folderLabel(uploadMeta.folder || DEFAULT_FOLDER)}, since it could not be told what they are` : ''}`);
+    else if (unsure) toast(`${unsure} file${unsure === 1 ? '' : 's'} could not be recognised and stayed in ${folderLabel(uploadMeta.folder || DEFAULT_FOLDER)}.`);
+    for (const r of reached) expansion.reveal(folderPath(r));
+    const roots = new Set(uploadFiles.map((p) => targetFolder(uploadMeta.folder.trim() || (p.dir ? '' : DEFAULT_FOLDER), p.dir)));
+    for (const r of roots) expansion.reveal(folderPath(r));
     reload();
   };
 
@@ -321,6 +346,47 @@ export default function Documents() {
     return sortRows(shown, sort, sortValue);
   }, [shown, sort, nameOf, holdingOf]);
 
+  const rename = async () => {
+    if (!renaming) return;
+    const name = renaming.value.replace(/\s+/g, ' ').trim();
+    if (!name) { toast('A document needs a name.', 'error'); return; }
+    if (name === renaming.name) { setRenaming(null); return; }
+    setBusy(true);
+    try {
+      await api(`/c/${companyId}/documents/${renaming.id}`, { method: 'PATCH', body: { name } });
+      setRenaming(null);
+      toast('Document renamed');
+      reload();
+    } catch (err) { toast((err as Error).message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  const renameFolder = async () => {
+    if (!renamingFolder) return;
+    const { path } = renamingFolder;
+    const name = renamingFolder.value.replace(/\s+/g, ' ').trim();
+    if (!name || name.includes('/')) { toast('Give the folder a name without a slash. To move it, drag it or use Move to folder.', 'error'); return; }
+    const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const to = parent ? `${parent}/${name}` : name;
+    const problem = folderProblem(to);
+    if (problem) { toast(problem, 'error'); return; }
+    if (folderPath(to) === path) { setRenamingFolder(null); return; }
+    if (allFolders.includes(folderPath(to))) { toast('There is already a folder with that name here.', 'error'); return; }
+    setBusy(true);
+    try {
+      await api(`/c/${companyId}/documents/rename-folder`, { body: { from: path, to } });
+      const target = folderPath(to);
+      const swap = (f: string) => (f === path ? target : f.startsWith(`${path}/`) ? `${target}${f.slice(path.length)}` : f);
+      setMadeFolders((m) => m.map(swap));
+      setActiveFolder((f) => (f ? swap(f) : f));
+      setRenamingFolder(null);
+      expansion.reveal(target);
+      toast('Folder renamed');
+      reload();
+    } catch (err) { toast((err as Error).message, 'error'); }
+    finally { setBusy(false); }
+  };
+
   const create = async () => {
     const problem = folderProblem(form.folder);
     if (problem) { toast(problem, 'error'); return; }
@@ -384,6 +450,7 @@ export default function Documents() {
       ...(d.fileName && !isPdfDocument(d) ? [{ label: 'Download', icon: 'download', onClick: () => void download(d) }] : []),
       { label: 'Details', icon: 'document', onClick: () => setViewing(d) },
       ...(canEdit ? [
+        { label: 'Rename', icon: 'edit', onClick: () => setRenaming({ id: d.id, name: d.name, value: d.name }) },
         { label: 'Move to folder', icon: 'folder', onClick: () => setMoving({ docs: [d], selection: null }) },
         { label: 'Delete', icon: 'trash', danger: true, onClick: () => setConfirmDelete(d) },
       ] : []),
@@ -408,6 +475,9 @@ export default function Documents() {
         )}
         {canEdit && (
           <span className="hidden items-center gap-1 2xl:flex">
+            <Button size="sm" variant="ghost" onClick={() => setRenaming({ id: d.id, name: d.name, value: d.name })} aria-label="Rename" title="Rename">
+              <Icon name="edit" className="size-4" />
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => setMoving({ docs: [d], selection: null })} aria-label="Move to folder" title="Move to folder">
               <Icon name="folder" className="size-4" />
             </Button>
@@ -467,9 +537,16 @@ export default function Documents() {
         actions={canEdit && (
           <>
             <label className="cursor-pointer">
-              <input type="file" multiple className="hidden" onChange={(e) => { if (e.target.files) startUpload(e.target.files); e.target.value = ''; }} />
+              <input type="file" multiple className="hidden" onChange={(e) => { if (e.target.files) startUpload(plain(e.target.files)); e.target.value = ''; }} />
               <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 text-sm font-medium text-ink-800 shadow-sm hover:bg-ink-50">
                 <Icon name="download" className="size-4 rotate-180" /> Upload files
+              </span>
+            </label>
+            <label className="cursor-pointer">
+              <input type="file" className="hidden" {...{ webkitdirectory: '', directory: '' }}
+                onChange={(e) => { if (e.target.files) startUpload(fromInput(e.target.files)); e.target.value = ''; }} />
+              <span className="inline-flex h-9 items-center gap-2 rounded-lg border border-ink-200 bg-white px-3.5 text-sm font-medium text-ink-800 shadow-sm hover:bg-ink-50">
+                <Icon name="folderPlus" className="size-4" /> Upload folder
               </span>
             </label>
             <Button variant="primary" icon={<Icon name="plus" />} onClick={() => { setForm(blank); setCreating(true); }}>New document</Button>
@@ -483,11 +560,11 @@ export default function Documents() {
         <div
           onDragOver={(e) => { if (!filesOnly(e)) return; e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { if (!filesOnly(e)) return; e.preventDefault(); setDragging(false); startUpload(e.dataTransfer.files); }}
+          onDrop={(e) => { if (!filesOnly(e)) return; e.preventDefault(); setDragging(false); startUpload(fromDrop(e.dataTransfer)); }}
           className={`mb-5 flex items-center justify-center gap-3 rounded-xl border-2 border-dashed px-5 py-5 text-[13px] transition-colors [&_*]:pointer-events-none ${
             dragging ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-ink-200 bg-white text-ink-500'}`}>
           <Icon name="inbox" className="size-5 shrink-0" />
-          <span>Drop PDFs, agreements, board decks or any other files here to store them with the company{' '}
+          <span>Drop PDFs, agreements, board decks, other files or whole folders here to store them with the company{' '}
             <span className="text-ink-400">(up to {config.limits.uploadMb} MB each)</span></span>
         </div>
       )}
@@ -506,7 +583,8 @@ export default function Documents() {
               selected={selected} onSelect={setSelected}
               onOpen={setViewing}
               onMove={(docs, folder, asSelection) => move(docs.map((d) => ({ id: d.id, to: folder })), { selection: asSelection ? selected : null })}
-              onDropFiles={(files, folder) => startUpload(files, folder)}
+              onDropFiles={(dropped, folder) => startUpload(dropped, folder)}
+              onRenameFolder={(path) => setRenamingFolder({ path, value: path.slice(path.lastIndexOf('/') + 1) })}
               onActiveFolderChange={setActiveFolder}
               toolbar={
                 // Selecting a document swaps the hint for the bar, and the rows below
@@ -524,13 +602,18 @@ export default function Documents() {
                     <>
                       {/* In the row New folder has on a phone, and no taller, so the rows below stay put. */}
                       <SelectionBar ref={selectionBar} count={picked.length}
-                        onMove={() => setMoving({ docs: picked, selection: selected })} onClear={() => clearSelection()} />
+                        onMove={() => setMoving({ docs: picked, selection: selected })} onDelete={() => setConfirmBulk(picked)}
+                        onSelectAll={picked.length < shown.length ? () => setSelected(new Set(shown.map((d) => d.id))) : undefined}
+                        onClear={() => clearSelection()} />
                       <span className="hidden shrink-0 lg:ml-auto lg:block">
                         <Button icon={<Icon name="folderPlus" className="size-4" />} onClick={() => setCreatingFolder(true)}>New folder</Button>
                       </span>
                     </>
                   ) : (
                     <>
+                      {canEdit && shown.length > 0 && (
+                        <Button size="sm" variant="ghost" onClick={() => setSelected(new Set(shown.map((d) => d.id)))}>Select all</Button>
+                      )}
                       <span className="hidden min-w-0 truncate text-[12px] text-ink-500 lg:block" title={DRAG_HINT}>{DRAG_HINT}</span>
                       <Button className="shrink-0 sm:ml-auto" icon={<Icon name="folderPlus" className="size-4" />} onClick={() => setCreatingFolder(true)}>New folder</Button>
                     </>
@@ -663,20 +746,43 @@ export default function Documents() {
         description={reading ? `${categoryLabel(reading.category)} · created ${dateTime(reading.createdAt)}` : undefined}
         path={reading ? readable(reading) : null} filename={reading?.fileName ?? `${reading?.name ?? 'document'}.pdf`} />
 
+      <FormModal open={renaming !== null} onClose={() => { if (!busy) setRenaming(null); }} busy={busy}
+        title="Rename document" onSubmit={rename} submitLabel="Rename"
+        description="Only the name shown in Documents changes. The file, its folder and any signatures stay as they are.">
+        <Field label="Name">
+          <Input autoFocus maxLength={200} value={renaming?.value ?? ''} onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setRenaming((r) => (r ? { ...r, value: e.target.value } : r))} />
+        </Field>
+      </FormModal>
+
+      <FormModal open={renamingFolder !== null} onClose={() => { if (!busy) setRenamingFolder(null); }} busy={busy}
+        title="Rename folder" onSubmit={renameFolder} submitLabel="Rename"
+        description="Everything in the folder and its subfolders moves with the new name.">
+        <Field label="Name">
+          <Input autoFocus maxLength={60} value={renamingFolder?.value ?? ''} onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setRenamingFolder((r) => (r ? { ...r, value: e.target.value } : r))} />
+        </Field>
+      </FormModal>
+
       <FormModal open={uploading} onClose={() => { if (!busy) { setUploading(false); setUploadFiles([]); } }} busy={busy}
         title={`Upload ${uploadFiles.length} file${uploadFiles.length === 1 ? '' : 's'}`} onSubmit={runUpload}
         submitLabel={uploadProgress ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…` : 'Upload'}
         description="Files are stored with the company and can be attached to a stakeholder so they appear in that person's portal.">
         <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-ink-200 p-2.5">
-          {uploadFiles.map((f) => (
-            <li key={`${f.name}-${f.size}`} className="flex items-center justify-between gap-3 text-[13px]">
-              <span className="flex min-w-0 items-center gap-2"><Icon name="document" className="size-4 shrink-0 text-ink-400" /><span className="truncate">{f.name}</span></span>
+          {uploadFiles.map(({ file: f, dir }) => (
+            <li key={`${dir}/${f.name}-${f.size}`} className="flex items-center justify-between gap-3 text-[13px]">
+              <span className="flex min-w-0 items-center gap-2"><Icon name="document" className="size-4 shrink-0 text-ink-400" /><span className="truncate">{dir ? `${dir}/` : ''}{f.name}</span></span>
               <span className="shrink-0 tabular text-ink-500">{fileSize(f.size)}</span>
             </li>
           ))}
         </ul>
+        <label className="flex items-start gap-2.5 text-[13px] text-ink-700">
+          <input type="checkbox" checked={sortAuto} onChange={(e) => setSortAuto(e.target.checked)} className="mt-0.5" />
+          <span><span className="font-medium text-ink-900">Sort automatically</span> — read each file to tell what it is (term sheet, option grant, 409A, board minutes, tax form…) and file it under the right category and folder.
+            Files from a folder keep their own folders; anything not recognised stays in the folder below.</span>
+        </label>
         <FormGrid>
-          <Field label="Folder" hint={FOLDER_HINT} error={folderProblem(uploadMeta.folder)}>
+          <Field label="Folder" hint={uploadFiles.some((p) => p.dir) ? `${FOLDER_HINT_NOTE} Leave empty to keep them at the top.` : FOLDER_HINT} error={folderProblem(uploadMeta.folder)}>
             <Input value={uploadMeta.folder} list={folderListId} onChange={(e) => setUploadMeta({ ...uploadMeta, folder: e.target.value })} placeholder="Series B" />
           </Field>
           <Field label="Category">
@@ -735,6 +841,31 @@ export default function Documents() {
           try {
             await api(`/c/${companyId}/documents/${confirmDelete.id}`, { method: 'DELETE' });
             toast('Document deleted'); setConfirmDelete(null); reload();
+          } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
+        }} />
+      <ConfirmDialog open={confirmBulk !== null} onClose={() => { if (!busy) setConfirmBulk(null); }} danger loading={busy}
+        title={`Delete ${confirmBulk?.length ?? 0} document${confirmBulk?.length === 1 ? '' : 's'}`} confirmLabel="Delete"
+        message={(() => {
+          const docs = confirmBulk ?? [];
+          const folders = [...new Set(docs.map((d) => folderPath(d.folder)))];
+          const withSigs = docs.filter((d) => (d.signatures ?? []).length > 0).length;
+          return (
+            <>
+              This deletes {docs.length} document{docs.length === 1 ? '' : 's'}
+              {folders.length > 0 && <> from {folders.length === 1 ? <strong>{folderLabel(folders[0])}</strong> : `${folders.length} folders`}</>} for good,
+              and a folder left with nothing in it disappears.
+              {withSigs > 0 && <> {withSigs} {withSigs === 1 ? 'has' : 'have'} signature blocks, which go with {withSigs === 1 ? 'it' : 'them'}; a document someone has already signed is kept.</>}
+            </>
+          );
+        })()}
+        onConfirm={async () => {
+          const docs = confirmBulk ?? [];
+          setBusy(true);
+          try {
+            const r = await api<{ deleted: string[]; kept: { id: string; name: string }[] }>(`/c/${companyId}/documents/delete`, { body: { ids: docs.map((d) => d.id) } });
+            toast(`${r.deleted.length} document${r.deleted.length === 1 ? '' : 's'} deleted${r.kept.length ? `. Kept because they are signed: ${r.kept.map((k) => k.name).slice(0, 3).join(', ')}${r.kept.length > 3 ? '…' : ''}` : ''}`,
+              r.kept.length ? 'info' : 'success');
+            setConfirmBulk(null); clearSelection(); reload();
           } catch (err) { toast((err as Error).message, 'error'); } finally { setBusy(false); }
         }} />
       {role === 'VIEWER' && null}
