@@ -371,6 +371,12 @@ export default function Documents() {
     const problem = folderProblem(to);
     if (problem) { toast(problem, 'error'); return; }
     if (folderPath(to) === path) { setRenamingFolder(null); return; }
+    await applyFolderRename(path, to, () => setRenamingFolder(null), 'Folder renamed');
+  };
+
+
+  /** Rewrites a folder's path on every document in it, then keeps what the page remembers about it in step. */
+  const applyFolderRename = async (path: string, to: string, done: () => void, said: string) => {
     if (allFolders.includes(folderPath(to))) { toast('There is already a folder with that name here.', 'error'); return; }
     setBusy(true);
     try {
@@ -379,12 +385,17 @@ export default function Documents() {
       const swap = (f: string) => (f === path ? target : f.startsWith(`${path}/`) ? `${target}${f.slice(path.length)}` : f);
       setMadeFolders((m) => m.map(swap));
       setActiveFolder((f) => (f ? swap(f) : f));
-      setRenamingFolder(null);
+      done();
       expansion.reveal(target);
-      toast('Folder renamed');
+      toast(said);
       reload();
     } catch (err) { toast((err as Error).message, 'error'); }
     finally { setBusy(false); }
+  };
+
+  const moveFolder = (from: string, into: string) => {
+    const name = from.slice(from.lastIndexOf('/') + 1);
+    void applyFolderRename(from, into ? `${into}/${name}` : name, () => undefined, `Moved ${name}${into ? ` into ${folderLabel(into)}` : ' to the top level'}`);
   };
 
   const create = async () => {
@@ -584,6 +595,7 @@ export default function Documents() {
               onOpen={setViewing}
               onMove={(docs, folder, asSelection) => move(docs.map((d) => ({ id: d.id, to: folder })), { selection: asSelection ? selected : null })}
               onDropFiles={(dropped, folder) => startUpload(dropped, folder)}
+              onMoveFolder={moveFolder}
               onRenameFolder={(path) => setRenamingFolder({ path, value: path.slice(path.lastIndexOf('/') + 1) })}
               onActiveFolderChange={setActiveFolder}
               toolbar={

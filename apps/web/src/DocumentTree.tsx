@@ -48,6 +48,8 @@ export const FOLDER_PATH_MAX = 255;
  * for a document. Browsers lower-case these names, so it is written in lower case.
  */
 const DOCUMENT_DRAG_TYPE = 'application/x-kosmitor-document';
+/** A folder dragged to move it: its path. Ours alone, like the one above. */
+const FOLDER_DRAG_TYPE = 'application/x-kosmitor-folder';
 
 const levelsOf = (value: string): string[] =>
   value.normalize('NFC').split('/').map((level) => level.replace(/\s+/g, ' ').trim()).filter((level) => level !== '');
@@ -307,7 +309,7 @@ type Over = { at: 'top' | 'folder'; path: string; effect: 'move' | 'copy' };
 
 export function DocumentTree<D extends TreeDocument>({
   label, documents, extraFolders, expansion, canEdit, columns, renderName, renderCells,
-  selected, onSelect, onOpen, onMove, onDropFiles, onRenameFolder, onActiveFolderChange, toolbar, empty, sort = null, onSort,
+  selected, onSelect, onOpen, onMove, onDropFiles, onRenameFolder, onMoveFolder, onActiveFolderChange, toolbar, empty, sort = null, onSort,
 }: {
   label: string;
   /** The documents to show, already narrowed by any search. */
@@ -332,6 +334,8 @@ export function DocumentTree<D extends TreeDocument>({
   onDropFiles: (dropped: Promise<Picked[]>, folder: string) => void;
   /** The pencil on a folder row: the page asks for the new name. */
   onRenameFolder?: (path: string) => void;
+  /** A folder dropped into another (or on the top level, `to` = ''): it and everything in it move there. */
+  onMoveFolder?: (from: string, to: string) => void;
   /** The folder of the row last chosen, or null before one is. */
   onActiveFolderChange?: (folder: string | null) => void;
   toolbar?: React.ReactNode;
@@ -503,6 +507,9 @@ export function DocumentTree<D extends TreeDocument>({
   // drag starts: changing the page inside dragstart can make a browser drop the drag.
   const dragging = useRef<Carried | null>(null);
   const [carried, setCarried] = useState<Carried | null>(null);
+  /** The folder being dragged, if a folder and not a document is. */
+  const draggingFolder = useRef<string | null>(null);
+  const [carriedFolder, setCarriedFolder] = useState<string | null>(null);
   const carriedIds = useMemo(() => new Set(carried?.ids), [carried]);
   const [over, setOver] = useState<Over | null>(null);
   const spring = useRef<{ path: string; timer: number } | null>(null);
@@ -521,7 +528,7 @@ export function DocumentTree<D extends TreeDocument>({
   const depth = useRef(0);
 
   const letGo = () => { depth.current = 0; setOver(null); stopSpring(); };
-  const endDrag = () => { dragging.current = null; setCarried(null); letGo(); };
+  const endDrag = () => { dragging.current = null; draggingFolder.current = null; setCarried(null); setCarriedFolder(null); letGo(); };
 
   // A drag can still end up somewhere the count did not see it go, such as when
   // a row under the pointer is redrawn. Any dragover outside the tree, or a drop
@@ -541,8 +548,24 @@ export function DocumentTree<D extends TreeDocument>({
   const isDrag = (e: React.DragEvent, type: string) => Array.from(e.dataTransfer.types).includes(type);
 
   /** What a drop on `path` would do, or null when it would do nothing. */
+  /** Where a folder would end up if dropped in `into` ('' for the top level), or null when that would do nothing or break a rule. */
+  const folderLanding = (from: string, into: string): string | null => {
+    if (into !== '' && within(into, from)) return null; // into itself or something inside it
+    const name = from.slice(from.lastIndexOf('/') + 1);
+    const to = into ? `${into}/${name}` : name;
+    if (to === from) return null;
+    // Everything below it moves too, and the deepest or longest path must still be allowed.
+    const worst = documents.map((d) => folderPath(d.folder)).filter((f) => within(f, from)).map((f) => `${to}${f.slice(from.length)}`);
+    if ([to, ...worst].some((f) => folderProblem(f))) return null;
+    return to;
+  };
+
   const effectFor = (e: React.DragEvent, path: string, topLevel = false): 'move' | 'copy' | null => {
     if (!canEdit) return null;
+    if (isDrag(e, FOLDER_DRAG_TYPE)) {
+      const from = draggingFolder.current;
+      return from && onMoveFolder && folderLanding(from, topLevel ? '' : path) ? 'move' : null;
+    }
     // A folder saved before the current limits (a name too long, or too deep) is
     // still shown, but the server files nothing new in it, so it takes no drop.
     if (folderProblem(path)) return null;
@@ -553,8 +576,14 @@ export function DocumentTree<D extends TreeDocument>({
     return isDrag(e, 'Files') && !topLevel ? 'copy' : null;
   };
 
-  const drop = (e: React.DragEvent, folder: string, effect: 'move' | 'copy') => {
+  const drop = (e: React.DragEvent, folder: string, effect: 'move' | 'copy', top = false) => {
     e.preventDefault();
+    if (isDrag(e, FOLDER_DRAG_TYPE)) {
+      const from = draggingFolder.current ?? e.dataTransfer.getData(FOLDER_DRAG_TYPE);
+      endDrag();
+      if (from) onMoveFolder?.(from, top ? '' : folder);
+      return;
+    }
     if (effect === 'move') {
       const picked = dragging.current;
       const ids = new Set(picked?.ids ?? idsIn(e.dataTransfer.getData(DOCUMENT_DRAG_TYPE)));
@@ -595,7 +624,7 @@ export function DocumentTree<D extends TreeDocument>({
       // Resting on a closed folder opens it after a moment, so a folder inside
       // it can be reached. It opens even for documents that are all in it already.
       const closed = row.kind === 'folder' && !row.open && canEdit && !folderProblem(path)
-        && (isDrag(e, DOCUMENT_DRAG_TYPE) || isDrag(e, 'Files'));
+        && (isDrag(e, DOCUMENT_DRAG_TYPE) || isDrag(e, FOLDER_DRAG_TYPE) || isDrag(e, 'Files'));
       if (!closed) stopSpring();
       else if (spring.current?.path !== path) {
         stopSpring();
@@ -631,7 +660,7 @@ export function DocumentTree<D extends TreeDocument>({
     onDragLeave: () => setOver((o) => (o?.at === 'top' ? null : o)),
     onDrop: (e: React.DragEvent) => {
       const effect = effectFor(e, DEFAULT_FOLDER, true);
-      if (effect) drop(e, DEFAULT_FOLDER, effect);
+      if (effect) drop(e, DEFAULT_FOLDER, effect, true);
     },
   };
 
@@ -648,6 +677,17 @@ export function DocumentTree<D extends TreeDocument>({
       e.preventDefault();
       letGo();
     },
+  };
+
+  /** Dragging a folder row: the folder and everything in it go where it is dropped. */
+  const startFolderDrag = (e: React.DragEvent, path: string, name: string) => {
+    e.dataTransfer.setData(FOLDER_DRAG_TYPE, path);
+    e.dataTransfer.effectAllowed = 'move';
+    const tag = dragLabel.current;
+    const text = tag?.querySelector('[data-text]');
+    if (tag && text) { text.textContent = `Moving ${name}`; e.dataTransfer.setDragImage(tag, 14, 16); }
+    draggingFolder.current = path;
+    window.setTimeout(() => { if (draggingFolder.current === path) setCarriedFolder(path); }, 0);
   };
 
   const startDrag = (e: React.DragEvent, doc: D) => {
@@ -686,7 +726,7 @@ export function DocumentTree<D extends TreeDocument>({
     <div {...guard} onKeyDown={onAreaKeyDown} className={full ? 'flex min-h-0 flex-1 flex-col' : undefined}>
       <div className="relative shrink-0">
         <TableToolbar fullSizeButton={rows.length > 0}>{toolbar}</TableToolbar>
-        {carried && (
+        {(carried || carriedFolder) && (
           // Over the toolbar rather than above it, so the rows do not jump down
           // under the pointer the moment a drag begins.
           <div ref={topTarget} {...topLevel}
@@ -695,7 +735,9 @@ export function DocumentTree<D extends TreeDocument>({
             <Icon name="layers" className="size-4 shrink-0" />
             <span className="font-medium">Top level</span>
             <span className="truncate text-ink-500">
-              {allInTop
+              {carriedFolder !== null
+                ? (carriedFolder.includes('/') ? `Drop here to move ${folderLabel(carriedFolder)} to the top level` : 'Already at the top level')
+                : allInTop
                 ? `${many ? 'All already' : 'Already'} in ${DEFAULT_FOLDER}, the top-level folder`
                 : `Drop here to file ${many ? 'them' : 'it'} in ${DEFAULT_FOLDER}`}
             </span>
@@ -751,6 +793,9 @@ export function DocumentTree<D extends TreeDocument>({
                   const target = over?.at === 'folder' && over.path === node.path;
                   return (
                     <tr key={row.id} {...shared}
+                      draggable={(canEdit && !!onMoveFolder) || undefined}
+                      onDragStart={canEdit && onMoveFolder ? (e) => startFolderDrag(e, node.path, node.name) : undefined}
+                      onDragEnd={canEdit && onMoveFolder ? endDrag : undefined}
                       aria-expanded={row.open}
                       aria-label={`${node.name}, ${node.count} document${node.count === 1 ? '' : 's'}`}
                       // Shift-clicking down the rows to pick a range can land on a folder, which
