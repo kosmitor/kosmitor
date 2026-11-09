@@ -759,7 +759,7 @@ export default function Documents() {
         title="Rename folder" onSubmit={renameFolder} submitLabel="Rename"
         description="Everything in the folder and its subfolders moves with the new name.">
         <Field label="Name">
-          <Input autoFocus maxLength={60} value={renamingFolder?.value ?? ''} onFocus={(e) => e.currentTarget.select()}
+          <Input autoFocus maxLength={120} value={renamingFolder?.value ?? ''} onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => setRenamingFolder((r) => (r ? { ...r, value: e.target.value } : r))} />
         </Field>
       </FormModal>

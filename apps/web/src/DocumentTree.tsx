@@ -38,8 +38,8 @@ import type { Sort } from './sortable.tsx';
 /** Where a document goes when nobody says. The top level of the tree means this folder. */
 export const DEFAULT_FOLDER = 'General';
 export const FOLDER_MAX_DEPTH = 5;
-export const FOLDER_NAME_MAX = 60;
-export const FOLDER_PATH_MAX = 120;
+export const FOLDER_NAME_MAX = 120;
+export const FOLDER_PATH_MAX = 255;
 
 /**
  * The data type dragged documents carry: their ids, as a JSON list. It is ours

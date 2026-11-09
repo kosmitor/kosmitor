@@ -19,9 +19,9 @@ export const DEFAULT_FOLDER = 'General';
 /** How deep folders may nest. Past this the tree is harder to read than a longer name would be. */
 export const FOLDER_MAX_DEPTH = 5;
 /** The longest one folder's name may be, in characters. */
-export const FOLDER_NAME_MAX = 60;
+export const FOLDER_NAME_MAX = 120;
 /** The longest a whole path may be, in characters, slashes included. */
-export const FOLDER_PATH_MAX = 120;
+export const FOLDER_PATH_MAX = 255;
 
 // Control characters are what remain after every run of whitespace (tabs and
 // line breaks included) has become one space, and formatting characters (zero

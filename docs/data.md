@@ -13,7 +13,7 @@ document, with `/` between levels (`Financing/Series A`), so a folder exists for
 as long as something is in it. Editors move a document by dragging it onto a
 folder, or with *Move to folder* from the keyboard or a phone; files dragged onto
 a folder are uploaded into it. The server cleans every path the same way
-(`apps/server/src/folders.ts`): at most 5 levels, 60 characters a level and 120
+(`apps/server/src/folders.ts`): at most 5 levels, 120 characters a level and 255
 in all, with an empty path meaning *General*.
 
 ## Where data lives

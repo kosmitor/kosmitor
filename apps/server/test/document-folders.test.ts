@@ -67,16 +67,16 @@ test('the normaliser trims each level, collapses spaces, drops empty levels and 
   assert.equal(documentFolder('Board\tminutes\n2026'), 'Board minutes 2026', 'tabs and line breaks are whitespace, so they collapse');
   assert.equal(documentFolder('Résumés'), 'Résumés', 'the same name typed two ways is one folder');
   assert.equal(documentFolder('a/b/c/d/e'), 'a/b/c/d/e', 'five levels are allowed');
-  assert.equal(documentFolder('x'.repeat(60)), 'x'.repeat(60), 'sixty characters in one level are allowed');
-  assert.equal(documentFolder(`${'x'.repeat(59)}/${'y'.repeat(60)}`).length, 120, 'a path of exactly 120 characters is allowed');
-  assert.equal(documentFolder('\u{1F4C1}'.repeat(60)), '\u{1F4C1}'.repeat(60), 'characters are counted as characters, not as string units');
+  assert.equal(documentFolder('x'.repeat(120)), 'x'.repeat(120), 'a hundred and twenty characters in one level are allowed');
+  assert.equal(documentFolder(`${'x'.repeat(120)}/${'y'.repeat(120)}/${'z'.repeat(13)}`).length, 255, 'a path of exactly 255 characters is allowed');
+  assert.equal(documentFolder('\u{1F4C1}'.repeat(120)), '\u{1F4C1}'.repeat(120), 'characters are counted as characters, not as string units');
 });
 
 test('the normaliser refuses what is not text, too deep, too long or holds hidden characters', () => {
   for (const value of [42, true, {}, ['Financing']]) assert.match(refusal(value) ?? '', /must be text/, JSON.stringify(value));
   assert.match(refusal('a/b/c/d/e/f') ?? '', /at most 5 levels deep/);
-  assert.match(refusal('x'.repeat(61)) ?? '', /folder name can be at most 60 characters/);
-  assert.match(refusal(`${'x'.repeat(60)}/${'y'.repeat(60)}`) ?? '', /path can be at most 120 characters/);
+  assert.match(refusal('x'.repeat(121)) ?? '', /folder name can be at most 120 characters/);
+  assert.match(refusal(`${'x'.repeat(120)}/${'y'.repeat(120)}/${'z'.repeat(20)}`) ?? '', /path can be at most 255 characters/);
   assert.match(refusal('Board\u0000minutes') ?? '', /hidden characters/);
   assert.match(refusal('Board\u007f') ?? '', /hidden characters/);
   assert.match(refusal('Financing​') ?? '', /hidden characters/, 'a zero-width space would make a second folder that reads as Financing');
@@ -111,7 +111,7 @@ test('uploading a file cleans its folder and refuses one too long instead of cut
   const before = await count(cid);
   const long = await upload(cid, { name: 'long.pdf', category: 'OTHER', folder: 'x'.repeat(130) }, admin);
   assert.equal(long.status, 400);
-  assert.match(long.json.error, /at most 60 characters/);
+  assert.match(long.json.error, /at most 120 characters/);
   const deep = await upload(cid, { name: 'deep.pdf', category: 'OTHER', folder: '1/2/3/4/5/6' }, admin);
   assert.equal(deep.status, 400);
   assert.match(deep.json.error, /at most 5 levels deep/);
@@ -150,9 +150,9 @@ test('a path too deep or too long is refused and the document stays where it was
   const deep = await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { folder: 'a/b/c/d/e/f' }, admin);
   assert.equal(deep.status, 400);
   assert.match(deep.json.error, /at most 5 levels deep/);
-  const long = await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { folder: `${'x'.repeat(60)}/${'y'.repeat(60)}` }, admin);
+  const long = await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { folder: `${'x'.repeat(120)}/${'y'.repeat(120)}/${'z'.repeat(20)}` }, admin);
   assert.equal(long.status, 400);
-  assert.match(long.json.error, /at most 120 characters/);
+  assert.match(long.json.error, /at most 255 characters/);
   const odd = await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { folder: ['Legal'] }, admin);
   assert.equal(odd.status, 400);
   const lookalike = await call('PATCH', `/api/c/${cid}/documents/${doc.id}`, { folder: 'Legal​/Archive' }, admin);
